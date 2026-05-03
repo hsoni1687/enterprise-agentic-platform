@@ -9,10 +9,29 @@ import (
 	"net/http"
 )
 
+// AuthConfig represents authentication configuration
+type AuthConfig struct {
+	Type string `json:"type"` // bearer_token, api_key, oauth2
+
+	// Bearer Token auth
+	Token      string `json:"token,omitempty"`
+	HeaderName string `json:"header_name,omitempty"`
+
+	// API Key auth
+	Key     string `json:"key,omitempty"`
+	KeyName string `json:"key_name,omitempty"`
+	KeyIn   string `json:"key_in,omitempty"`
+
+	// OAuth 2.0 auth (tokens would be obtained separately)
+	ClientID string `json:"client_id,omitempty"`
+	TokenURL string `json:"token_url,omitempty"`
+}
+
 // Client implements JSON-RPC 2.0 HTTP client for MCP servers
 type Client struct {
 	URL        string
 	HTTPClient *http.Client
+	AuthConfig *AuthConfig
 }
 
 // MCPTool represents a tool definition from an MCP server
@@ -50,6 +69,11 @@ func NewClient(url string) *Client {
 		URL:        url,
 		HTTPClient: &http.Client{},
 	}
+}
+
+// SetAuth sets authentication configuration for the client
+func (c *Client) SetAuth(auth *AuthConfig) {
+	c.AuthConfig = auth
 }
 
 // Initialize sends the initialize request to the MCP server
@@ -147,6 +171,11 @@ func (c *Client) send(ctx context.Context, req jsonRPCRequest) (map[string]inter
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
+	// Inject authentication headers if configured
+	if c.AuthConfig != nil {
+		c.injectAuth(httpReq)
+	}
+
 	httpResp, err := c.HTTPClient.Do(httpReq)
 	if err != nil {
 		return nil, err
@@ -176,4 +205,44 @@ func toString(v interface{}) string {
 		return s
 	}
 	return ""
+}
+
+// injectAuth injects authentication headers into the HTTP request based on auth config
+func (c *Client) injectAuth(req *http.Request) {
+	if c.AuthConfig == nil {
+		return
+	}
+
+	switch c.AuthConfig.Type {
+	case "bearer_token":
+		headerName := c.AuthConfig.HeaderName
+		if headerName == "" {
+			headerName = "Authorization"
+		}
+		req.Header.Set(headerName, "Bearer "+c.AuthConfig.Token)
+
+	case "api_key":
+		keyName := c.AuthConfig.KeyName
+		if keyName == "" {
+			keyName = "X-API-Key"
+		}
+		keyIn := c.AuthConfig.KeyIn
+		if keyIn == "" {
+			keyIn = "header"
+		}
+
+		if keyIn == "header" {
+			req.Header.Set(keyName, c.AuthConfig.Key)
+		} else if keyIn == "query" {
+			q := req.URL.Query()
+			q.Add(keyName, c.AuthConfig.Key)
+			req.URL.RawQuery = q.Encode()
+		}
+
+	case "oauth2":
+		// OAuth2 token should be obtained separately and set as bearer token
+		if c.AuthConfig.Token != "" {
+			req.Header.Set("Authorization", "Bearer "+c.AuthConfig.Token)
+		}
+	}
 }
