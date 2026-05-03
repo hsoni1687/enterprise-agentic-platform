@@ -1,8 +1,8 @@
-FROM golang:1.21-alpine AS builder
+FROM golang:1.23-alpine AS builder
 
 # Use http:// for apk to bypass Zscaler TLS interception
 RUN sed -i 's/https/http/g' /etc/apk/repositories && \
-    apk update && apk add --no-cache ca-certificates
+    apk update && apk add --no-cache ca-certificates git
 
 # Copy and install Zscaler cert
 COPY infra/certs/zscaler-root-ca.pem /usr/local/share/ca-certificates/zscaler.crt
@@ -10,18 +10,20 @@ RUN update-ca-certificates
 
 WORKDIR /app
 
-# Copy go.mod and go.sum (if exists)
-COPY services/mcp-server/go.mod .
-COPY services/mcp-server/go.sum . 2>/dev/null || true
+# Copy go-shared to where the replace directive expects it
+COPY packages/go-shared /app/packages/go-shared
+COPY services/mcp-server /app/mcp-server
 
-# Copy go-shared dependency
-COPY packages/go-shared ../go-shared
+WORKDIR /app/mcp-server
+
+# Fix go.mod replace path for Docker context
+RUN sed -i 's|=> ../../packages/go-shared|=> ../packages/go-shared|' go.mod
 
 # Download dependencies
 RUN go mod download
 
-# Copy source
-COPY services/mcp-server .
+# Tidy go.sum
+RUN go mod tidy
 
 # Build
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o mcp-server .

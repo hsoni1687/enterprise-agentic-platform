@@ -339,9 +339,12 @@ services:
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/agentplatform?sslmode=disable
       - ADMIN_API_KEY=dev-admin-key
+      - TEMPORAL_HOSTPORT=temporal:7233
     depends_on:
       migrate:
         condition: service_completed_successfully
+      temporal:
+        condition: service_started
     networks:
       - agent-net
 

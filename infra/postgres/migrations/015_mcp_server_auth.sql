@@ -1,8 +1,16 @@
 -- Migration 015: Add authentication support to MCP servers
 -- Adds auth_config JSONB column to store encrypted credentials for different auth types
 
-ALTER TABLE mcp_servers
-    ADD COLUMN auth_config JSONB;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'mcp_servers' AND column_name = 'auth_config'
+    ) THEN
+        ALTER TABLE mcp_servers
+            ADD COLUMN auth_config JSONB;
+    END IF;
+END $$;
 
 -- auth_config schema supports three types:
 -- 1. Bearer Token:
