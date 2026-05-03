@@ -1,10 +1,13 @@
 # --- Build Stage ---
 FROM golang:alpine AS builder
 
-# Bypass TLS for apk then install certs
-RUN sed -i "s/https/http/g" /etc/apk/repositories
-COPY zscaler.pem /usr/local/share/ca-certificates/zscaler.crt
-RUN apk add --no-cache ca-certificates git && update-ca-certificates
+# Use http:// for apk to bypass Zscaler TLS interception
+RUN sed -i 's/https/http/g' /etc/apk/repositories && \
+    apk update && apk add --no-cache ca-certificates git
+
+# Copy and install Zscaler cert
+COPY infra/certs/zscaler-root-ca.pem /usr/local/share/ca-certificates/zscaler.crt
+RUN update-ca-certificates
 
 WORKDIR /app
 
@@ -20,6 +23,14 @@ RUN go build -o /admin-api main.go
 
 # --- Final Stage ---
 FROM alpine:latest
+
+# Use http:// for apk to bypass Zscaler TLS interception
+RUN sed -i 's/https/http/g' /etc/apk/repositories && \
+    apk update && apk add --no-cache ca-certificates
+
+# Copy and install Zscaler cert
+COPY infra/certs/zscaler-root-ca.pem /usr/local/share/ca-certificates/zscaler.crt
+RUN update-ca-certificates
 
 WORKDIR /
 COPY --from=builder /admin-api /admin-api

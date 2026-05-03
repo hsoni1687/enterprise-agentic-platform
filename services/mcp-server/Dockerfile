@@ -1,5 +1,13 @@
 FROM golang:1.21-alpine AS builder
 
+# Use http:// for apk to bypass Zscaler TLS interception
+RUN sed -i 's/https/http/g' /etc/apk/repositories && \
+    apk update && apk add --no-cache ca-certificates
+
+# Copy and install Zscaler cert
+COPY infra/certs/zscaler-root-ca.pem /usr/local/share/ca-certificates/zscaler.crt
+RUN update-ca-certificates
+
 WORKDIR /app
 
 # Copy go.mod and go.sum (if exists)
@@ -21,7 +29,13 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o mcp-server .
 # Final stage
 FROM alpine:latest
 
-RUN apk --no-cache add ca-certificates
+# Use http:// for apk to bypass Zscaler TLS interception
+RUN sed -i 's/https/http/g' /etc/apk/repositories && \
+    apk update && apk add --no-cache ca-certificates
+
+# Copy and install Zscaler cert
+COPY infra/certs/zscaler-root-ca.pem /usr/local/share/ca-certificates/zscaler.crt
+RUN update-ca-certificates
 
 WORKDIR /root/
 

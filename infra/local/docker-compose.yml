@@ -284,49 +284,47 @@ services:
 
   # ------------------------------------
   # MCP Registry (port 8090) - MCP Client Hub
-  # NOTE: Run locally with: cd services/mcp-registry && air
   # ------------------------------------
-  # mcp-registry:
-  #   build:
-  #     context: ../../
-  #     dockerfile: services/mcp-registry/Dockerfile
-  #   container_name: mcp-registry
-  #   ports:
-  #     - "8090:8090"
-  #   environment:
-  #     - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/agentplatform?sslmode=disable
-  #     - PORT=8090
-  #   depends_on:
-  #     migrate:
-  #       condition: service_completed_successfully
-  #   networks:
-  #     - agent-net
+  mcp-registry:
+    build:
+      context: ../../
+      dockerfile: services/mcp-registry/Dockerfile
+    container_name: mcp-registry
+    ports:
+      - "8090:8090"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/agentplatform?sslmode=disable
+      - PORT=8090
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - agent-net
 
   # ------------------------------------
   # MCP Server (port 8091) - MCP Server Endpoint
-  # NOTE: Run locally with: cd services/mcp-server && air
   # ------------------------------------
-  # mcp-server:
-  #   build:
-  #     context: ../../
-  #     dockerfile: services/mcp-server/Dockerfile
-  #   container_name: mcp-server
-  #   ports:
-  #     - "8091:8091"
-  #   environment:
-  #     - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/agentplatform?sslmode=disable
-  #     - SKILL_CATALOG_URL=http://skill-catalog:8087
-  #     - SKILL_DISPATCHER_URL=http://skill-dispatcher:8085
-  #     - PORT=8091
-  #   depends_on:
-  #     migrate:
-  #       condition: service_completed_successfully
-  #     skill-catalog:
-  #       condition: service_started
-  #     skill-dispatcher:
-  #       condition: service_started
-  #   networks:
-  #     - agent-net
+  mcp-server:
+    build:
+      context: ../../
+      dockerfile: services/mcp-server/Dockerfile
+    container_name: mcp-server
+    ports:
+      - "8091:8091"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/agentplatform?sslmode=disable
+      - SKILL_CATALOG_URL=http://skill-catalog:8087
+      - SKILL_DISPATCHER_URL=http://skill-dispatcher:8085
+      - PORT=8091
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      skill-catalog:
+        condition: service_started
+      skill-dispatcher:
+        condition: service_started
+    networks:
+      - agent-net
 
   # ------------------------------------
   # Admin API  (port 8089)

@@ -1,5 +1,13 @@
 FROM golang:1.23-alpine AS builder
 
+# Use http:// for apk to bypass Zscaler TLS interception
+RUN sed -i 's/https/http/g' /etc/apk/repositories && \
+    apk update && apk add --no-cache ca-certificates
+
+# Copy and install Zscaler cert
+COPY infra/certs/zscaler-root-ca.pem /usr/local/share/ca-certificates/zscaler.crt
+RUN update-ca-certificates
+
 ENV GOPROXY=direct GOSUMDB=off
 
 WORKDIR /app
