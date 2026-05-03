@@ -128,8 +128,8 @@ export default function MCPServersPage() {
       {/* ============================================================ */}
       {/* SECTION 1: EXTERNAL MCP SERVERS */}
       {/* ============================================================ */}
-      <div className="rounded-lg border border-gray-200 bg-white overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-200">
+      <div className="rounded-lg border border-border bg-card overflow-hidden">
+        <div className="px-6 py-4 border-b border-border">
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-xl font-semibold">External MCP Servers</h2>
@@ -137,7 +137,7 @@ export default function MCPServersPage() {
             </div>
             <button
               onClick={() => setShowServerModal(true)}
-              className="flex items-center gap-2 px-3 py-2 bg-primary text-white text-sm rounded-md hover:bg-primary/90 transition-colors"
+              className="flex items-center gap-2 px-3 py-2 bg-primary text-primary-foreground text-sm rounded-md hover:bg-primary/90 transition-colors"
             >
               <Plus className="h-4 w-4" />
               Register Server
@@ -152,26 +152,26 @@ export default function MCPServersPage() {
             <div className="p-6 text-center text-sm text-gray-500">No global MCP servers registered</div>
           ) : (
             <table className="w-full text-sm">
-              <thead className="bg-gray-50 border-b border-gray-200">
+              <thead className="bg-muted border-b border-border">
                 <tr>
-                  <th className="px-6 py-3 text-left font-medium text-gray-700">Name</th>
-                  <th className="px-6 py-3 text-left font-medium text-gray-700">URL</th>
-                  <th className="px-6 py-3 text-left font-medium text-gray-700">Scope</th>
-                  <th className="px-6 py-3 text-left font-medium text-gray-700">Created</th>
-                  <th className="px-6 py-3 text-left font-medium text-gray-700">Actions</th>
+                  <th className="px-6 py-3 text-left font-medium text-foreground">Name</th>
+                  <th className="px-6 py-3 text-left font-medium text-foreground">URL</th>
+                  <th className="px-6 py-3 text-left font-medium text-foreground">Scope</th>
+                  <th className="px-6 py-3 text-left font-medium text-foreground">Created</th>
+                  <th className="px-6 py-3 text-left font-medium text-foreground">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {serversData.servers.map((server: MCPServer) => (
-                  <tr key={server.id} className="border-b border-gray-200 hover:bg-gray-50/50">
-                    <td className="px-6 py-3 font-medium">{server.name}</td>
-                    <td className="px-6 py-3 font-mono text-xs text-gray-600 truncate max-w-xs" title={server.url}>{server.url}</td>
+                  <tr key={server.id} className="border-b border-border hover:bg-muted/50">
+                    <td className="px-6 py-3 font-medium text-foreground">{server.name}</td>
+                    <td className="px-6 py-3 font-mono text-xs text-muted-foreground truncate max-w-xs" title={server.url}>{server.url}</td>
                     <td className="px-6 py-3">
                       <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
                         {server.scope}
                       </span>
                     </td>
-                    <td className="px-6 py-3 text-gray-600">{formatDate(server.created_at)}</td>
+                    <td className="px-6 py-3 text-muted-foreground">{formatDate(server.created_at)}</td>
                     <td className="px-6 py-3">
                       <button
                         onClick={() => {
@@ -196,27 +196,27 @@ export default function MCPServersPage() {
       {/* Register Server Modal */}
       {showServerModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg border border-gray-200 p-6 max-w-md w-full mx-4">
-            <h3 className="text-lg font-semibold mb-4">Register Global MCP Server</h3>
+          <div className="bg-card rounded-lg border border-border p-6 max-w-md w-full mx-4">
+            <h3 className="text-lg font-semibold mb-4 text-foreground">Register Global MCP Server</h3>
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Server Name</label>
+                <label className="block text-sm font-medium text-foreground mb-1">Server Name</label>
                 <input
                   type="text"
                   value={newServerName}
                   onChange={(e) => setNewServerName(e.target.value)}
                   placeholder="e.g., github-mcp"
-                  className="w-full px-3 py-2 bg-white border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                  className="w-full px-3 py-2 bg-input text-foreground border border-border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Server URL</label>
+                <label className="block text-sm font-medium text-foreground mb-1">Server URL</label>
                 <input
                   type="text"
                   value={newServerUrl}
                   onChange={(e) => setNewServerUrl(e.target.value)}
                   placeholder="http://localhost:3000"
-                  className="w-full px-3 py-2 bg-white border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                  className="w-full px-3 py-2 bg-input text-foreground border border-border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                 />
               </div>
               <div className="flex gap-2 justify-end pt-4">
@@ -227,14 +227,14 @@ export default function MCPServersPage() {
                     setNewServerUrl('');
                   }}
                   disabled={createServerMutation.isPending}
-                  className="px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50"
+                  className="px-3 py-2 border border-border rounded-md text-sm font-medium text-foreground hover:bg-muted transition-colors disabled:opacity-50"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={() => createServerMutation.mutate()}
                   disabled={createServerMutation.isPending || !newServerName || !newServerUrl}
-                  className="flex items-center gap-2 px-3 py-2 bg-primary text-white text-sm rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50"
+                  className="flex items-center gap-2 px-3 py-2 bg-primary text-primary-foreground text-sm rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50"
                 >
                   {createServerMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
                   Register
@@ -248,21 +248,21 @@ export default function MCPServersPage() {
       {/* ============================================================ */}
       {/* SECTION 2: MCP TOKENS FOR EXTERNAL CLIENTS */}
       {/* ============================================================ */}
-      <div className="rounded-lg border border-gray-200 bg-white overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-200">
+      <div className="rounded-lg border border-border bg-card overflow-hidden">
+        <div className="px-6 py-4 border-b border-border">
           <h2 className="text-xl font-semibold">MCP Tokens</h2>
           <p className="text-sm text-gray-500 mt-1">Bearer tokens for external MCP clients (e.g., Claude Desktop)</p>
         </div>
 
         <div className="p-6 space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Issue New Token</label>
+            <label className="block text-sm font-medium text-foreground mb-2">Issue New Token</label>
             <div className="flex gap-2">
               <input
                 type="text"
                 id="tokenDesc"
                 placeholder="Token description (e.g., 'Claude Desktop - John')"
-                className="flex-1 px-3 py-2 bg-white border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                className="flex-1 px-3 py-2 bg-input text-foreground border border-border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary"
               />
               <button
                 onClick={() => {
@@ -273,33 +273,33 @@ export default function MCPServersPage() {
                   }
                 }}
                 disabled={issueTokenMutation.isPending}
-                className="px-3 py-2 bg-primary text-white text-sm rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50"
+                className="px-3 py-2 bg-primary text-primary-foreground text-sm rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50"
               >
                 {issueTokenMutation.isPending ? 'Issuing...' : 'Issue Token'}
               </button>
             </div>
 
             {showNewToken && newToken && (
-              <div className="p-3 mt-3 bg-green-50 border border-green-200 rounded-md">
-                <p className="text-sm font-medium text-green-900 mb-2">✓ Token issued (shown once)</p>
+              <div className="p-3 mt-3 bg-secondary/20 border border-secondary rounded-md">
+                <p className="text-sm font-medium text-secondary mb-2">✓ Token issued (shown once)</p>
                 <div className="flex gap-2 mb-2">
                   <input
                     type="text"
                     value={newToken}
                     readOnly
-                    className="flex-1 px-3 py-2 border border-green-300 rounded-md bg-white text-sm font-mono text-xs"
+                    className="flex-1 px-3 py-2 border border-secondary rounded-md bg-input text-foreground text-sm font-mono text-xs"
                   />
                   <button
                     onClick={() => navigator.clipboard.writeText(newToken)}
-                    className="px-3 py-2 border border-green-300 rounded-md text-sm font-medium text-green-700 hover:bg-green-50 transition-colors"
+                    className="px-3 py-2 border border-secondary rounded-md text-sm font-medium text-secondary hover:bg-secondary/20 transition-colors"
                   >
                     Copy
                   </button>
                 </div>
-                <p className="text-xs text-green-700">Use in MCP client config: Authorization: Bearer {'{token}'}</p>
+                <p className="text-xs text-secondary">Use in MCP client config: Authorization: Bearer {'{token}'}</p>
                 <button
                   onClick={() => setShowNewToken(false)}
-                  className="mt-2 text-sm text-green-700 hover:underline"
+                  className="mt-2 text-sm text-secondary hover:underline"
                 >
                   Dismiss
                 </button>
@@ -317,23 +317,23 @@ export default function MCPServersPage() {
                 <div className="text-sm text-gray-500">No tokens issued yet</div>
               ) : (
                 <table className="w-full text-sm">
-                  <thead className="bg-gray-50 border border-gray-200 rounded-t">
+                  <thead className="bg-muted border border-border rounded-t">
                     <tr>
-                      <th className="px-4 py-2 text-left font-medium text-gray-700">Description</th>
-                      <th className="px-4 py-2 text-left font-medium text-gray-700">Tenant</th>
-                      <th className="px-4 py-2 text-left font-medium text-gray-700">Created</th>
-                      <th className="px-4 py-2 text-left font-medium text-gray-700">Expires</th>
-                      <th className="px-4 py-2 text-left font-medium text-gray-700">Status</th>
-                      <th className="px-4 py-2 text-left font-medium text-gray-700">Actions</th>
+                      <th className="px-4 py-2 text-left font-medium text-foreground">Description</th>
+                      <th className="px-4 py-2 text-left font-medium text-foreground">Tenant</th>
+                      <th className="px-4 py-2 text-left font-medium text-foreground">Created</th>
+                      <th className="px-4 py-2 text-left font-medium text-foreground">Expires</th>
+                      <th className="px-4 py-2 text-left font-medium text-foreground">Status</th>
+                      <th className="px-4 py-2 text-left font-medium text-foreground">Actions</th>
                     </tr>
                   </thead>
-                  <tbody className="border border-t-0 border-gray-200">
+                  <tbody className="border border-t-0 border-border">
                     {tokensData.tokens && tokensData.tokens.map((token: MCPToken) => (
-                      <tr key={token.id} className={`border-b border-gray-200 ${isExpired(token.expires_at) ? 'opacity-50' : ''}`}>
-                        <td className="px-4 py-2">{token.description}</td>
-                        <td className="px-4 py-2 text-xs text-gray-600">{token.tenant_id}</td>
-                        <td className="px-4 py-2 text-xs text-gray-600">{formatDate(token.created_at)}</td>
-                        <td className="px-4 py-2 text-xs text-gray-600">{formatDate(token.expires_at)}</td>
+                      <tr key={token.id} className={`border-b border-border ${isExpired(token.expires_at) ? 'opacity-50' : ''}`}>
+                        <td className="px-4 py-2 text-foreground">{token.description}</td>
+                        <td className="px-4 py-2 text-xs text-muted-foreground">{token.tenant_id}</td>
+                        <td className="px-4 py-2 text-xs text-muted-foreground">{formatDate(token.created_at)}</td>
+                        <td className="px-4 py-2 text-xs text-muted-foreground">{formatDate(token.expires_at)}</td>
                         <td className="px-4 py-2">
                           <span className={`text-xs px-2 py-1 rounded-full font-medium ${
                             isExpired(token.expires_at)
