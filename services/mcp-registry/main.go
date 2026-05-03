@@ -14,7 +14,7 @@ import (
 func main() {
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
-		dbURL = "postgres://postgres:postgres@localhost:5433/agentplatform"
+		dbURL = "postgres://postgres:postgres@localhost:5433/agentplatform?sslmode=disable"
 	}
 
 	port := os.Getenv("PORT")
