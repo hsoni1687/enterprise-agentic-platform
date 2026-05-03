@@ -29,6 +29,7 @@ type MCPServer struct {
 	Name      string    `json:"name"`
 	URL       string    `json:"url"`
 	Enabled   bool      `json:"enabled"`
+	Scope     string    `json:"scope"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -47,9 +48,9 @@ func (s *Service) RegisterServer(ctx context.Context, tenantID string, name stri
 	now := time.Now()
 
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO mcp_servers (id, tenant_id, name, url, enabled, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		id, tenantID, name, url, true, now, now)
+		`INSERT INTO mcp_servers (id, tenant_id, name, url, enabled, scope, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		id, tenantID, name, url, true, "tenant", now, now)
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to register MCP server: %w", err)
@@ -61,16 +62,44 @@ func (s *Service) RegisterServer(ctx context.Context, tenantID string, name stri
 		Name:      name,
 		URL:       url,
 		Enabled:   true,
+		Scope:     "tenant",
 		CreatedAt: now,
 		UpdatedAt: now,
 	}, nil
 }
 
-// ListServers returns all MCP servers for a tenant
+// RegisterGlobalServer registers a global MCP server accessible to all tenants
+func (s *Service) RegisterGlobalServer(ctx context.Context, name string, url string) (*MCPServer, error) {
+	id := uuid.New().String()
+	now := time.Now()
+
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO mcp_servers (id, tenant_id, name, url, enabled, scope, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		id, "platform-system", name, url, true, "global", now, now)
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to register global MCP server: %w", err)
+	}
+
+	return &MCPServer{
+		ID:        id,
+		TenantID:  "platform-system",
+		Name:      name,
+		URL:       url,
+		Enabled:   true,
+		Scope:     "global",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}, nil
+}
+
+// ListServers returns all MCP servers for a tenant (both tenant-specific and global)
 func (s *Service) ListServers(ctx context.Context, tenantID string) ([]MCPServer, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, tenant_id, name, url, enabled, created_at, updated_at
-		 FROM mcp_servers WHERE tenant_id = $1 ORDER BY created_at DESC`,
+		`SELECT id, tenant_id, name, url, enabled, scope, created_at, updated_at
+		 FROM mcp_servers WHERE (tenant_id = $1 OR scope = 'global') AND enabled = true
+		 ORDER BY created_at DESC`,
 		tenantID)
 	if err != nil {
 		return nil, err
@@ -80,7 +109,7 @@ func (s *Service) ListServers(ctx context.Context, tenantID string) ([]MCPServer
 	var servers []MCPServer
 	for rows.Next() {
 		var srv MCPServer
-		if err := rows.Scan(&srv.ID, &srv.TenantID, &srv.Name, &srv.URL, &srv.Enabled, &srv.CreatedAt, &srv.UpdatedAt); err != nil {
+		if err := rows.Scan(&srv.ID, &srv.TenantID, &srv.Name, &srv.URL, &srv.Enabled, &srv.Scope, &srv.CreatedAt, &srv.UpdatedAt); err != nil {
 			return nil, err
 		}
 		servers = append(servers, srv)
@@ -89,10 +118,41 @@ func (s *Service) ListServers(ctx context.Context, tenantID string) ([]MCPServer
 	return servers, rows.Err()
 }
 
-// DeleteServer removes an MCP server
+// ListGlobalServers returns all global MCP servers
+func (s *Service) ListGlobalServers(ctx context.Context) ([]MCPServer, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, tenant_id, name, url, enabled, scope, created_at, updated_at
+		 FROM mcp_servers WHERE scope = 'global' AND enabled = true
+		 ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var servers []MCPServer
+	for rows.Next() {
+		var srv MCPServer
+		if err := rows.Scan(&srv.ID, &srv.TenantID, &srv.Name, &srv.URL, &srv.Enabled, &srv.Scope, &srv.CreatedAt, &srv.UpdatedAt); err != nil {
+			return nil, err
+		}
+		servers = append(servers, srv)
+	}
+
+	return servers, rows.Err()
+}
+
+// DeleteServer removes a tenant-scoped MCP server
 func (s *Service) DeleteServer(ctx context.Context, serverID string) error {
 	_, err := s.db.ExecContext(ctx,
-		`DELETE FROM mcp_servers WHERE id = $1`,
+		`DELETE FROM mcp_servers WHERE id = $1 AND scope = 'tenant'`,
+		serverID)
+	return err
+}
+
+// DeleteGlobalServer removes a global MCP server (admin only)
+func (s *Service) DeleteGlobalServer(ctx context.Context, serverID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM mcp_servers WHERE id = $1 AND scope = 'global'`,
 		serverID)
 	return err
 }

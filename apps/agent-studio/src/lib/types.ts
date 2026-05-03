@@ -57,6 +57,17 @@ export interface SkillRef {
   version: string;
 }
 
+export interface MCPServer {
+  id: string;
+  tenant_id: string;
+  name: string;
+  url: string;
+  scope: string;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface AgentManifest {
   id: string;
   tenant_id: string;
@@ -67,6 +78,7 @@ export interface AgentManifest {
   model: string;
   max_iterations: number;
   memory_budget_mb: number;
+  mcp_servers?: string[];
 }
 
 export interface AgentRecord {
@@ -79,6 +91,7 @@ export interface AgentRecord {
   model: string;
   max_iterations: number;
   memory_budget_mb: number;
+  mcp_servers?: string[];
   status: ResourceStatus;
   created_at: string;
 }

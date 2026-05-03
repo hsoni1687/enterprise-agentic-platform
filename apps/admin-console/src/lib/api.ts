@@ -197,4 +197,22 @@ export const adminApi = {
     if (!response.ok) throw new Error("Failed to fetch audit log");
     return response.json();
   },
+
+  async listMcpServers(): Promise<any> {
+    const response = await request("GET", "/api/v1/admin/mcp/servers");
+    if (!response.ok) throw new Error("Failed to fetch MCP servers");
+    return response.json();
+  },
+
+  async createMcpServer(data: { name: string; url: string }): Promise<any> {
+    const response = await request("POST", "/api/v1/admin/mcp/servers", data);
+    if (!response.ok) throw new Error("Failed to create MCP server");
+    return response.json();
+  },
+
+  async deleteMcpServer(id: string): Promise<any> {
+    const response = await request("DELETE", `/api/v1/admin/mcp/servers/${id}`);
+    if (!response.ok) throw new Error("Failed to delete MCP server");
+    return response.json();
+  },
 };

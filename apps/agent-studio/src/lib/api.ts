@@ -10,6 +10,8 @@ const API_GATEWAY =
   process.env.NEXT_PUBLIC_API_GATEWAY_URL ?? "http://localhost:8080";
 const LLM_GATEWAY =
   process.env.NEXT_PUBLIC_LLM_GATEWAY_URL ?? "http://localhost:8083";
+const MCP_REGISTRY =
+  process.env.NEXT_PUBLIC_MCP_REGISTRY_URL ?? "http://localhost:8090";
 
 async function req<T>(base: string, path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${base}${path}`, {
@@ -164,4 +166,13 @@ export const systemAgentsApi = {
         tenant_id: "platform-system",
       }),
     }),
+};
+
+// MCP Servers
+export const mcpApi = {
+  listServers: () =>
+    req<{
+      servers: import("./types").MCPServer[];
+      count: number;
+    }>(MCP_REGISTRY, "/api/v1/mcp/servers"),
 };

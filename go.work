@@ -8,6 +8,7 @@ use (
 	./services/agent-registry
 	./services/api-gateway
 	./services/llm-gateway
+	./services/mcp-registry
 	./services/sandbox-manager
 	./services/skill-catalog
 	./services/skill-dispatcher

@@ -78,6 +78,11 @@ func main() {
 	// Audit Log
 	mux.Handle("GET /api/v1/admin/audit", authMiddleware(adminAPIKey, http.HandlerFunc(handler.HandleGetAuditLog)))
 
+	// MCP Server Management
+	mux.Handle("POST /api/v1/admin/mcp/servers", authMiddleware(adminAPIKey, http.HandlerFunc(handler.HandleCreateGlobalMCPServer)))
+	mux.Handle("GET /api/v1/admin/mcp/servers", authMiddleware(adminAPIKey, http.HandlerFunc(handler.HandleListGlobalMCPServers)))
+	mux.Handle("DELETE /api/v1/admin/mcp/servers/{id}", authMiddleware(adminAPIKey, http.HandlerFunc(handler.HandleDeleteGlobalMCPServer)))
+
 	log.Printf("Starting Admin API on :8089 (Admin Key: %s...)", adminAPIKey[:10])
 	if err := http.ListenAndServe(":8089", withCORS(mux)); err != nil {
 		log.Fatalf("Server failed: %v", err)

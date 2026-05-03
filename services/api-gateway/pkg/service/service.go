@@ -415,6 +415,130 @@ func (h *GatewayHandler) HandleChatWS(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// HandleManifestAssistantChat handles manifest assistant chat requests via a system agent.
+func (h *GatewayHandler) HandleManifestAssistantChat(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Message  string `json:"message"`
+		TenantID string `json:"tenant_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Message == "" {
+		http.Error(w, "message is required", http.StatusBadRequest)
+		return
+	}
+
+	if req.TenantID == "" {
+		req.TenantID = "platform-system"
+	}
+
+	// Start a manifest assistant workflow session
+	sessionID := fmt.Sprintf("manifest-assist-%d", time.Now().UnixMilli())
+	startReq := models.StartSessionRequest{
+		AgentID:   "manifest-assistant",
+		SessionID: sessionID,
+		Context: map[string]string{
+			"mode":    "manifest-assistant",
+			"message": req.Message,
+		},
+		TenantID: req.TenantID,
+	}
+	body, _ := json.Marshal(startReq)
+
+	resp, err := http.Post(fmt.Sprintf("%s/api/v1/sessions", h.InitiatorURL), "application/json", bytes.NewBuffer(body))
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to start manifest assistant: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		var errBody bytes.Buffer
+		errBody.ReadFrom(resp.Body)
+		http.Error(w, fmt.Sprintf("Manifest assistant failed: %s", errBody.String()), http.StatusBadGateway)
+		return
+	}
+
+	var session models.SessionStatus
+	if err := json.NewDecoder(resp.Body).Decode(&session); err != nil {
+		http.Error(w, "Failed to parse session response", http.StatusInternalServerError)
+		return
+	}
+
+	// Stream events from the workflow
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	// Connect message
+	fmt.Fprintf(w, ": connected\n\n")
+	flusher.Flush()
+
+	// Poll for events
+	poll := &http.Client{Timeout: 5 * time.Second}
+	cursor := 0
+	terminal := map[string]bool{
+		"COMPLETED": true, "FAILED": true,
+		"CANCELED": true, "TIMED_OUT": true, "TERMINATED": true,
+	}
+
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		default:
+		}
+
+		pollURL := fmt.Sprintf("%s/api/v1/sessions/%s/poll?from=%d", h.InitiatorURL, session.WorkflowID, cursor)
+		if pollResp, err := poll.Get(pollURL); err == nil {
+			var pr models.PollResponse
+			if json.NewDecoder(pollResp.Body).Decode(&pr) == nil {
+				// Stream any new events
+				if len(pr.Events) > 0 {
+					for _, evt := range pr.Events {
+						data, _ := json.Marshal(evt)
+						fmt.Fprintf(w, "data: %s\n\n", data)
+						flusher.Flush()
+					}
+					cursor += len(pr.Events)
+				}
+
+				// Check if workflow is terminal
+				if terminal[pr.Status] {
+					if pr.Status != "COMPLETED" {
+						fmt.Fprintf(w, "data: {\"type\":\"error\",\"content\":\"%s\"}\n\n", pr.Status)
+					}
+					fmt.Fprintf(w, "data: {\"type\":\"done\"}\n\n")
+					flusher.Flush()
+					pollResp.Body.Close()
+					return
+				}
+			}
+			pollResp.Body.Close()
+		}
+
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
 // HandleHealth returns the health status of the service.
 func (h *GatewayHandler) HandleHealth(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "API Gateway is healthy\n")

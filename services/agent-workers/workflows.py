@@ -42,14 +42,23 @@ class AgentWorkflow:
         for skill_ref in skills:
             tool_defs.append(_skill_tool_def(skill_ref["name"]))
 
-        # Discover MCP tools if configured
+        # Discover MCP tools: merge global + tenant + explicit servers
         mcp_meta_map = {}
-        mcp_servers = manifest.get("mcp_servers") or []
-        if mcp_servers:
+        explicit_mcp_servers = manifest.get("mcp_servers") or []
+
+        # Resolve all applicable MCP servers (global + tenant + explicit)
+        all_mcp_servers = await workflow.execute_activity(
+            "resolve_mcp_servers",
+            args=[tenant_id, explicit_mcp_servers],
+            start_to_close_timeout=timedelta(seconds=15),
+            retry_policy=RetryPolicy(maximum_attempts=2),
+        )
+
+        if all_mcp_servers:
             try:
                 mcp_tool_defs = await workflow.execute_activity(
                     "discover_mcp_tools",
-                    args=[mcp_servers, tenant_id],
+                    args=[all_mcp_servers, tenant_id],
                     start_to_close_timeout=timedelta(seconds=30),
                     retry_policy=RetryPolicy(maximum_attempts=2),
                 )

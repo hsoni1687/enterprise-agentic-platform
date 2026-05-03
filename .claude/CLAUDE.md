@@ -6,8 +6,10 @@
 # Terminal 1: Docker backing services
 cd infra/local && docker-compose up -d
 
-# Terminal 2-5: Run services locally with hot-reload
+# Terminal 2-6: Run services locally with hot-reload
 cd apps/agent-studio && npm run dev              # Frontend on :3000
+cd apps/admin-console && npm run dev             # Frontend on :3001
+cd services/mcp-registry && air                  # MCP Registry on :8090
 cd services/api-gateway && air                   # API Gateway on :8080
 cd services/workflow-initiator && air            # Workflow Initiator on :8081
 cd services/agent-workers && python -m temporal.worker  # Temporal workers
@@ -18,9 +20,10 @@ cd services/agent-workers && python -m temporal.worker  # Temporal workers
 - **8080**: API Gateway (entry point)
 - **8081**: Workflow Initiator (Temporal dispatcher)
 - **8082–8088**: Platform services (registries, dispatchers)
+- **8089**: Admin API
+- **8090**: MCP Registry (MCP server hub)
 - **3000**: Agent Studio frontend
 - **3001**: Admin Console frontend
-- **8089**: Admin API
 
 ## Key Patterns
 

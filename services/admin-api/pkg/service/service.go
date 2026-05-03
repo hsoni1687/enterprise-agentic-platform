@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/agent-platform/go-shared/pkg/models"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.temporal.io/sdk/client"
 )
@@ -870,6 +871,123 @@ func (h *AdminHandler) HandleGetAuditLog(w http.ResponseWriter, r *http.Request)
 		"limit":  limit,
 		"offset": offset,
 		"count":  len(events),
+	})
+}
+
+// HandleCreateGlobalMCPServer creates a global MCP server (admin only)
+func (h *AdminHandler) HandleCreateGlobalMCPServer(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	var req struct {
+		Name string `json:"name"`
+		URL  string `json:"url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Name == "" || req.URL == "" {
+		http.Error(w, "Missing required fields: name, url", http.StatusBadRequest)
+		return
+	}
+
+	id := uuid.New().String()
+	now := time.Now()
+
+	_, err := h.DB.Exec(r.Context(), `
+		INSERT INTO mcp_servers (id, tenant_id, name, url, enabled, scope, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	`, id, "platform-system", req.Name, req.URL, true, "global", now, now)
+
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create MCP server: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"id":         id,
+		"name":       req.Name,
+		"url":        req.URL,
+		"scope":      "global",
+		"tenant_id":  "platform-system",
+		"enabled":    true,
+		"created_at": now,
+	})
+}
+
+// HandleListGlobalMCPServers lists all global MCP servers (admin only)
+func (h *AdminHandler) HandleListGlobalMCPServers(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	rows, err := h.DB.Query(r.Context(), `
+		SELECT id, tenant_id, name, url, enabled, scope, created_at, updated_at
+		FROM mcp_servers
+		WHERE scope = 'global'
+		ORDER BY created_at DESC
+	`)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Query failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	type MCPServer struct {
+		ID        string    `json:"id"`
+		TenantID  string    `json:"tenant_id"`
+		Name      string    `json:"name"`
+		URL       string    `json:"url"`
+		Enabled   bool      `json:"enabled"`
+		Scope     string    `json:"scope"`
+		CreatedAt time.Time `json:"created_at"`
+		UpdatedAt time.Time `json:"updated_at"`
+	}
+
+	var servers []MCPServer
+	for rows.Next() {
+		var s MCPServer
+		if err := rows.Scan(&s.ID, &s.TenantID, &s.Name, &s.URL, &s.Enabled, &s.Scope, &s.CreatedAt, &s.UpdatedAt); err != nil {
+			http.Error(w, fmt.Sprintf("Scan failed: %v", err), http.StatusInternalServerError)
+			return
+		}
+		servers = append(servers, s)
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"servers": servers,
+		"count":   len(servers),
+	})
+}
+
+// HandleDeleteGlobalMCPServer deletes a global MCP server (admin only)
+func (h *AdminHandler) HandleDeleteGlobalMCPServer(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	serverID := r.PathValue("id")
+	if serverID == "" {
+		http.Error(w, "Missing server ID", http.StatusBadRequest)
+		return
+	}
+
+	result, err := h.DB.Exec(r.Context(), `
+		DELETE FROM mcp_servers
+		WHERE id = $1 AND scope = 'global'
+	`, serverID)
+
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to delete MCP server: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	if result.RowsAffected() == 0 {
+		http.Error(w, "Global MCP server not found", http.StatusNotFound)
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]string{
+		"status": "deleted",
+		"id":     serverID,
 	})
 }
 

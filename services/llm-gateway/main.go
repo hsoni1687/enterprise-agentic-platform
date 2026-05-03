@@ -84,9 +84,33 @@ func loadConfig() {
 		if err := loadConfigFromDB(); err != nil {
 			log.Printf("LLM Gateway: Failed to load config from DB: %v, falling back to env vars", err)
 			loadConfigFromEnv()
+		} else {
+			// DB load succeeded, but fill in missing values from env vars
+			fillMissingFromEnv()
 		}
 	} else {
 		loadConfigFromEnv()
+	}
+}
+
+func fillMissingFromEnv() {
+	// Prefer env vars for API keys and URLs
+	if envKey := os.Getenv("ANTHROPIC_API_KEY"); envKey != "" {
+		anthropicKey = envKey
+		keyPreview := envKey[:10] + "..." + envKey[len(envKey)-10:]
+		log.Printf("LLM Gateway: Anthropic API Key loaded from env (preview: %s)", keyPreview)
+	}
+	if envURL := os.Getenv("ANTHROPIC_BASE_URL"); envURL != "" {
+		anthropicURL = envURL
+		log.Printf("LLM Gateway: Using custom Anthropic URL from env: %s", anthropicURL)
+	} else if anthropicURL == "" {
+		anthropicURL = "https://api.anthropic.com/v1/messages"
+		log.Println("LLM Gateway: Using default Anthropic URL")
+	}
+	if envKey := os.Getenv("OPENAI_API_KEY"); envKey != "" {
+		openaiKey = envKey
+		openaiClient = openai.NewClient(openaiKey)
+		log.Println("LLM Gateway: OpenAI client initialized from env")
 	}
 }
 
@@ -398,6 +422,32 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	if strings.Contains(req.Model, "claude") && hasAnthropicKey {
 		log.Println("-> Routing to Anthropic")
 		handleAnthropicInference(w, req)
+		return
+	}
+
+	mu.RLock()
+	customURL := anthropicURL
+	customKey := anthropicKey
+	isCustomProxy := anthropicURL != "" && anthropicURL != "https://api.anthropic.com/v1/messages"
+	mu.RUnlock()
+
+	// Check if we're in custom proxy mode and this isn't a Claude model
+	if isCustomProxy && !strings.Contains(req.Model, "claude") && customKey != "" {
+		log.Printf("-> Routing to Custom Proxy: %s (model: %s)", customURL, req.Model)
+		config := openai.DefaultConfig(customKey)
+		config.BaseURL = strings.TrimSuffix(customURL, "/v1/messages")
+		if !strings.HasSuffix(config.BaseURL, "/v1") {
+			config.BaseURL = config.BaseURL + "/v1"
+		}
+		customClient := openai.NewClientWithConfig(config)
+		resp, err := customClient.CreateChatCompletion(r.Context(), req)
+		if err != nil {
+			log.Printf("Custom proxy error: %v", err)
+			http.Error(w, fmt.Sprintf("Custom proxy error: %v", err), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
 		return
 	}
 

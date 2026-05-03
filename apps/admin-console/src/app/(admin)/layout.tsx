@@ -12,6 +12,7 @@ import {
   BarChart3,
   FileText,
   LogOut,
+  Server,
 } from "lucide-react";
 
 export default function AdminLayout({ children }: { children: ReactNode }) {
@@ -37,6 +38,7 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
     { label: "System Agents", href: "/system-agents", icon: Zap },
     { label: "Executions", href: "/executions", icon: BarChart3 },
     { label: "Cost Tracking", href: "/cost", icon: BarChart3 },
+    { label: "MCP Servers", href: "/mcp-servers", icon: Server },
     { label: "Audit Log", href: "/audit", icon: FileText },
   ];
 

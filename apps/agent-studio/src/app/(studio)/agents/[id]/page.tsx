@@ -7,8 +7,9 @@ import { useForm, useFieldArray, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import Link from "next/link";
-import { Bot, MessageSquare, ArrowLeft, Loader2, Zap, Edit2, Trash2, Plus } from "lucide-react";
-import { agentsApi, skillsApi, modelsApi } from "@/lib/api";
+import { Bot, MessageSquare, ArrowLeft, Loader2, Zap, Edit2, Trash2, Plus, Sparkles } from "lucide-react";
+import { agentsApi, skillsApi, toolsApi, modelsApi, mcpApi } from "@/lib/api";
+import { ManifestAssistantPanel, AssistantDraft } from "@/components/manifest-assistant-panel";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -45,6 +46,7 @@ const agentSchema = z.object({
   max_iterations: z.number().int().min(1).max(100),
   memory_budget_mb: z.number().int().min(64),
   skills: z.array(z.object({ name: z.string().min(1), version: z.string().min(1) })).optional(),
+  mcp_servers: z.array(z.string()).optional(),
 });
 
 type AgentForm = z.infer<typeof agentSchema>;
@@ -59,7 +61,8 @@ const STATUS_LABELS: Record<string, string> = {
 
 function EditAgentSheet({ agent, onUpdated }: { agent: any; onUpdated: () => void }) {
   const [open, setOpen] = useState(false);
-  const { register, handleSubmit, reset, control, formState: { errors } } = useForm<AgentForm>({
+  const [showAssistant, setShowAssistant] = useState(false);
+  const { register, handleSubmit, reset, control, setValue, watch, formState: { errors } } = useForm<AgentForm>({
     resolver: zodResolver(agentSchema),
     values: {
       name: agent.name || "",
@@ -69,16 +72,43 @@ function EditAgentSheet({ agent, onUpdated }: { agent: any; onUpdated: () => voi
       max_iterations: agent.max_iterations || 20,
       memory_budget_mb: agent.memory_budget_mb || 256,
       skills: agent.skills || [],
+      mcp_servers: agent.mcp_servers || [],
     },
   });
-  const { fields, append, remove } = useFieldArray({ control, name: "skills" });
+  const selectedMcpServers = watch("mcp_servers") || [];
+  const { fields, append, remove, replace } = useFieldArray({ control, name: "skills" });
 
   const { data: modelsData } = useQuery({
     queryKey: ["models"],
     queryFn: () => modelsApi.list(),
   });
 
+  const { data: activeSkills } = useQuery({
+    queryKey: ["skills", "active"],
+    queryFn: () => skillsApi.list("active"),
+  });
+
+  const { data: approvedTools } = useQuery({
+    queryKey: ["tools", "approved"],
+    queryFn: () => toolsApi.list("approved"),
+  });
+
+  const { data: mcpServersData } = useQuery({
+    queryKey: ["mcp-servers"],
+    queryFn: () => mcpApi.listServers(),
+  });
+
   const availableModels = modelsData?.models ?? FALLBACK_MODELS;
+  const availableMcpServers = mcpServersData?.servers ?? [];
+
+  const handleApplyAssistantDraft = (draft: AssistantDraft) => {
+    if (draft.system_prompt) {
+      setValue("system_prompt", draft.system_prompt);
+    }
+    if (draft.skills && draft.skills.length > 0) {
+      replace(draft.skills);
+    }
+  };
 
   const mutation = useMutation({
     mutationFn: (data: AgentForm) => agentsApi.update(agent.id, data),
@@ -93,13 +123,23 @@ function EditAgentSheet({ agent, onUpdated }: { agent: any; onUpdated: () => voi
           Edit
         </Button>
       </SheetTrigger>
-      <SheetContent className="w-[520px] overflow-y-auto">
-        <SheetHeader>
-          <SheetTitle>Edit Agent</SheetTitle>
+      <SheetContent className="sm:max-w-[600px] overflow-hidden flex flex-col p-0">
+        <SheetHeader className="border-b border-border px-6 py-4 flex flex-row items-center justify-between">
+          <SheetTitle className="text-lg font-semibold">Edit Agent</SheetTitle>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setShowAssistant(!showAssistant)}
+            className="gap-2"
+          >
+            <Sparkles size={16} />
+            {showAssistant ? "Hide" : "Show"} Assistant
+          </Button>
         </SheetHeader>
         <form
           onSubmit={handleSubmit((d) => mutation.mutate(d))}
-          className="mt-6 flex flex-col gap-4"
+          className="flex-1 overflow-y-auto px-6 py-4 flex flex-col gap-4"
         >
           <div className="grid grid-cols-2 gap-4">
             <div className="flex flex-col gap-1.5">
@@ -206,6 +246,37 @@ function EditAgentSheet({ agent, onUpdated }: { agent: any; onUpdated: () => voi
             ))}
           </div>
 
+          <div className="flex flex-col gap-2">
+            <Label>MCP Servers</Label>
+            {availableMcpServers.length === 0 ? (
+              <p className="text-xs text-muted-foreground">No global MCP servers available</p>
+            ) : (
+              <div className="space-y-2">
+                {availableMcpServers.map((server: any) => (
+                  <div key={server.id} className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id={`mcp-${server.id}`}
+                      checked={selectedMcpServers.includes(server.id)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setValue("mcp_servers", [...selectedMcpServers, server.id]);
+                        } else {
+                          setValue("mcp_servers", selectedMcpServers.filter((id: string) => id !== server.id));
+                        }
+                      }}
+                      className="h-4 w-4 rounded border border-input"
+                    />
+                    <label htmlFor={`mcp-${server.id}`} className="flex-1 text-sm cursor-pointer">
+                      <span className="font-medium">{server.name}</span>
+                      <span className="text-xs text-muted-foreground ml-2">({server.scope})</span>
+                    </label>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           <Separator />
           <div className="flex gap-2 justify-end">
             <Button
@@ -223,6 +294,28 @@ function EditAgentSheet({ agent, onUpdated }: { agent: any; onUpdated: () => voi
           </div>
         </form>
       </SheetContent>
+
+      {/* Assistant Overlay Sheet */}
+      <Sheet open={showAssistant} onOpenChange={setShowAssistant}>
+        <SheetContent
+          side="right"
+          className="w-[440px] p-0 border-l border-border"
+        >
+          <SheetHeader className="border-b border-border px-4 py-3">
+            <SheetTitle className="flex items-center gap-2">
+              <Sparkles size={18} className="text-primary" />
+              Manifest Assistant
+            </SheetTitle>
+          </SheetHeader>
+          <div className="flex-1 overflow-hidden h-[calc(100vh-60px)]">
+            <ManifestAssistantPanel
+              availableSkills={activeSkills ?? []}
+              availableTools={approvedTools ?? []}
+              onApply={handleApplyAssistantDraft}
+            />
+          </div>
+        </SheetContent>
+      </Sheet>
     </Sheet>
   );
 }
@@ -253,6 +346,12 @@ export default function AgentDetailPage({
   const pauseMutation = useMutation({
     mutationFn: () =>
       agentsApi.transition(id, { target_state: "paused", actor: "studio-user" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["agents", id] }),
+  });
+
+  const unpauseMutation = useMutation({
+    mutationFn: () =>
+      agentsApi.transition(id, { target_state: "active", actor: "studio-user" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["agents", id] }),
   });
 
@@ -317,6 +416,16 @@ export default function AgentDetailPage({
               </Button>
             </>
           )}
+          {agent.status === "paused" && (
+            <Button
+              size="sm"
+              className="gap-1.5"
+              onClick={() => unpauseMutation.mutate()}
+              disabled={unpauseMutation.isPending}
+            >
+              {unpauseMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : "Unpause"}
+            </Button>
+          )}
           {(agent.status === "draft" || agent.status === "staged") && (
             <Button
               size="sm"
@@ -380,6 +489,29 @@ export default function AgentDetailPage({
                   <span className="text-xs text-muted-foreground">v{skill.version}</span>
                 </div>
               ))}
+            </div>
+          </section>
+        )}
+
+        {agent.mcp_servers?.length > 0 && (
+          <section>
+            <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">
+              MCP Servers ({agent.mcp_servers.length})
+            </h2>
+            <div className="flex flex-col gap-2">
+              {agent.mcp_servers.map((serverId: string) => {
+                const server = mcpServersData?.servers?.find((s: any) => s.id === serverId);
+                return (
+                  <div
+                    key={serverId}
+                    className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm"
+                  >
+                    <div className="h-3.5 w-3.5 rounded-full bg-blue-400" />
+                    <span className="font-mono">{server?.name || serverId}</span>
+                    <span className="text-xs text-muted-foreground">({server?.scope || 'unknown'})</span>
+                  </div>
+                );
+              })}
             </div>
           </section>
         )}

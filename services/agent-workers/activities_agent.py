@@ -106,6 +106,33 @@ async def invoke_mcp_tool(server_id: str, tool_name: str, args: dict, tenant_id:
 
 
 @activity.defn
+async def resolve_mcp_servers(tenant_id: str, explicit_server_ids: list[str]) -> list[str]:
+    """Returns merged list of global + tenant MCP server IDs."""
+    mcp_registry_url = os.getenv("MCP_REGISTRY_URL", "http://localhost:8090")
+    logging.info(f"Resolving MCP servers for tenant {tenant_id} with explicit IDs: {explicit_server_ids}")
+
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                f"{mcp_registry_url}/api/v1/mcp/servers",
+                headers={"X-Tenant-ID": tenant_id},
+                timeout=10.0,
+            )
+            resp.raise_for_status()
+            servers = resp.json().get("servers") or []
+            registry_ids = [s["id"] for s in servers]
+            logging.info(f"Found {len(registry_ids)} servers in registry (includes global + tenant)")
+
+        # Union: registry (global+tenant) + any explicit manifest server_ids
+        all_ids = list({*registry_ids, *explicit_server_ids})
+        logging.info(f"Total MCP servers resolved: {len(all_ids)}")
+        return all_ids
+    except Exception as e:
+        logging.error(f"Failed to resolve MCP servers: {e}")
+        return explicit_server_ids or []
+
+
+@activity.defn
 async def reasoning_step(messages: list[dict], model: str, tool_defs: list[dict] | None = None) -> dict:
     """Executes a single LLM reasoning step via the LLM Gateway."""
     gateway_url = os.getenv("LLM_GATEWAY_URL", "http://localhost:8083/v1")

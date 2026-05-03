@@ -1,27 +1,18 @@
-FROM golang:1.21-alpine AS builder
+FROM golang:1.23-alpine AS builder
+
+ENV GOPROXY=direct GOSUMDB=off
 
 WORKDIR /app
 
-# Copy go.mod and go.sum (if exists)
-COPY services/mcp-registry/go.mod .
-COPY services/mcp-registry/go.sum . 2>/dev/null || true
-
-# Copy go-shared dependency
+# Copy everything needed
 COPY packages/go-shared ../go-shared
-
-# Download dependencies
-RUN go mod download
-
-# Copy source
 COPY services/mcp-registry .
 
-# Build
+# Build with direct module mode (no proxy)
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o mcp-registry .
 
-# Final stage
-FROM alpine:latest
-
-RUN apk --no-cache add ca-certificates
+# Final stage - use distroless for smaller image and no package install issues
+FROM gcr.io/distroless/base-debian12
 
 WORKDIR /root/
 
