@@ -23,11 +23,25 @@ interface MCPToken {
   expires_at: string | null;
 }
 
+interface AuthConfig {
+  type?: 'bearer_token' | 'api_key' | 'oauth2';
+  token?: string;
+  header_name?: string;
+  key?: string;
+  key_name?: string;
+  key_in?: 'header' | 'query';
+  client_id?: string;
+  client_secret?: string;
+  token_url?: string;
+  scope?: string;
+}
+
 export default function MCPServersPage() {
   const queryClient = useQueryClient();
   const [showServerModal, setShowServerModal] = useState(false);
   const [newServerName, setNewServerName] = useState('');
   const [newServerUrl, setNewServerUrl] = useState('');
+  const [authConfig, setAuthConfig] = useState<AuthConfig>({});
   const [showNewToken, setShowNewToken] = useState(false);
   const [newToken, setNewToken] = useState<string | null>(null);
 
@@ -53,10 +67,15 @@ export default function MCPServersPage() {
 
   // Create server mutation
   const createServerMutation = useMutation({
-    mutationFn: () => adminApi.createMcpServer({ name: newServerName, url: newServerUrl }),
+    mutationFn: () => adminApi.createMcpServer({
+      name: newServerName,
+      url: newServerUrl,
+      auth_config: authConfig.type ? authConfig : undefined,
+    }),
     onSuccess: () => {
       setNewServerName('');
       setNewServerUrl('');
+      setAuthConfig({});
       setShowServerModal(false);
       queryClient.invalidateQueries({ queryKey: ['mcp-servers'] });
     },
@@ -219,12 +238,139 @@ export default function MCPServersPage() {
                   className="w-full px-3 py-2 bg-input text-foreground border border-border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                 />
               </div>
+
+              {/* Auth Configuration Section */}
+              <div className="pt-2 border-t border-border">
+                <label className="block text-sm font-medium text-foreground mb-3">Authentication (Optional)</label>
+
+                <div className="mb-3">
+                  <label className="block text-xs font-medium text-muted-foreground mb-1">Auth Type</label>
+                  <select
+                    value={authConfig.type || ''}
+                    onChange={(e) => setAuthConfig(e.target.value ? { type: e.target.value as any } : {})}
+                    className="w-full px-3 py-2 bg-input text-foreground border border-border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                  >
+                    <option value="">None</option>
+                    <option value="bearer_token">Bearer Token</option>
+                    <option value="api_key">API Key</option>
+                    <option value="oauth2">OAuth 2.0</option>
+                  </select>
+                </div>
+
+                {authConfig.type === 'bearer_token' && (
+                  <>
+                    <div className="mb-2">
+                      <label className="block text-xs font-medium text-muted-foreground mb-1">Token</label>
+                      <input
+                        type="password"
+                        value={authConfig.token || ''}
+                        onChange={(e) => setAuthConfig({ ...authConfig, token: e.target.value })}
+                        placeholder="Bearer token"
+                        className="w-full px-3 py-2 bg-input text-foreground border border-border rounded-md text-xs focus:outline-none focus:ring-2 focus:ring-primary"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-muted-foreground mb-1">Header Name</label>
+                      <input
+                        type="text"
+                        value={authConfig.header_name || 'Authorization'}
+                        onChange={(e) => setAuthConfig({ ...authConfig, header_name: e.target.value })}
+                        placeholder="Authorization"
+                        className="w-full px-3 py-2 bg-input text-foreground border border-border rounded-md text-xs focus:outline-none focus:ring-2 focus:ring-primary"
+                      />
+                    </div>
+                  </>
+                )}
+
+                {authConfig.type === 'api_key' && (
+                  <>
+                    <div className="mb-2">
+                      <label className="block text-xs font-medium text-muted-foreground mb-1">API Key</label>
+                      <input
+                        type="password"
+                        value={authConfig.key || ''}
+                        onChange={(e) => setAuthConfig({ ...authConfig, key: e.target.value })}
+                        placeholder="API key value"
+                        className="w-full px-3 py-2 bg-input text-foreground border border-border rounded-md text-xs focus:outline-none focus:ring-2 focus:ring-primary"
+                      />
+                    </div>
+                    <div className="mb-2">
+                      <label className="block text-xs font-medium text-muted-foreground mb-1">Header/Param Name</label>
+                      <input
+                        type="text"
+                        value={authConfig.key_name || ''}
+                        onChange={(e) => setAuthConfig({ ...authConfig, key_name: e.target.value })}
+                        placeholder="X-API-Key"
+                        className="w-full px-3 py-2 bg-input text-foreground border border-border rounded-md text-xs focus:outline-none focus:ring-2 focus:ring-primary"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-muted-foreground mb-1">Send In</label>
+                      <select
+                        value={authConfig.key_in || 'header'}
+                        onChange={(e) => setAuthConfig({ ...authConfig, key_in: e.target.value as any })}
+                        className="w-full px-3 py-2 bg-input text-foreground border border-border rounded-md text-xs focus:outline-none focus:ring-2 focus:ring-primary"
+                      >
+                        <option value="header">Header</option>
+                        <option value="query">Query Parameter</option>
+                      </select>
+                    </div>
+                  </>
+                )}
+
+                {authConfig.type === 'oauth2' && (
+                  <>
+                    <div className="mb-2">
+                      <label className="block text-xs font-medium text-muted-foreground mb-1">Client ID</label>
+                      <input
+                        type="text"
+                        value={authConfig.client_id || ''}
+                        onChange={(e) => setAuthConfig({ ...authConfig, client_id: e.target.value })}
+                        placeholder="OAuth client ID"
+                        className="w-full px-3 py-2 bg-input text-foreground border border-border rounded-md text-xs focus:outline-none focus:ring-2 focus:ring-primary"
+                      />
+                    </div>
+                    <div className="mb-2">
+                      <label className="block text-xs font-medium text-muted-foreground mb-1">Client Secret</label>
+                      <input
+                        type="password"
+                        value={authConfig.client_secret || ''}
+                        onChange={(e) => setAuthConfig({ ...authConfig, client_secret: e.target.value })}
+                        placeholder="OAuth client secret"
+                        className="w-full px-3 py-2 bg-input text-foreground border border-border rounded-md text-xs focus:outline-none focus:ring-2 focus:ring-primary"
+                      />
+                    </div>
+                    <div className="mb-2">
+                      <label className="block text-xs font-medium text-muted-foreground mb-1">Token URL</label>
+                      <input
+                        type="text"
+                        value={authConfig.token_url || ''}
+                        onChange={(e) => setAuthConfig({ ...authConfig, token_url: e.target.value })}
+                        placeholder="https://oauth.example.com/token"
+                        className="w-full px-3 py-2 bg-input text-foreground border border-border rounded-md text-xs focus:outline-none focus:ring-2 focus:ring-primary"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-muted-foreground mb-1">Scope (optional)</label>
+                      <input
+                        type="text"
+                        value={authConfig.scope || ''}
+                        onChange={(e) => setAuthConfig({ ...authConfig, scope: e.target.value })}
+                        placeholder="read write"
+                        className="w-full px-3 py-2 bg-input text-foreground border border-border rounded-md text-xs focus:outline-none focus:ring-2 focus:ring-primary"
+                      />
+                    </div>
+                  </>
+                )}
+              </div>
+
               <div className="flex gap-2 justify-end pt-4">
                 <button
                   onClick={() => {
                     setShowServerModal(false);
                     setNewServerName('');
                     setNewServerUrl('');
+                    setAuthConfig({});
                   }}
                   disabled={createServerMutation.isPending}
                   className="px-3 py-2 border border-border rounded-md text-sm font-medium text-foreground hover:bg-muted transition-colors disabled:opacity-50"

@@ -204,7 +204,11 @@ export const adminApi = {
     return response.json();
   },
 
-  async createMcpServer(data: { name: string; url: string }): Promise<any> {
+  async createMcpServer(data: {
+    name: string;
+    url: string;
+    auth_config?: Record<string, unknown>;
+  }): Promise<any> {
     const response = await request("POST", "/api/v1/admin/mcp/servers", data);
     if (!response.ok) throw new Error("Failed to create MCP server");
     return response.json();
