@@ -879,8 +879,9 @@ func (h *AdminHandler) HandleCreateGlobalMCPServer(w http.ResponseWriter, r *htt
 	w.Header().Set("Content-Type", "application/json")
 
 	var req struct {
-		Name string `json:"name"`
-		URL  string `json:"url"`
+		Name       string                 `json:"name"`
+		URL        string                 `json:"url"`
+		AuthConfig map[string]interface{} `json:"auth_config,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -895,10 +896,21 @@ func (h *AdminHandler) HandleCreateGlobalMCPServer(w http.ResponseWriter, r *htt
 	id := uuid.New().String()
 	now := time.Now()
 
+	// Convert auth_config to JSON
+	var authJSON []byte
+	if req.AuthConfig != nil {
+		var err error
+		authJSON, err = json.Marshal(req.AuthConfig)
+		if err != nil {
+			http.Error(w, "Invalid auth_config format", http.StatusBadRequest)
+			return
+		}
+	}
+
 	_, err := h.DB.Exec(r.Context(), `
-		INSERT INTO mcp_servers (id, tenant_id, name, url, enabled, scope, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-	`, id, "platform-system", req.Name, req.URL, true, "global", now, now)
+		INSERT INTO mcp_servers (id, tenant_id, name, url, enabled, scope, auth_config, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	`, id, "platform-system", req.Name, req.URL, true, "global", authJSON, now, now)
 
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to create MCP server: %v", err), http.StatusInternalServerError)
@@ -922,7 +934,7 @@ func (h *AdminHandler) HandleListGlobalMCPServers(w http.ResponseWriter, r *http
 	w.Header().Set("Content-Type", "application/json")
 
 	rows, err := h.DB.Query(r.Context(), `
-		SELECT id, tenant_id, name, url, enabled, scope, created_at, updated_at
+		SELECT id, tenant_id, name, url, enabled, scope, auth_config, created_at, updated_at
 		FROM mcp_servers
 		WHERE scope = 'global'
 		ORDER BY created_at DESC
@@ -947,7 +959,8 @@ func (h *AdminHandler) HandleListGlobalMCPServers(w http.ResponseWriter, r *http
 	var servers []MCPServer
 	for rows.Next() {
 		var s MCPServer
-		if err := rows.Scan(&s.ID, &s.TenantID, &s.Name, &s.URL, &s.Enabled, &s.Scope, &s.CreatedAt, &s.UpdatedAt); err != nil {
+		var authJSON interface{}
+		if err := rows.Scan(&s.ID, &s.TenantID, &s.Name, &s.URL, &s.Enabled, &s.Scope, &authJSON, &s.CreatedAt, &s.UpdatedAt); err != nil {
 			http.Error(w, fmt.Sprintf("Scan failed: %v", err), http.StatusInternalServerError)
 			return
 		}
