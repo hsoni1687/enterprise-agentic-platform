@@ -6,6 +6,7 @@ This doesn't require Temporal or external services.
 
 import sys
 import asyncio
+import pytest
 from models import AgentContext, ToolCall, ToolResult, AgentDecision, MCPToolDefinition
 from pydantic_ai_agent import build_agent_with_tools, AgentToolRegistry
 
@@ -78,6 +79,7 @@ def test_tool_registry():
     print("✓ AgentToolRegistry works correctly\n")
 
 
+@pytest.mark.asyncio
 async def test_imports():
     """Test all imports work."""
     print("Testing imports...")
@@ -134,6 +136,7 @@ async def test_imports():
     return True
 
 
+@pytest.mark.asyncio
 async def test_type_validation():
     """Test Pydantic validation."""
     print("Testing Pydantic validation...")
@@ -162,6 +165,7 @@ async def test_type_validation():
     return True
 
 
+@pytest.mark.asyncio
 async def test_manifest_compatibility():
     """Test compatibility with existing agent manifests."""
     print("Testing manifest compatibility...")
