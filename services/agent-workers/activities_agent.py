@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+from typing import Optional
 from temporalio import activity
 from openai import AsyncOpenAI
 import httpx
@@ -133,7 +134,7 @@ async def resolve_mcp_servers(tenant_id: str, explicit_server_ids: list[str]) ->
 
 
 @activity.defn
-async def reasoning_step(messages: list[dict], model: str, tool_defs: list[dict] | None = None) -> dict:
+async def reasoning_step(messages: list[dict], model: str, tool_defs: Optional[list[dict]] = None) -> dict:
     """Executes a single LLM reasoning step via the LLM Gateway."""
     gateway_url = os.getenv("LLM_GATEWAY_URL", "http://localhost:8083/v1")
     client = AsyncOpenAI(base_url=gateway_url, api_key="sk-mock-key")
