@@ -37,13 +37,7 @@ class AgentWorkflow:
             retry_policy=RetryPolicy(maximum_attempts=2),
         )
 
-        # Build LLM tool definitions concurrently while recall is in flight
-        tool_defs = [_execute_code_tool_def()]
-        for skill_ref in skills:
-            tool_defs.append(_skill_tool_def(skill_ref["name"]))
-
         # Discover MCP tools: merge global + tenant + explicit servers
-        mcp_meta_map = {}
         explicit_mcp_servers = manifest.get("mcp_servers") or []
 
         # Resolve all applicable MCP servers (global + tenant + explicit)
@@ -54,20 +48,19 @@ class AgentWorkflow:
             retry_policy=RetryPolicy(maximum_attempts=2),
         )
 
+        # Discover MCP tool definitions
+        mcp_tool_defs = []
         if all_mcp_servers:
             try:
-                mcp_tool_defs = await workflow.execute_activity(
+                discovered = await workflow.execute_activity(
                     "discover_mcp_tools",
                     args=[all_mcp_servers, tenant_id],
                     start_to_close_timeout=timedelta(seconds=30),
                     retry_policy=RetryPolicy(maximum_attempts=2),
                 )
-                # Strip __mcp_meta before passing to LLM, store in lookup map
-                for t in mcp_tool_defs:
-                    meta = t.pop("__mcp_meta", None)
-                    if meta:
-                        mcp_meta_map[t["function"]["name"]] = meta
-                tool_defs.extend(mcp_tool_defs)
+                # Convert to MCPToolDefinition dicts (with metadata preserved)
+                for tool in discovered:
+                    mcp_tool_defs.append(tool)
             except Exception as e:
                 workflow.logger.warning(f"MCP tool discovery failed: {e}")
 
@@ -84,14 +77,27 @@ class AgentWorkflow:
 
         self._emit({"type": "thinking", "content": f"Starting reasoning for: {prompt[:80]}"})
 
-        # 2. ReAct reasoning loop
+        # Build agent context
+        agent_context = {
+            "agent_id": agent_id,
+            "tenant_id": tenant_id,
+            "prompt": prompt,
+            "model": model,
+            "max_iterations": max_iterations,
+            "system_prompt": system_prompt,
+            "skills": skills,
+            "mcp_servers": explicit_mcp_servers,
+        }
+
+        # 2. ReAct reasoning loop using PydanticAI
         final_answer = None
         for i in range(max_iterations):
             workflow.logger.info(f"Iteration {i + 1}/{max_iterations}")
 
-            step_result = await workflow.execute_activity(
-                "reasoning_step",
-                args=[messages, model, tool_defs],
+            # Call new PydanticAI-based reasoning step
+            decision = await workflow.execute_activity(
+                "pydantic_ai_reasoning_step",
+                args=[agent_context, messages, mcp_tool_defs],
                 start_to_close_timeout=timedelta(seconds=60),
                 retry_policy=RetryPolicy(
                     maximum_attempts=3,
@@ -99,81 +105,33 @@ class AgentWorkflow:
                 ),
             )
 
-            content = step_result.get("content")
-            tool_calls = step_result.get("tool_calls")
+            final_answer = decision.get("final_answer")
+            tool_calls = decision.get("tool_calls")
+            continue_loop = decision.get("continue_loop", False)
 
+            # Emit decision state
+            if decision.get("reasoning"):
+                self._emit({"type": "thinking", "content": decision["reasoning"]})
+
+            # Process tool calls (routing is now handled by PydanticAI internally)
             if tool_calls:
-                if content:
-                    self._emit({"type": "thinking", "content": content})
-
-                assistant_msg = {
-                    "role": "assistant",
-                    "content": content,
-                    "tool_calls": [
-                        {
-                            "id": tc["id"],
-                            "type": "function",
-                            "function": {
-                                "name": tc["function"]["name"],
-                                "arguments": tc["function"]["arguments"],
-                            },
-                        }
-                        for tc in tool_calls
-                    ],
-                }
-                messages.append(assistant_msg)
-
                 for tc in tool_calls:
-                    tool_name = tc["function"]["name"]
-                    raw_args = tc["function"]["arguments"]
-                    args_dict = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
-
-                    self._emit({"type": "tool_call", "name": tool_name, "args": json.dumps(args_dict)})
-
-                    if tool_name == "execute_code":
-                        result = await workflow.execute_activity(
-                            "execute_code",
-                            args_dict.get("code", ""),
-                            start_to_close_timeout=timedelta(seconds=60),
-                            retry_policy=RetryPolicy(maximum_attempts=3),
-                        )
-                    elif tool_name.startswith("mcp__"):
-                        # Route MCP tool calls through the MCP registry
-                        meta = mcp_meta_map.get(tool_name, {})
-                        result = await workflow.execute_activity(
-                            "invoke_mcp_tool",
-                            args=[meta.get("server_id"), meta.get("tool_name"), args_dict, tenant_id],
-                            start_to_close_timeout=timedelta(seconds=60),
-                            retry_policy=RetryPolicy(maximum_attempts=2),
-                        )
-                    else:
-                        # Dispatch as a skill via skill-dispatcher
-                        result = await workflow.execute_activity(
-                            "invoke_skill",
-                            args=[tool_name, args_dict, tenant_id, agent_id],
-                            start_to_close_timeout=timedelta(seconds=60),
-                            retry_policy=RetryPolicy(maximum_attempts=2),
-                        )
-
-                    # Patch result into the already-emitted tool_call event
-                    self._events[-1]["result"] = str(result)
-
-                    # Add tool result as a user message (Anthropic format requires tool_result in user message)
-                    messages.append({
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": tc["id"],
-                                "content": str(result),
-                            }
-                        ],
+                    tool_name = tc.get("name", "unknown")
+                    tool_args = tc.get("arguments", {})
+                    self._emit({
+                        "type": "tool_call",
+                        "name": tool_name,
+                        "args": json.dumps(tool_args)
                     })
-                continue
 
-            # No tool calls — LLM produced final answer
-            final_answer = content
-            break
+                # Note: Tool invocations and result collection happen inside
+                # pydantic_ai_reasoning_step. The messages here are pre-updated.
+                if decision.get("messages_delta"):
+                    messages.extend(decision["messages_delta"])
+
+            # Check if we should stop
+            if final_answer or not continue_loop:
+                break
 
         if not final_answer:
             final_answer = "Exceeded max reasoning iterations without a conclusion."

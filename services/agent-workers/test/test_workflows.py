@@ -5,7 +5,14 @@ from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
 from workflows import AgentWorkflow
-from activities_agent import execute_code, reasoning_step, discover_mcp_tools, invoke_mcp_tool, resolve_mcp_servers
+from activities_agent import (
+    execute_code,
+    reasoning_step,
+    pydantic_ai_reasoning_step,
+    discover_mcp_tools,
+    invoke_mcp_tool,
+    resolve_mcp_servers,
+)
 from activities_memory import recall_memories, store_memory
 
 
@@ -18,8 +25,11 @@ async def test_agent_reasoning_loop():
                 side_effect=[
                     httpx.Response(200, json={
                         "id": "mock-1",
+                        "object": "chat.completion",
                         "model": "mock-gpt-4o",
+                        "created": 1234567890,
                         "choices": [{
+                            "index": 0,
                             "message": {
                                 "role": "assistant",
                                 "content": None,
@@ -37,8 +47,11 @@ async def test_agent_reasoning_loop():
                     }),
                     httpx.Response(200, json={
                         "id": "mock-2",
+                        "object": "chat.completion",
                         "model": "mock-gpt-4o",
+                        "created": 1234567891,
                         "choices": [{
+                            "index": 0,
                             "message": {
                                 "role": "assistant",
                                 "content": "The answer is 4.",
@@ -68,7 +81,16 @@ async def test_agent_reasoning_loop():
                 env.client,
                 task_queue="test-reasoning-queue",
                 workflows=[AgentWorkflow],
-                activities=[execute_code, reasoning_step, recall_memories, store_memory],
+                activities=[
+                    execute_code,
+                    reasoning_step,
+                    pydantic_ai_reasoning_step,
+                    discover_mcp_tools,
+                    invoke_mcp_tool,
+                    resolve_mcp_servers,
+                    recall_memories,
+                    store_memory,
+                ],
             ):
                 request = {
                     "agent_id": "math-agent",
@@ -94,8 +116,11 @@ async def test_agent_no_tool_calls():
             respx.post("http://localhost:8083/v1/chat/completions").mock(
                 return_value=httpx.Response(200, json={
                     "id": "mock-direct",
+                    "object": "chat.completion",
                     "model": "mock-gpt-4o",
+                    "created": 1234567890,
                     "choices": [{
+                        "index": 0,
                         "message": {"role": "assistant", "content": "Paris is the capital of France.", "tool_calls": None},
                         "finish_reason": "stop"
                     }]
@@ -113,7 +138,16 @@ async def test_agent_no_tool_calls():
                 env.client,
                 task_queue="test-direct-queue",
                 workflows=[AgentWorkflow],
-                activities=[execute_code, reasoning_step, recall_memories, store_memory],
+                activities=[
+                    execute_code,
+                    reasoning_step,
+                    pydantic_ai_reasoning_step,
+                    discover_mcp_tools,
+                    invoke_mcp_tool,
+                    resolve_mcp_servers,
+                    recall_memories,
+                    store_memory,
+                ],
             ):
                 request = {
                     "agent_id": "geo-agent",
@@ -177,8 +211,11 @@ async def test_agent_mcp_tool_call():
                 side_effect=[
                     httpx.Response(200, json={
                         "id": "mock-mcp-1",
+                        "object": "chat.completion",
                         "model": "mock-gpt-4o",
+                        "created": 1234567890,
                         "choices": [{
+                            "index": 0,
                             "message": {
                                 "role": "assistant",
                                 "content": None,
@@ -196,8 +233,11 @@ async def test_agent_mcp_tool_call():
                     }),
                     httpx.Response(200, json={
                         "id": "mock-mcp-2",
+                        "object": "chat.completion",
                         "model": "mock-gpt-4o",
+                        "created": 1234567891,
                         "choices": [{
+                            "index": 0,
                             "message": {
                                 "role": "assistant",
                                 "content": "Found 5 repositories from anthropics.",
@@ -229,7 +269,16 @@ async def test_agent_mcp_tool_call():
                 env.client,
                 task_queue="test-mcp-queue",
                 workflows=[AgentWorkflow],
-                activities=[execute_code, reasoning_step, discover_mcp_tools, invoke_mcp_tool, resolve_mcp_servers, recall_memories, store_memory],
+                activities=[
+                    execute_code,
+                    reasoning_step,
+                    pydantic_ai_reasoning_step,
+                    discover_mcp_tools,
+                    invoke_mcp_tool,
+                    resolve_mcp_servers,
+                    recall_memories,
+                    store_memory,
+                ],
             ):
                 request = {
                     "agent_id": "github-agent",

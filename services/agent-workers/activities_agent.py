@@ -179,3 +179,95 @@ def _default_execute_code_tool() -> dict:
             },
         },
     }
+
+
+@activity.defn
+async def pydantic_ai_reasoning_step(
+    context_dict: dict,
+    messages: list[dict],
+    mcp_tools_list: list[dict],
+) -> dict:
+    """
+    Executes a single LLM reasoning step using PydanticAI.
+
+    This is the new implementation that uses PydanticAI's agent framework
+    for cleaner tool registration, type-safe tool calls, and simplified
+    message management. It replaces the manual tool dispatch logic in
+    workflows.py.
+
+    Args:
+        context_dict: Agent context as dict (agent_id, tenant_id, prompt, model, etc.)
+        messages: Current message history
+        mcp_tools_list: Discovered MCP tools as dicts
+
+    Returns:
+        Dict with keys:
+        - final_answer: str or None (if LLM decided to stop)
+        - tool_calls: list[dict] or None (if LLM wants to invoke tools)
+        - messages_delta: list[dict] (updated message history)
+        - continue_loop: bool (whether to continue reasoning)
+    """
+    from models import AgentContext, MCPToolDefinition
+    from pydantic_ai_agent import build_agent_with_tools, convert_response_to_decision
+
+    logging.info(f"PydanticAI reasoning step for agent {context_dict.get('agent_id')}")
+
+    try:
+        # Validate context using Pydantic model
+        context = AgentContext(**context_dict)
+        logging.info(f"Reasoning: model={context.model}, iterations={context.max_iterations}")
+
+        # Convert MCP tools from OpenAI format to MCPToolDefinition
+        from pydantic_ai_agent import _convert_openai_tool_to_mcp_definition
+
+        mcp_tools = []
+        for tool_dict in mcp_tools_list:
+            try:
+                mcp_def = _convert_openai_tool_to_mcp_definition(tool_dict)
+                mcp_tools.append(mcp_def)
+            except Exception as e:
+                logging.warning(f"Failed to convert MCP tool: {e}")
+                continue
+
+        # Build agent with all registered tools
+        # Note: workflow_ref is None here; tool invocations will use workflow.execute_activity
+        agent = await build_agent_with_tools(context, workflow_ref=None, mcp_tools=mcp_tools)
+
+        # Run agent for single reasoning step
+        # Note: We only pass user_prompt and system_prompt, not message history,
+        # because PydanticAI manages message history internally
+        logging.info(f"Calling PydanticAI agent with {len(mcp_tools)} MCP tools")
+        response = await agent.run(
+            user_prompt=context.prompt,
+        )
+
+        # Debug: log response structure
+        logging.info(f"PydanticAI response type: {type(response)}")
+        logging.info(f"PydanticAI response attrs: {dir(response)}")
+        if hasattr(response, "data"):
+            logging.info(f"PydanticAI response.data: {response.data}")
+        if hasattr(response, "messages"):
+            logging.info(f"PydanticAI response.messages count: {len(response.messages)}")
+
+        # Convert PydanticAI response to our AgentDecision model
+        decision = await convert_response_to_decision(response, mcp_tools)
+
+        result = {
+            "final_answer": decision.final_answer,
+            "tool_calls": [tc.model_dump() for tc in decision.tool_calls],
+            "messages_delta": decision.messages_delta,
+            "continue_loop": decision.continue_loop,
+        }
+        logging.info(f"Returning decision: {result}")
+        return result
+
+    except Exception as e:
+        logging.error(f"PydanticAI reasoning step failed: {e}", exc_info=True)
+        logging.error(f"Exception type: {type(e)}", exc_info=False)
+        return {
+            "final_answer": None,
+            "tool_calls": [],
+            "messages_delta": [],
+            "continue_loop": False,
+            "error": str(e),
+        }
