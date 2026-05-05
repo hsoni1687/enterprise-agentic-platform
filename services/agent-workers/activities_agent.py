@@ -242,17 +242,20 @@ async def pydantic_ai_reasoning_step(
         # Build agent with all registered tools
         # Note: workflow_ref is None here; tool invocations will use workflow.execute_activity
         logging.info(f"[STEP 4] Building agent with model={context.model}, {len(mcp_tools)} tools")
+        logging.info(f"[STEP 4] LLM_GATEWAY_URL={os.getenv('LLM_GATEWAY_URL')}")
         agent = await build_agent_with_tools(context, workflow_ref=None, mcp_tools=mcp_tools)
         logging.info(f"[STEP 5] Agent built successfully")
 
         # Run agent for single reasoning step
         # Note: We only pass user_prompt and system_prompt, not message history,
         # because PydanticAI manages message history internally
-        logging.info(f"Calling PydanticAI agent with {len(mcp_tools)} MCP tools and max_tokens=20000")
+        logging.info(f"[STEP 6] Calling PydanticAI agent with {len(mcp_tools)} MCP tools and max_tokens=20000")
+        logging.info(f"[STEP 6] Model: {context.model}, Prompt length: {len(context.prompt)}, System prompt length: {len(context.system_prompt)}")
         response = await agent.run(
             user_prompt=context.prompt,
             model_settings=ModelSettings(max_tokens=20000, budget_tokens=0),
         )
+        logging.info(f"[STEP 7] Response received: type={type(response)}")
 
         # Log raw response size before processing - write directly to file
         try:
