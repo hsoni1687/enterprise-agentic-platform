@@ -247,7 +247,7 @@ async def pydantic_ai_reasoning_step(
         logging.info(f"Calling PydanticAI agent with {len(mcp_tools)} MCP tools and max_tokens=20000")
         response = await agent.run(
             user_prompt=context.prompt,
-            model_settings=ModelSettings(max_tokens=20000),
+            model_settings=ModelSettings(max_tokens=20000, budget_tokens=0),
         )
 
         # Log raw response size before processing - write directly to file
