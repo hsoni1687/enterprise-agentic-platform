@@ -221,17 +221,35 @@ async def build_agent_with_tools(
     os.environ.setdefault("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY", "sk-mock-key"))
 
     # Let PydanticAI infer and configure the model from environment
-    model = infer_model(f"openai:{context.model}")
+    logger.info(f"[build_agent] Inferring model: openai:{context.model}")
+    try:
+        model = infer_model(f"openai:{context.model}")
+        logger.info(f"[build_agent] Model inferred successfully")
+    except Exception as e:
+        logger.error(f"[build_agent] Failed to infer model: {e}", exc_info=True)
+        raise
 
     # Initialize agent with configured model
-    agent = Agent(
-        model=model,
-        system_prompt=context.system_prompt,
-    )
+    logger.info(f"[build_agent] Creating Agent with system_prompt length={len(context.system_prompt)}")
+    try:
+        agent = Agent(
+            model=model,
+            system_prompt=context.system_prompt,
+        )
+        logger.info(f"[build_agent] Agent created successfully")
+    except Exception as e:
+        logger.error(f"[build_agent] Failed to create Agent: {e}", exc_info=True)
+        raise
 
     # Build and register all tools
-    registry = AgentToolRegistry(context, workflow_ref, mcp_tools)
-    agent = registry.register_tools(agent)
+    logger.info(f"[build_agent] Registering tools")
+    try:
+        registry = AgentToolRegistry(context, workflow_ref, mcp_tools)
+        agent = registry.register_tools(agent)
+        logger.info(f"[build_agent] Tools registered successfully")
+    except Exception as e:
+        logger.error(f"[build_agent] Failed to register tools: {e}", exc_info=True)
+        raise
 
     return agent
 

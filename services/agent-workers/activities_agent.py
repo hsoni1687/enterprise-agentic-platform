@@ -221,13 +221,15 @@ async def pydantic_ai_reasoning_step(
 
     try:
         # Validate context using Pydantic model
+        logging.info(f"[STEP 1] Creating AgentContext from dict: {list(context_dict.keys())}")
         context = AgentContext(**context_dict)
-        logging.info(f"Reasoning: model={context.model}, iterations={context.max_iterations}")
+        logging.info(f"[STEP 2] Reasoning: model={context.model}, iterations={context.max_iterations}")
 
         # Convert MCP tools from OpenAI format to MCPToolDefinition
         from pydantic_ai_agent import _convert_openai_tool_to_mcp_definition
         from pydantic_ai.models import ModelSettings
 
+        logging.info(f"[STEP 3] Converting {len(mcp_tools_list)} MCP tools")
         mcp_tools = []
         for tool_dict in mcp_tools_list:
             try:
@@ -239,7 +241,9 @@ async def pydantic_ai_reasoning_step(
 
         # Build agent with all registered tools
         # Note: workflow_ref is None here; tool invocations will use workflow.execute_activity
+        logging.info(f"[STEP 4] Building agent with model={context.model}, {len(mcp_tools)} tools")
         agent = await build_agent_with_tools(context, workflow_ref=None, mcp_tools=mcp_tools)
+        logging.info(f"[STEP 5] Agent built successfully")
 
         # Run agent for single reasoning step
         # Note: We only pass user_prompt and system_prompt, not message history,
