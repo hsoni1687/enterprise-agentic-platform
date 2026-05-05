@@ -136,6 +136,11 @@ async def resolve_mcp_servers(tenant_id: str, explicit_server_ids: list[str]) ->
 @activity.defn
 async def reasoning_step(messages: list[dict], model: str, tool_defs: Optional[list[dict]] = None) -> dict:
     """Executes a single LLM reasoning step via the LLM Gateway."""
+    # DEBUG: Write to file to see if old reasoning_step is being called
+    with open("/tmp/activity-debug.log", "w") as f:
+        f.write("[OLD_REASONING_STEP_CALLED]\n")
+        f.flush()
+
     gateway_url = os.getenv("LLM_GATEWAY_URL", "http://localhost:8083/v1")
     client = AsyncOpenAI(base_url=gateway_url, api_key="sk-mock-key")
 
@@ -210,7 +215,9 @@ async def pydantic_ai_reasoning_step(
     from models import AgentContext, MCPToolDefinition
     from pydantic_ai_agent import build_agent_with_tools, convert_response_to_decision
 
-    logging.info(f"PydanticAI reasoning step for agent {context_dict.get('agent_id')}")
+    import sys
+    agent_id = context_dict.get('agent_id')
+    logging.info(f"PydanticAI reasoning step for agent {agent_id}")
 
     try:
         # Validate context using Pydantic model
@@ -219,6 +226,7 @@ async def pydantic_ai_reasoning_step(
 
         # Convert MCP tools from OpenAI format to MCPToolDefinition
         from pydantic_ai_agent import _convert_openai_tool_to_mcp_definition
+        from pydantic_ai.models import ModelSettings
 
         mcp_tools = []
         for tool_dict in mcp_tools_list:
@@ -236,16 +244,31 @@ async def pydantic_ai_reasoning_step(
         # Run agent for single reasoning step
         # Note: We only pass user_prompt and system_prompt, not message history,
         # because PydanticAI manages message history internally
-        logging.info(f"Calling PydanticAI agent with {len(mcp_tools)} MCP tools")
+        logging.info(f"Calling PydanticAI agent with {len(mcp_tools)} MCP tools and max_tokens=20000")
         response = await agent.run(
             user_prompt=context.prompt,
+            model_settings=ModelSettings(max_tokens=20000),
         )
+
+        # Log raw response size before processing - write directly to file
+        try:
+            with open("/tmp/response-debug.txt", "w") as f:
+                f.write(f"Response type: {type(response)}\n")
+                if hasattr(response, 'data'):
+                    raw_data = str(response.data) if response.data else ""
+                    f.write(f"Raw response.data length: {len(raw_data)} characters\n")
+                    f.write(f"First 300 chars:\n{raw_data[:300]}\n")
+                    f.write(f"Last 300 chars:\n{raw_data[-300:]}\n")
+                f.flush()
+        except Exception as e:
+            pass
 
         # Debug: log response structure
         logging.info(f"PydanticAI response type: {type(response)}")
         logging.info(f"PydanticAI response attrs: {dir(response)}")
         if hasattr(response, "data"):
-            logging.info(f"PydanticAI response.data: {response.data}")
+            data_str = str(response.data) if response.data else "None"
+            logging.info(f"PydanticAI response.data length: {len(data_str)}, first 200 chars: {data_str[:200]}")
         if hasattr(response, "messages"):
             logging.info(f"PydanticAI response.messages count: {len(response.messages)}")
 
@@ -258,7 +281,29 @@ async def pydantic_ai_reasoning_step(
             "messages_delta": decision.messages_delta,
             "continue_loop": decision.continue_loop,
         }
-        logging.info(f"Returning decision: {result}")
+
+        # Log what we're actually returning
+        if decision.final_answer:
+            answer_len = len(decision.final_answer)
+            logging.info(f"Final answer length: {answer_len} chars")
+            logging.info(f"Final answer STARTS with: {decision.final_answer[:300]}")
+            logging.info(f"Final answer ends with: ...{decision.final_answer[-100:]}")
+
+            # Check for required sections
+            has_prompt = "## System Prompt Draft" in decision.final_answer
+            has_skills = "## Recommended Skills" in decision.final_answer
+            logging.info(f"Sections: system_prompt={has_prompt}, recommended_skills={has_skills}")
+
+            # Write directly to debug file
+            with open("/tmp/activity-debug.log", "a") as f:
+                f.write(f"[FINAL] Length: {answer_len}, system_prompt={has_prompt}, recommended_skills={has_skills}\n")
+                f.write(f"[START_TEXT] {decision.final_answer[:200]}\n")
+                f.write(f"[END_TEXT] {decision.final_answer[-200:]}\n")
+                if not has_skills:
+                    f.write(f"[ERROR] MISSING Recommended Skills section!\n")
+                f.flush()
+
+        logging.info(f"Returning decision with {len(result)} fields")
         return result
 
     except Exception as e:

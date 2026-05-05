@@ -184,16 +184,19 @@ ${toolLines.join("\n")}
 function extractAssistantDraft(text: string): AssistantDraft {
   const draft: AssistantDraft = {};
 
-  // Extract system prompt
+  // Extract system prompt - capture from "## System Prompt Draft" until the next
+  // "##" section header (but NOT "###" which indicates subsection within the prompt)
   const systemPromptMatch = text.match(
-    /##\s*System Prompt Draft\s*\n([\s\S]*?)(?=##|\Z)/i
+    /##\s*System Prompt Draft\s*\n([\s\S]*?)\n##\s+(?!##)/i
   );
   if (systemPromptMatch) {
-    draft.system_prompt = systemPromptMatch[1]
-      .trim()
-      .split("\n")
-      .filter((line) => line.trim())
-      .join("\n");
+    draft.system_prompt = systemPromptMatch[1].trim();
+  } else {
+    // Fallback: if no next ## found, capture to end of string
+    const fallbackMatch = text.match(/##\s*System Prompt Draft\s*\n([\s\S]*)/i);
+    if (fallbackMatch) {
+      draft.system_prompt = fallbackMatch[1].trim();
+    }
   }
 
   // Extract recommended skills
@@ -283,13 +286,18 @@ export const ManifestAssistantPanel: React.FC<ManifestAssistantPanelProps> = ({
 
       if (!response.body) throw new Error("No response body");
 
+      console.log("[Streaming] Started receiving response body");
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
+      let eventCount = 0;
 
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {
+          console.log(`[Streaming] Response complete. Total events: ${eventCount}`);
+          break;
+        }
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
@@ -301,7 +309,9 @@ export const ManifestAssistantPanel: React.FC<ManifestAssistantPanelProps> = ({
               const eventStr = line.slice(5).trim();
               if (!eventStr) continue;
 
+              eventCount++;
               const event = JSON.parse(eventStr) as ChatEvent;
+              console.log(`[Streaming] Event #${eventCount}: type=${event.type}`);
 
               setMessages((prev) => {
                 const lastMsg = prev[prev.length - 1];
@@ -319,17 +329,22 @@ export const ManifestAssistantPanel: React.FC<ManifestAssistantPanelProps> = ({
                     events: [...(lastMsg.events || []), event],
                   };
                 } else if (event.type === "text") {
+                  const newContent = (lastMsg.content || "") + (event.content || "");
+                  console.log(`[Streaming] Text event received. Length: ${newContent.length}`);
                   updated[updated.length - 1] = {
                     ...lastMsg,
-                    content: (lastMsg.content || "") + (event.content || ""),
+                    content: newContent,
                   };
                 } else if (event.type === "done" || event.type === "error") {
+                  const finalContent = updated[updated.length - 1]?.content || "";
+                  console.log(`[Streaming] Done event. Final content length: ${finalContent.length}`);
                   updated[updated.length - 1] = {
                     ...lastMsg,
                     streaming: false,
                   };
                   // Extract draft on completion (even if error occurred)
-                  const draft = extractAssistantDraft(lastMsg.content || "");
+                  const draft = extractAssistantDraft(finalContent);
+                  console.log(`[Extraction] Draft system_prompt length: ${draft.system_prompt?.length || 0}`);
                   setApplyable(draft);
                 }
 

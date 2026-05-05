@@ -333,6 +333,11 @@ export default function AgentDetailPage({
     queryFn: () => agentsApi.get(id),
   });
 
+  const { data: mcpServersData } = useQuery({
+    queryKey: ["mcp-servers"],
+    queryFn: () => mcpApi.listServers(),
+  });
+
   const deployMutation = useMutation({
     mutationFn: async () => {
       if (agent?.status === "draft") {
@@ -493,13 +498,13 @@ export default function AgentDetailPage({
           </section>
         )}
 
-        {agent.mcp_servers?.length > 0 && (
+        {(agent.mcp_servers?.length ?? 0) > 0 && (
           <section>
             <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">
-              MCP Servers ({agent.mcp_servers.length})
+              MCP Servers ({agent.mcp_servers?.length})
             </h2>
             <div className="flex flex-col gap-2">
-              {agent.mcp_servers.map((serverId: string) => {
+              {agent.mcp_servers?.map((serverId: string) => {
                 const server = mcpServersData?.servers?.find((s: any) => s.id === serverId);
                 return (
                   <div

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm, useFieldArray, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -60,7 +60,7 @@ const STATUS_COLORS: Record<string, string> = {
 
 function CreateAgentSheet({ onCreated }: { onCreated: () => void }) {
   const [open, setOpen] = useState(false);
-  const [showAssistant, setShowAssistant] = useState(true);
+  const [showAssistant, setShowAssistant] = useState(false);
   const { register, handleSubmit, reset, control, setValue, formState: { errors } } = useForm<AgentForm>({
     resolver: zodResolver(agentSchema),
     defaultValues: {
@@ -88,7 +88,13 @@ function CreateAgentSheet({ onCreated }: { onCreated: () => void }) {
     queryFn: () => modelsApi.list(),
   });
 
-  const availableModels = modelsData?.models ?? FALLBACK_MODELS;
+  // Merge API models with fallback models, avoiding duplicates
+  const availableModels = useMemo(() => {
+    const apiModels = modelsData?.models ?? [];
+    const apiIds = new Set(apiModels.map(m => m.id));
+    const fallbackModels = FALLBACK_MODELS.filter(m => !apiIds.has(m.id));
+    return [...apiModels, ...fallbackModels];
+  }, [modelsData?.models]);
 
   const mutation = useMutation({
     mutationFn: (data: AgentForm) => agentsApi.create(data),
@@ -250,11 +256,17 @@ function CreateAgentSheet({ onCreated }: { onCreated: () => void }) {
 }
 
 export default function AgentsPage() {
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const qc = useQueryClient();
-  const { data: agents, isLoading, isError } = useQuery({
+  const { data: allAgents, isLoading, isError } = useQuery({
     queryKey: ["agents"],
     queryFn: () => agentsApi.list(),
   });
+
+  // Filter out archived agents and agents with empty IDs
+  const agents = useMemo(() => {
+    return allAgents?.filter((a: AgentRecord) => a.status !== "archived" && a.id?.trim()) ?? [];
+  }, [allAgents]);
 
   const deployMutation = useMutation({
     mutationFn: async (id: string) => {
@@ -262,6 +274,14 @@ export default function AgentsPage() {
       return agentsApi.transition(id, { target_state: "active", actor: "studio-user" });
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["agents"] }),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => agentsApi.delete(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["agents"] });
+      setDeleteConfirmId(null);
+    },
   });
 
   return (
@@ -349,12 +369,59 @@ export default function AgentsPage() {
                   <Link href={`/agents/${agent.id}`}>
                     <Button size="sm" variant="ghost">View</Button>
                   </Link>
+                  <Button
+                    size="sm"
+                    type="button"
+                    variant="outline"
+                    onClick={() => setDeleteConfirmId(agent.id)}
+                    className="text-red-500 border-red-200 hover:text-red-600 hover:bg-red-50 hover:border-red-300"
+                    title="Delete agent"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
                 </div>
               </div>
             </div>
           ))}
         </div>
       )}
+
+      {/* Delete Confirmation Modal */}
+      <Sheet open={deleteConfirmId !== null} onOpenChange={(open) => !open && setDeleteConfirmId(null)}>
+        <SheetContent side="right">
+          <SheetHeader>
+            <SheetTitle>Delete Agent</SheetTitle>
+          </SheetHeader>
+          <div className="py-6 space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Are you sure you want to delete this agent? This action cannot be undone.
+            </p>
+            <div className="flex gap-2 justify-end pt-4">
+              <Button variant="outline" onClick={() => setDeleteConfirmId(null)}>
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => {
+                  if (deleteConfirmId) {
+                    deleteMutation.mutate(deleteConfirmId);
+                  }
+                }}
+                disabled={deleteMutation.isPending}
+              >
+                {deleteMutation.isPending ? (
+                  <>
+                    <Loader2 className="h-3 w-3 animate-spin mr-2" />
+                    Deleting...
+                  </>
+                ) : (
+                  "Delete"
+                )}
+              </Button>
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

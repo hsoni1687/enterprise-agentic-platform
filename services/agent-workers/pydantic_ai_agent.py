@@ -106,6 +106,11 @@ class AgentToolRegistry:
         and cannot invoke other activities.
         """
 
+        # Skip tool registration for manifest-assistant (text-only generation)
+        if self.context.agent_id == "manifest-assistant":
+            logger.info("Skipping tool registration for manifest-assistant agent")
+            return agent
+
         # Capture registry reference for closures
         registry = self
 

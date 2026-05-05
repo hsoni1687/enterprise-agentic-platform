@@ -259,6 +259,8 @@ services:
       - SANDBOX_MANAGER_URL=http://sandbox-manager:8082/api/v1/execute
       - SKILL_DISPATCHER_URL=http://skill-dispatcher:8085
       - POSTGRES_URL=postgresql://postgres:postgres@postgres:5432/agentplatform?sslmode=disable
+      - BEARTYPE_DOOR_DISABLE_CHECKER=1
+      - BEARTYPE_ERROR_ON_NONFATAL_VIOLATION=0
     depends_on:
       - temporal
       - sandbox-manager

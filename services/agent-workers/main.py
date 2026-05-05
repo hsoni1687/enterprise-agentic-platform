@@ -12,16 +12,24 @@ try:
     from workflows import AgentWorkflow
     
     # Activities are non-deterministic (all moved to separate files)
-    from activities_agent import execute_code, reasoning_step, invoke_skill, discover_mcp_tools, invoke_mcp_tool, resolve_mcp_servers
+    from activities_agent import execute_code, reasoning_step, invoke_skill, discover_mcp_tools, invoke_mcp_tool, resolve_mcp_servers, pydantic_ai_reasoning_step
     from activities_memory import recall_memories, store_memory
 except Exception as e:
     print(f"CRITICAL STARTUP ERROR: Failed to import modules: {e}")
     sys.exit(1)
 
 async def main():
-    # Setup logging
-    logging.basicConfig(level=logging.INFO)
+    # Setup logging with unbuffered output
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        force=True
+    )
     logger = logging.getLogger(__name__)
+    # Force unbuffered output
+    import sys
+    sys.stdout.flush()
+    sys.stderr.flush()
 
     # Configuration
     temporal_host = os.getenv("TEMPORAL_HOSTPORT", "localhost:7233")
@@ -48,7 +56,7 @@ async def main():
             client,
             task_queue=task_queue,
             workflows=[AgentWorkflow],
-            activities=[execute_code, reasoning_step, invoke_skill, discover_mcp_tools, invoke_mcp_tool, resolve_mcp_servers, recall_memories, store_memory],
+            activities=[execute_code, reasoning_step, pydantic_ai_reasoning_step, invoke_skill, discover_mcp_tools, invoke_mcp_tool, resolve_mcp_servers, recall_memories, store_memory],
         )
         
         logger.info(f"Starting Temporal Agent Worker on queue '{task_queue}'...")

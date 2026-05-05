@@ -14,19 +14,29 @@ const MCP_REGISTRY =
   process.env.NEXT_PUBLIC_MCP_REGISTRY_URL ?? "http://localhost:8090";
 
 async function req<T>(base: string, path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${base}${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      "X-Tenant-ID": TENANT_ID,
-      ...init?.headers,
-    },
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`${res.status}: ${text}`);
+  const url = `${base}${path}`;
+  console.log(`[API] Fetching: ${url}`);
+  try {
+    const res = await fetch(url, {
+      ...init,
+      headers: {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": TENANT_ID,
+        ...init?.headers,
+      },
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      console.error(`[API] Error ${res.status}: ${text}`);
+      throw new Error(`${res.status}: ${text}`);
+    }
+    const data = await res.json() as T;
+    console.log(`[API] Success: ${url}`, data);
+    return data;
+  } catch (error) {
+    console.error(`[API] Exception fetching ${url}:`, error);
+    throw error;
   }
-  return res.json() as Promise<T>;
 }
 
 // Tools
@@ -109,6 +119,52 @@ export const agentsApi = {
       `/api/v1/agents/${id}/transition`,
       { method: "POST", body: JSON.stringify(body) }
     ),
+  delete: async (id: string) => {
+    // Get current agent to check its status
+    const agent = await req<import("./types").AgentRecord>(
+      AGENT_REGISTRY,
+      `/api/v1/agents/${id}`
+    );
+
+    // If agent is draft or paused, first transition to active
+    if (agent.status === "draft" || agent.status === "paused") {
+      await req<import("./types").AgentRecord>(
+        AGENT_REGISTRY,
+        `/api/v1/agents/${id}/transition`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            target_state: "staged",
+            actor: "studio-user",
+          }),
+        }
+      );
+      await req<import("./types").AgentRecord>(
+        AGENT_REGISTRY,
+        `/api/v1/agents/${id}/transition`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            target_state: "active",
+            actor: "studio-user",
+          }),
+        }
+      );
+    }
+
+    // Now transition to archived
+    return req<import("./types").AgentRecord>(
+      AGENT_REGISTRY,
+      `/api/v1/agents/${id}/transition`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          target_state: "archived",
+          actor: "studio-user",
+        }),
+      }
+    );
+  },
 };
 
 // Models
