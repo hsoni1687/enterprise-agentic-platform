@@ -23,6 +23,9 @@ class AgentWorkflow:
         tenant_id = request.get("tenant_id", "default-tenant")
         prompt = request.get("prompt") or request.get("payload", {}).get("prompt", "Hello")
 
+        # Log for debugging
+        workflow.logger.info(f"[WORKFLOW] agent_id={agent_id}, checking if manifest-assistant: {agent_id == 'manifest-assistant'}")
+
         manifest = request.get("manifest") or {}
         system_prompt = manifest.get("system_prompt") or "You are a helpful assistant with code execution capabilities."
         model = manifest.get("model") or request.get("model", "mock-gpt-4o")
@@ -89,49 +92,76 @@ class AgentWorkflow:
             "mcp_servers": explicit_mcp_servers,
         }
 
-        # 2. ReAct reasoning loop using PydanticAI
+        # 2. ReAct reasoning loop
         final_answer = None
+
         for i in range(max_iterations):
             workflow.logger.info(f"Iteration {i + 1}/{max_iterations}")
 
-            # Call new PydanticAI-based reasoning step
-            decision = await workflow.execute_activity(
-                "pydantic_ai_reasoning_step",
-                args=[agent_context, messages, mcp_tool_defs],
-                start_to_close_timeout=timedelta(seconds=60),
-                retry_policy=RetryPolicy(
-                    maximum_attempts=3,
-                    non_retryable_error_types=["BadRequestError"],
-                ),
-            )
-
-            final_answer = decision.get("final_answer")
-            tool_calls = decision.get("tool_calls")
-            continue_loop = decision.get("continue_loop", False)
-
-            # Emit decision state
-            if decision.get("reasoning"):
-                self._emit({"type": "thinking", "content": decision["reasoning"]})
-
-            # Process tool calls (routing is now handled by PydanticAI internally)
-            if tool_calls:
-                for tc in tool_calls:
-                    tool_name = tc.get("name", "unknown")
-                    tool_args = tc.get("arguments", {})
-                    self._emit({
-                        "type": "tool_call",
-                        "name": tool_name,
-                        "args": json.dumps(tool_args)
+            # Use old reasoning_step for manifest-assistant (avoids PydanticAI extended thinking)
+            # Use new pydantic_ai_reasoning_step for other agents
+            if agent_id == "manifest-assistant":
+                # Old AsyncOpenAI approach - no extended thinking
+                # Convert MCP tool defs to OpenAI tool format
+                openai_tools = []
+                for tool in mcp_tool_defs:
+                    openai_tools.append({
+                        "type": "function",
+                        "function": {
+                            "name": tool.get("name", tool.get("qualified_name", "unknown")),
+                            "description": tool.get("description", ""),
+                            "parameters": tool.get("parameters", tool.get("inputSchema", {})),
+                        }
                     })
 
-                # Note: Tool invocations and result collection happen inside
-                # pydantic_ai_reasoning_step. The messages here are pre-updated.
-                if decision.get("messages_delta"):
-                    messages.extend(decision["messages_delta"])
+                decision = await workflow.execute_activity(
+                    "reasoning_step",
+                    args=[messages, model, openai_tools],
+                    start_to_close_timeout=timedelta(seconds=60),
+                    retry_policy=RetryPolicy(maximum_attempts=3),
+                )
+                final_answer = decision.get("content")
+                tool_calls = decision.get("tool_calls")
+                continue_loop = bool(tool_calls)
+            else:
+                # PydanticAI approach for other agents
+                decision = await workflow.execute_activity(
+                    "pydantic_ai_reasoning_step",
+                    args=[agent_context, messages, mcp_tool_defs],
+                    start_to_close_timeout=timedelta(seconds=60),
+                    retry_policy=RetryPolicy(
+                        maximum_attempts=3,
+                        non_retryable_error_types=["BadRequestError"],
+                    ),
+                )
 
-            # Check if we should stop
-            if final_answer or not continue_loop:
-                break
+                final_answer = decision.get("final_answer")
+                tool_calls = decision.get("tool_calls")
+                continue_loop = decision.get("continue_loop", False)
+
+                # Emit decision state
+                if decision.get("reasoning"):
+                    self._emit({"type": "thinking", "content": decision["reasoning"]})
+
+                # Process tool calls (routing is now handled by PydanticAI internally)
+                if tool_calls:
+                    for tc in tool_calls:
+                        tool_name = tc.get("name", "unknown")
+                        tool_args = tc.get("arguments", {})
+                        self._emit({
+                            "type": "tool_call",
+                            "name": tool_name,
+                            "args": json.dumps(tool_args)
+                        })
+
+                    # Note: Tool invocations and result collection happen inside
+                    # pydantic_ai_reasoning_step. The messages here are pre-updated.
+                    if decision.get("messages_delta"):
+                        messages.extend(decision["messages_delta"])
+
+                # Check if we should stop
+                if final_answer or not continue_loop:
+                    break
 
         if not final_answer:
             final_answer = "Exceeded max reasoning iterations without a conclusion."

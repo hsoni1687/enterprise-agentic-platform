@@ -136,10 +136,8 @@ async def resolve_mcp_servers(tenant_id: str, explicit_server_ids: list[str]) ->
 @activity.defn
 async def reasoning_step(messages: list[dict], model: str, tool_defs: Optional[list[dict]] = None) -> dict:
     """Executes a single LLM reasoning step via the LLM Gateway."""
-    # DEBUG: Write to file to see if old reasoning_step is being called
-    with open("/tmp/activity-debug.log", "w") as f:
-        f.write("[OLD_REASONING_STEP_CALLED]\n")
-        f.flush()
+    logging.info(f"[REASONING_STEP] Called with model={model}")
+    logging.info(f"[REASONING_STEP] LLM_GATEWAY_URL={os.getenv('LLM_GATEWAY_URL')}")
 
     gateway_url = os.getenv("LLM_GATEWAY_URL", "http://localhost:8083/v1")
     client = AsyncOpenAI(base_url=gateway_url, api_key="sk-mock-key")
