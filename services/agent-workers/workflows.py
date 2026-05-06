@@ -183,16 +183,12 @@ class AgentWorkflow:
                                 workflow.logger.error(f"[MANIFEST-ASSISTANT] Tool execution failed: {e}")
                                 tool_result_content = f"Tool error: {str(e)}"
 
-                            # Add tool result as user message with proper format for Claude
+                            # Add tool result in OpenAI format
+                            # OpenAI format uses role="tool" and tool_call_id
                             messages.append({
-                                "role": "user",
-                                "content": [
-                                    {
-                                        "type": "tool_result",
-                                        "tool_use_id": tool_id,
-                                        "content": tool_result_content
-                                    }
-                                ]
+                                "role": "tool",
+                                "tool_call_id": tool_id,
+                                "content": tool_result_content
                             })
 
                 # Check if we should stop

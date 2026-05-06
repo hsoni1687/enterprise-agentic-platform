@@ -638,6 +638,14 @@ func handleAnthropicInference(w http.ResponseWriter, req openai.ChatCompletionRe
 	log.Printf("URL: %s", url)
 	log.Printf("Model: %s", antReq.Model)
 	log.Printf("Auth Key: %s", keyPreview)
+	log.Printf("Request Body (pretty): %s", string(body))
+	log.Printf("Messages count: %d", len(antReq.Messages))
+	for i, msg := range antReq.Messages {
+		log.Printf("  Message[%d]: role=%s, content_count=%d", i, msg.Role, len(msg.Content))
+		for j, content := range msg.Content {
+			log.Printf("    Content[%d]: type=%s", j, content.Type)
+		}
+	}
 	httpReq.Header.Set("Authorization", keyToUse)
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
 
