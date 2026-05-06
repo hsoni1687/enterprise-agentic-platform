@@ -24,7 +24,7 @@ class AgentWorkflow:
         prompt = request.get("prompt") or request.get("payload", {}).get("prompt", "Hello")
 
         # Log for debugging
-        workflow.logger.info(f"[WORKFLOW] agent_id={agent_id}, model={model}, checking if manifest-assistant: {agent_id == 'manifest-assistant'}")
+        workflow.logger.info(f"[WORKFLOW] agent_id={agent_id}, checking if manifest-assistant: {agent_id == 'manifest-assistant'}")
 
         manifest = request.get("manifest") or {}
         system_prompt = manifest.get("system_prompt") or "You are a helpful assistant with code execution capabilities."
