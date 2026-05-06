@@ -211,7 +211,7 @@ export function openChatStream(
 // System Agents (platform-system tenant)
 export const systemAgentsApi = {
   chat: (message: string): Promise<Response> =>
-    fetch(`${API_GATEWAY}/api/v1/agents/manifest-assistant/chat`, {
+    fetch(`${API_GATEWAY}/api/v1/agents/manifest-assistant-system/chat`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
