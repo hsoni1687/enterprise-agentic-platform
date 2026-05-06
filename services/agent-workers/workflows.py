@@ -24,7 +24,7 @@ class AgentWorkflow:
         prompt = request.get("prompt") or request.get("payload", {}).get("prompt", "Hello")
 
         # Log for debugging
-        workflow.logger.info(f"[WORKFLOW] agent_id={agent_id}, checking if manifest-assistant: {agent_id == 'manifest-assistant'}")
+        workflow.logger.info(f"[WORKFLOW] agent_id={agent_id}, checking if manifest-assistant-system: {agent_id == 'manifest-assistant-system'}")
 
         manifest = request.get("manifest") or {}
         workflow.logger.info(f"[WORKFLOW] manifest keys: {list(manifest.keys())}, has_model={('model' in manifest)}, model_value={manifest.get('model', 'NOT PROVIDED')}")
@@ -100,9 +100,9 @@ class AgentWorkflow:
         for i in range(max_iterations):
             workflow.logger.info(f"Iteration {i + 1}/{max_iterations}")
 
-            # Use old reasoning_step for manifest-assistant (avoids PydanticAI extended thinking)
+            # Use old reasoning_step for manifest-assistant-system (avoids PydanticAI extended thinking)
             # Use new pydantic_ai_reasoning_step for other agents
-            if agent_id == "manifest-assistant":
+            if agent_id == "manifest-assistant-system":
                 # Old AsyncOpenAI approach - no extended thinking
                 # Convert MCP tool defs to OpenAI tool format
                 openai_tools = []
