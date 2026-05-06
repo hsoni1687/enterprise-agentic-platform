@@ -138,9 +138,10 @@ class AgentWorkflow:
 
                 # Add assistant message with content and tool calls
                 if final_answer or tool_calls:
-                    assistant_msg = {"role": "assistant", "content": []}
-                    if final_answer:
-                        assistant_msg["content"] = final_answer
+                    assistant_msg = {"role": "assistant"}
+                    # Set content: use final answer if available, otherwise empty string for tool-only messages
+                    assistant_msg["content"] = final_answer if final_answer else ""
+
                     if tool_calls:
                         assistant_msg["tool_calls"] = [
                             {"id": tc["id"], "function": {"name": tc["function"]["name"], "arguments": tc["function"]["arguments"]}}
