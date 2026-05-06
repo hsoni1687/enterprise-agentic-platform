@@ -136,11 +136,14 @@ class AgentWorkflow:
                 workflow.logger.info(f"[MANIFEST-ASSISTANT] Iteration {i+1}: final_answer={bool(final_answer)} (len={len(final_answer) if final_answer else 0}), tool_calls={bool(tool_calls)}, continue_loop={continue_loop}")
                 workflow.logger.info(f"[MANIFEST-ASSISTANT] Break condition: final_answer={bool(final_answer)} or not continue_loop={not continue_loop} = {bool(final_answer) or not continue_loop}")
 
-                # Add assistant message with content and tool calls
+                # Add assistant message with content and tool calls (OpenAI format)
                 if final_answer or tool_calls:
                     assistant_msg = {"role": "assistant"}
-                    # Set content: use final answer if available, otherwise empty string for tool-only messages
-                    assistant_msg["content"] = final_answer if final_answer else ""
+                    # Set content to the answer, or None if no text
+                    if final_answer:
+                        assistant_msg["content"] = final_answer
+                    else:
+                        assistant_msg["content"] = None
 
                     if tool_calls:
                         assistant_msg["tool_calls"] = [
