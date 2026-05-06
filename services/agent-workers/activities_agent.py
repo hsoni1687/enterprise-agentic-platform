@@ -145,6 +145,7 @@ async def reasoning_step(messages: list[dict], model: str, tool_defs: Optional[l
     tools = tool_defs if tool_defs else [_default_execute_code_tool()]
 
     logging.info(f"Calling LLM (model={model}, tools={[t['function']['name'] for t in tools]})")
+    logging.info(f"[DEBUG] Messages structure: {json.dumps(messages, indent=2, default=str)}")
     response = await client.chat.completions.create(
         model=model,
         messages=messages,

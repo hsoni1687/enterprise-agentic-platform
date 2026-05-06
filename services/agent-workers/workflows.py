@@ -116,6 +116,7 @@ class AgentWorkflow:
                         }
                     })
 
+                workflow.logger.info(f"[MANIFEST-ASSISTANT] Messages before reasoning_step: {json.dumps(messages, default=str)}")
                 decision = await workflow.execute_activity(
                     "reasoning_step",
                     args=[messages, model, openai_tools],
@@ -134,6 +135,64 @@ class AgentWorkflow:
 
                 workflow.logger.info(f"[MANIFEST-ASSISTANT] Iteration {i+1}: final_answer={bool(final_answer)} (len={len(final_answer) if final_answer else 0}), tool_calls={bool(tool_calls)}, continue_loop={continue_loop}")
                 workflow.logger.info(f"[MANIFEST-ASSISTANT] Break condition: final_answer={bool(final_answer)} or not continue_loop={not continue_loop} = {bool(final_answer) or not continue_loop}")
+
+                # Add assistant message with content and tool calls
+                if final_answer or tool_calls:
+                    assistant_msg = {"role": "assistant"}
+                    # Claude requires content: string if there's text, or list if only tool_calls
+                    if final_answer:
+                        assistant_msg["content"] = final_answer
+                    else:
+                        assistant_msg["content"] = []
+                    if tool_calls:
+                        assistant_msg["tool_calls"] = [
+                            {"id": tc["id"], "function": {"name": tc["function"]["name"], "arguments": tc["function"]["arguments"]}}
+                            for tc in tool_calls
+                        ]
+                    messages.append(assistant_msg)
+
+                # If there are tool calls, execute them and add results
+                if tool_calls:
+                    for tc in tool_calls:
+                        tool_id = tc.get("id", "")
+                        tool_name = tc.get("function", {}).get("name", "unknown")
+                        tool_args = tc.get("function", {}).get("arguments", "{}")
+                        if isinstance(tool_args, str):
+                            tool_args = json.loads(tool_args)
+
+                        self._emit({
+                            "type": "tool_call",
+                            "name": tool_name,
+                            "args": json.dumps(tool_args)
+                        })
+
+                        # Execute execute_code tool
+                        if tool_name == "execute_code":
+                            tool_result_content = ""
+                            try:
+                                code = tool_args.get("code", "")
+                                tool_result = await workflow.execute_activity(
+                                    "execute_code",
+                                    args=[code],
+                                    start_to_close_timeout=timedelta(seconds=30),
+                                    retry_policy=RetryPolicy(maximum_attempts=2),
+                                )
+                                tool_result_content = str(tool_result)
+                            except Exception as e:
+                                workflow.logger.error(f"[MANIFEST-ASSISTANT] Tool execution failed: {e}")
+                                tool_result_content = f"Tool error: {str(e)}"
+
+                            # Add tool result as user message with proper format for Claude
+                            messages.append({
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "tool_result",
+                                        "tool_use_id": tool_id,
+                                        "content": tool_result_content
+                                    }
+                                ]
+                            })
 
                 # Check if we should stop
                 if final_answer or not continue_loop:

@@ -232,7 +232,7 @@ services:
     restart: on-failure
     environment:
       - TEMPORAL_HOSTPORT=temporal:7233
-      - LLM_GATEWAY_URL=http://host.docker.internal:8083/v1
+      - LLM_GATEWAY_URL=http://llm-gateway:8083/v1
       - TEMPORAL_TASK_QUEUE=default-tenant-agent-queue
       - SANDBOX_MANAGER_URL=http://sandbox-manager:8082/api/v1/execute
       - SKILL_DISPATCHER_URL=http://skill-dispatcher:8085
@@ -254,7 +254,7 @@ services:
     restart: on-failure
     environment:
       - TEMPORAL_HOSTPORT=temporal:7233
-      - LLM_GATEWAY_URL=http://host.docker.internal:8083/v1
+      - LLM_GATEWAY_URL=http://llm-gateway:8083/v1
       - TEMPORAL_TASK_QUEUE=platform-system-agent-queue
       - SANDBOX_MANAGER_URL=http://sandbox-manager:8082/api/v1/execute
       - SKILL_DISPATCHER_URL=http://skill-dispatcher:8085

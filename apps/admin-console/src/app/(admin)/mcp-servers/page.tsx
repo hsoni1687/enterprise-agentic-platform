@@ -70,7 +70,7 @@ export default function MCPServersPage() {
     mutationFn: () => adminApi.createMcpServer({
       name: newServerName,
       url: newServerUrl,
-      auth_config: authConfig.type ? authConfig : undefined,
+      auth_config: authConfig.type ? (authConfig as Record<string, unknown>) : undefined,
     }),
     onSuccess: () => {
       setNewServerName('');

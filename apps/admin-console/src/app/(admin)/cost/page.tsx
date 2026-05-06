@@ -35,6 +35,7 @@ export default function CostPage() {
 
     return {
       totalTokens: total,
+      totalCost: totalCost,
       mostExpensive: mostExpensive?.tenant_id || "N/A",
       tokenIn: totalIn,
       tokenOut: totalOut,
@@ -130,7 +131,7 @@ export default function CostPage() {
 
             <div className="bg-card border border-border rounded-lg p-6">
               <div className="text-sm text-muted-foreground">Total Cost</div>
-              <div className="text-3xl font-bold mt-2">${summaryStats.totalCostUSD.toFixed(2)}</div>
+              <div className="text-3xl font-bold mt-2">${summaryStats.totalCost.toFixed(2)}</div>
               <div className="text-xs text-muted-foreground mt-2">USD</div>
             </div>
 
