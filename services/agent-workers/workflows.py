@@ -27,8 +27,10 @@ class AgentWorkflow:
         workflow.logger.info(f"[WORKFLOW] agent_id={agent_id}, checking if manifest-assistant: {agent_id == 'manifest-assistant'}")
 
         manifest = request.get("manifest") or {}
+        workflow.logger.info(f"[WORKFLOW] manifest keys: {list(manifest.keys())}, has_model={('model' in manifest)}, model_value={manifest.get('model', 'NOT PROVIDED')}")
         system_prompt = manifest.get("system_prompt") or "You are a helpful assistant with code execution capabilities."
         model = manifest.get("model") or request.get("model", "mock-gpt-4o")
+        workflow.logger.info(f"[WORKFLOW] resolved model={model}, system_prompt_len={len(system_prompt)}")
         max_iterations = int(manifest.get("max_iterations") or 5)
         skills = manifest.get("skills") or []
 

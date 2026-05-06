@@ -100,10 +100,22 @@ func HandleStartSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Fetch manifest from agent-registry when not supplied by caller.
+	log.Printf("[INITIATOR] Received request: agent_id=%s, tenant_id=%s, manifest_provided=%v",
+		req.AgentID, req.TenantID, req.Manifest != nil)
+
 	if req.Manifest == nil {
+		log.Printf("[INITIATOR] Manifest not provided, fetching from registry for agent_id=%s, tenant_id=%s",
+			req.AgentID, req.TenantID)
 		if manifest := fetchManifest(r.Context(), req.AgentID, req.TenantID); manifest != nil {
+			log.Printf("[INITIATOR] Manifest fetched successfully: model=%s, system_prompt_len=%d, max_iterations=%d",
+				manifest.Model, len(manifest.SystemPrompt), manifest.MaxIterations)
 			req.Manifest = manifest
+		} else {
+			log.Printf("[INITIATOR] Failed to fetch manifest, using nil (workflow will use defaults)")
 		}
+	} else {
+		log.Printf("[INITIATOR] Manifest provided in request: model=%s, system_prompt_len=%d",
+			req.Manifest.Model, len(req.Manifest.SystemPrompt))
 	}
 
 	taskQueue := "agent-task-queue"
@@ -259,8 +271,10 @@ func fetchManifest(ctx context.Context, agentID, tenantID string) *models.AgentM
 	if cached, ok := manifestStore.Load(cacheKey); ok {
 		cm := cached.(cachedManifest)
 		if time.Now().Before(cm.expiresAt) {
+			log.Printf("[FETCH_MANIFEST] Cache hit for key=%s, model=%s", cacheKey, cm.manifest.Model)
 			return cm.manifest
 		}
+		log.Printf("[FETCH_MANIFEST] Cache expired for key=%s, refetching", cacheKey)
 	}
 
 	// Cache miss or expired — fetch from registry
@@ -269,9 +283,12 @@ func fetchManifest(ctx context.Context, agentID, tenantID string) *models.AgentM
 		registryURL = "http://localhost:8088"
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		fmt.Sprintf("%s/api/v1/agents/%s", registryURL, agentID), nil)
+	url := fmt.Sprintf("%s/api/v1/agents/%s", registryURL, agentID)
+	log.Printf("[FETCH_MANIFEST] Fetching from %s (tenant=%s)", url, tenantID)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
+		log.Printf("[FETCH_MANIFEST] Request creation failed: %v", err)
 		return nil
 	}
 	if tenantID != "" {
@@ -279,15 +296,25 @@ func fetchManifest(ctx context.Context, agentID, tenantID string) *models.AgentM
 	}
 
 	resp, err := registryHTTPClient.Do(req)
-	if err != nil || resp.StatusCode != http.StatusOK {
+	if err != nil {
+		log.Printf("[FETCH_MANIFEST] HTTP request failed: %v", err)
+		return nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("[FETCH_MANIFEST] Registry returned status %d", resp.StatusCode)
+		resp.Body.Close()
 		return nil
 	}
 	defer resp.Body.Close()
 
 	var manifest models.AgentManifest
 	if err := json.NewDecoder(resp.Body).Decode(&manifest); err != nil {
+		log.Printf("[FETCH_MANIFEST] JSON decode failed: %v", err)
 		return nil
 	}
+
+	log.Printf("[FETCH_MANIFEST] Successfully fetched: model=%s, system_prompt_len=%d, max_iterations=%d",
+		manifest.Model, len(manifest.SystemPrompt), manifest.MaxIterations)
 
 	// Store in cache with TTL
 	manifestStore.Store(cacheKey, cachedManifest{
