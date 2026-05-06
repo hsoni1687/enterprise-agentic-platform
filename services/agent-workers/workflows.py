@@ -120,12 +120,22 @@ class AgentWorkflow:
                     start_to_close_timeout=timedelta(seconds=60),
                     retry_policy=RetryPolicy(maximum_attempts=3),
                 )
+
+                # Debug: Log full decision dict
+                workflow.logger.info(f"[MANIFEST-ASSISTANT] Decision dict keys: {list(decision.keys())}")
+                workflow.logger.info(f"[MANIFEST-ASSISTANT] Decision content type: {type(decision.get('content'))}, length: {len(str(decision.get('content'))) if decision.get('content') else 0}")
+                workflow.logger.info(f"[MANIFEST-ASSISTANT] Tool calls: {decision.get('tool_calls')}")
+
                 final_answer = decision.get("content")
                 tool_calls = decision.get("tool_calls")
                 continue_loop = bool(tool_calls)
 
+                workflow.logger.info(f"[MANIFEST-ASSISTANT] Iteration {i+1}: final_answer={bool(final_answer)} (len={len(final_answer) if final_answer else 0}), tool_calls={bool(tool_calls)}, continue_loop={continue_loop}")
+                workflow.logger.info(f"[MANIFEST-ASSISTANT] Break condition: final_answer={bool(final_answer)} or not continue_loop={not continue_loop} = {bool(final_answer) or not continue_loop}")
+
                 # Check if we should stop
                 if final_answer or not continue_loop:
+                    workflow.logger.info(f"[MANIFEST-ASSISTANT] Breaking loop")
                     break
             else:
                 # PydanticAI approach for other agents
