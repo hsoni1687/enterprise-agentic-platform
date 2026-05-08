@@ -58,7 +58,7 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
       _setTenantId(id);
       setRuntimeTenant(id);
       localStorage.setItem(STORAGE_KEY, id);
-      queryClient.clear();
+      queryClient.invalidateQueries();
     },
     [queryClient]
   );
