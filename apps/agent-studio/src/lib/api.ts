@@ -1,4 +1,13 @@
-const TENANT_ID = process.env.NEXT_PUBLIC_TENANT_ID ?? "default-tenant";
+const DEFAULT_TENANT_ID = process.env.NEXT_PUBLIC_TENANT_ID ?? "default-tenant";
+let _tenantId = DEFAULT_TENANT_ID;
+
+export function setRuntimeTenant(id: string) {
+  _tenantId = id;
+}
+
+export function getRuntimeTenant(): string {
+  return _tenantId;
+}
 
 const TOOL_REGISTRY =
   process.env.NEXT_PUBLIC_TOOL_REGISTRY_URL ?? "http://localhost:8086";
@@ -12,6 +21,9 @@ const LLM_GATEWAY =
   process.env.NEXT_PUBLIC_LLM_GATEWAY_URL ?? "http://localhost:8083";
 const MCP_REGISTRY =
   process.env.NEXT_PUBLIC_MCP_REGISTRY_URL ?? "http://localhost:8090";
+const ADMIN_API =
+  process.env.NEXT_PUBLIC_ADMIN_API_URL ?? "http://localhost:8089";
+const ADMIN_KEY = process.env.NEXT_PUBLIC_ADMIN_API_KEY ?? "dev-admin-key";
 
 async function req<T>(base: string, path: string, init?: RequestInit): Promise<T> {
   const url = `${base}${path}`;
@@ -21,7 +33,7 @@ async function req<T>(base: string, path: string, init?: RequestInit): Promise<T
       ...init,
       headers: {
         "Content-Type": "application/json",
-        "X-Tenant-ID": TENANT_ID,
+        "X-Tenant-ID": _tenantId,
         ...init?.headers,
       },
     });
@@ -202,7 +214,7 @@ export const llmConfigApi = {
 export function openChatStream(
   agentId: string,
   message: string,
-  tenantId: string = TENANT_ID
+  tenantId: string = _tenantId
 ): EventSource {
   const url = `${API_GATEWAY}/api/v1/agents/${agentId}/chat?tenant_id=${encodeURIComponent(tenantId)}&message=${encodeURIComponent(message)}`;
   return new EventSource(url);
@@ -222,6 +234,29 @@ export const systemAgentsApi = {
         tenant_id: "platform-system",
       }),
     }),
+};
+
+// Admin API
+export interface Tenant {
+  tenant_id: string;
+  display_name: string;
+  status: string;
+}
+
+export interface TenantsResponse {
+  tenants: Tenant[];
+}
+
+export const adminApi = {
+  listTenants: async (): Promise<TenantsResponse> => {
+    const res = await fetch(`${ADMIN_API}/api/v1/admin/tenants`, {
+      headers: { Authorization: `Bearer ${ADMIN_KEY}` },
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to fetch tenants: ${res.status}`);
+    }
+    return res.json() as Promise<TenantsResponse>;
+  },
 };
 
 // MCP Servers

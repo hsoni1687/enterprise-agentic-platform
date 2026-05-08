@@ -25,6 +25,7 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { Separator } from "@/components/ui/separator";
+import { TenantSelector } from "@/components/tenant-selector";
 
 const navItems = [
   { href: "/tools", label: "Tools", icon: Wrench },
@@ -93,10 +94,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <div className="flex h-screen w-full overflow-hidden">
         <AppSidebar />
         <div className="flex flex-col flex-1 overflow-hidden">
-          <header className="flex h-10 items-center border-b border-border px-4 shrink-0">
-            <SidebarTrigger className="mr-3 h-7 w-7" />
-            <Separator orientation="vertical" className="h-4 mr-3" />
-            <BreadcrumbNav />
+          <header className="flex h-10 items-center border-b border-border px-4 shrink-0 justify-between">
+            <div className="flex items-center gap-3">
+              <SidebarTrigger className="mr-3 h-7 w-7" />
+              <Separator orientation="vertical" className="h-4 mr-3" />
+              <BreadcrumbNav />
+            </div>
+            <div>
+              <TenantSelector />
+            </div>
           </header>
           <main className="flex-1 overflow-auto">{children}</main>
         </div>
