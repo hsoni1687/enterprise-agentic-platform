@@ -32,3 +32,13 @@ CREATE TABLE IF NOT EXISTS platform_config (
 -- Indexes for common queries
 CREATE INDEX IF NOT EXISTS idx_tenant_settings_status ON tenant_settings(status);
 CREATE INDEX IF NOT EXISTS idx_tenant_model_access_enabled ON tenant_model_access(enabled);
+
+-- Seed default tenant (idempotent)
+INSERT INTO tenant_settings (tenant_id, display_name, status, max_concurrent_workflows, token_budget_monthly, created_at, updated_at)
+VALUES ('default-tenant', 'Default Tenant', 'active', 50, 10000000, NOW(), NOW())
+ON CONFLICT (tenant_id) DO NOTHING;
+
+-- Seed platform-system tenant for system agents (idempotent)
+INSERT INTO tenant_settings (tenant_id, display_name, status, max_concurrent_workflows, token_budget_monthly, created_at, updated_at)
+VALUES ('platform-system', 'Platform System', 'active', 100, 50000000, NOW(), NOW())
+ON CONFLICT (tenant_id) DO NOTHING;
