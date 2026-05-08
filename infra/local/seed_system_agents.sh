@@ -75,7 +75,7 @@ CREATE_RESPONSE=$(curl -s -X POST "$REGISTRY/api/v1/agents" \
   "version": "1.0.0",
   "system_prompt": $(echo "$MANIFEST_SYSTEM_PROMPT" | jq -Rs .),
   "model": "claude-sonnet-4-6",
-  "max_iterations": 3,
+  "max_iterations": 10,
   "memory_budget_mb": 128,
   "skills": []
 }
