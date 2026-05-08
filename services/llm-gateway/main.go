@@ -596,30 +596,32 @@ func handleAnthropicInference(w http.ResponseWriter, req openai.ChatCompletionRe
 		}
 
 		var contents []anthropicContent
-		if msg.Content != "" {
-			contents = append(contents, anthropicContent{Type: "text", Text: msg.Content})
-		}
 
-		// Tool Calls (Assistant -> User)
-		for _, tc := range msg.ToolCalls {
-			var args map[string]interface{}
-			json.Unmarshal([]byte(tc.Function.Arguments), &args)
-			contents = append(contents, anthropicContent{
-				Type:  "tool_use",
-				ID:    tc.ID,
-				Name:  tc.Function.Name,
-				Input: args,
-			})
-		}
-
-		// Tool Results (Tool -> Assistant)
-		if msg.Role == openai.ChatMessageRoleTool {
+		// Tool Results (Tool -> Assistant) - handle separately first
+		if msg.Role == "tool" {
 			role = "user"
 			contents = append(contents, anthropicContent{
 				Type:      "tool_result",
 				ToolUseID: msg.ToolCallID,
 				Content:   []anthropicResultPart{{Type: "text", Text: msg.Content}},
 			})
+		} else {
+			// For non-tool messages, add text content
+			if msg.Content != "" {
+				contents = append(contents, anthropicContent{Type: "text", Text: msg.Content})
+			}
+
+			// Tool Calls (Assistant -> User)
+			for _, tc := range msg.ToolCalls {
+				var args map[string]interface{}
+				json.Unmarshal([]byte(tc.Function.Arguments), &args)
+				contents = append(contents, anthropicContent{
+					Type:  "tool_use",
+					ID:    tc.ID,
+					Name:  tc.Function.Name,
+					Input: args,
+				})
+			}
 		}
 
 		antReq.Messages = append(antReq.Messages, anthropicMessage{

@@ -104,17 +104,8 @@ class AgentWorkflow:
             # Use new pydantic_ai_reasoning_step for other agents
             if agent_id == "manifest-assistant-system":
                 # Old AsyncOpenAI approach - no extended thinking
-                # Convert MCP tool defs to OpenAI tool format
+                # Manifest assistant should generate responses through reasoning only, no tool calls
                 openai_tools = []
-                for tool in mcp_tool_defs:
-                    openai_tools.append({
-                        "type": "function",
-                        "function": {
-                            "name": tool.get("name", tool.get("qualified_name", "unknown")),
-                            "description": tool.get("description", ""),
-                            "parameters": tool.get("parameters", tool.get("inputSchema", {})),
-                        }
-                    })
 
                 workflow.logger.info(f"[MANIFEST-ASSISTANT] Messages before reasoning_step: {json.dumps(messages, default=str)}")
                 decision = await workflow.execute_activity(
