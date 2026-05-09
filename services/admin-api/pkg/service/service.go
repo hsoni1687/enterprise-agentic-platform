@@ -1009,3 +1009,513 @@ func readBody(r io.ReadCloser) string {
 	body, _ := io.ReadAll(r)
 	return string(body)
 }
+
+// HandleListSystemTools lists all system tools (admin only)
+func (h *AdminHandler) HandleListSystemTools(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	rows, err := h.DB.Query(r.Context(), `
+		SELECT id, tenant_id, name, version, description, auth_level, sandbox_required,
+		       input_schema, output_schema, status, registered_by, created_at, scope
+		FROM tools
+		WHERE scope = 'system'
+		ORDER BY created_at DESC
+	`)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Query failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var tools []models.ToolSpec
+	for rows.Next() {
+		var t models.ToolSpec
+		var inputSchema, outputSchema interface{}
+		if err := rows.Scan(&t.ID, &t.TenantID, &t.Name, &t.Version, &t.Description, &t.AuthLevel,
+			&t.SandboxRequired, &inputSchema, &outputSchema, &t.Status, &t.RegisteredBy, &t.CreatedAt, &t.Scope); err != nil {
+			http.Error(w, fmt.Sprintf("Scan failed: %v", err), http.StatusInternalServerError)
+			return
+		}
+		tools = append(tools, t)
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"tools": tools,
+		"count": len(tools),
+	})
+}
+
+// HandleCreateSystemTool creates a system tool (admin only)
+func (h *AdminHandler) HandleCreateSystemTool(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	var req struct {
+		Name              string          `json:"name"`
+		Version           string          `json:"version"`
+		Description       string          `json:"description"`
+		AuthLevel         string          `json:"auth_level"`
+		SandboxRequired   bool            `json:"sandbox_required"`
+		InputSchema       json.RawMessage `json:"input_schema,omitempty"`
+		OutputSchema      json.RawMessage `json:"output_schema,omitempty"`
+		RegisteredBy      string          `json:"registered_by"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Name == "" || req.Version == "" {
+		http.Error(w, "Missing required fields: name, version", http.StatusBadRequest)
+		return
+	}
+
+	id := uuid.New().String()
+	now := time.Now()
+	registeredBy := req.RegisteredBy
+	if registeredBy == "" {
+		registeredBy = "admin"
+	}
+
+	_, err := h.DB.Exec(r.Context(), `
+		INSERT INTO tools (id, tenant_id, name, version, description, auth_level, sandbox_required,
+		                   input_schema, output_schema, status, registered_by, created_at, scope)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+	`, id, "platform-system", req.Name, req.Version, req.Description, req.AuthLevel, req.SandboxRequired,
+		req.InputSchema, req.OutputSchema, "approved", registeredBy, now, "system")
+
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create tool: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"id":                id,
+		"tenant_id":         "platform-system",
+		"name":              req.Name,
+		"version":           req.Version,
+		"description":       req.Description,
+		"auth_level":        req.AuthLevel,
+		"sandbox_required":  req.SandboxRequired,
+		"input_schema":      req.InputSchema,
+		"output_schema":     req.OutputSchema,
+		"status":            "approved",
+		"registered_by":     registeredBy,
+		"scope":             "system",
+		"created_at":        now,
+	})
+}
+
+// HandleUpdateSystemTool updates a system tool (admin only)
+func (h *AdminHandler) HandleUpdateSystemTool(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "Missing tool ID", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		Name            string          `json:"name,omitempty"`
+		Version         string          `json:"version,omitempty"`
+		Description     string          `json:"description,omitempty"`
+		AuthLevel       string          `json:"auth_level,omitempty"`
+		SandboxRequired *bool           `json:"sandbox_required,omitempty"`
+		InputSchema     json.RawMessage `json:"input_schema,omitempty"`
+		OutputSchema    json.RawMessage `json:"output_schema,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	var updates []string
+	var args []interface{}
+	argCount := 1
+
+	if req.Name != "" {
+		updates = append(updates, fmt.Sprintf("name = $%d", argCount))
+		args = append(args, req.Name)
+		argCount++
+	}
+	if req.Version != "" {
+		updates = append(updates, fmt.Sprintf("version = $%d", argCount))
+		args = append(args, req.Version)
+		argCount++
+	}
+	if req.Description != "" {
+		updates = append(updates, fmt.Sprintf("description = $%d", argCount))
+		args = append(args, req.Description)
+		argCount++
+	}
+	if req.AuthLevel != "" {
+		updates = append(updates, fmt.Sprintf("auth_level = $%d", argCount))
+		args = append(args, req.AuthLevel)
+		argCount++
+	}
+	if req.SandboxRequired != nil {
+		updates = append(updates, fmt.Sprintf("sandbox_required = $%d", argCount))
+		args = append(args, *req.SandboxRequired)
+		argCount++
+	}
+	if len(req.InputSchema) > 0 {
+		updates = append(updates, fmt.Sprintf("input_schema = $%d", argCount))
+		args = append(args, req.InputSchema)
+		argCount++
+	}
+	if len(req.OutputSchema) > 0 {
+		updates = append(updates, fmt.Sprintf("output_schema = $%d", argCount))
+		args = append(args, req.OutputSchema)
+		argCount++
+	}
+
+	if len(updates) == 0 {
+		http.Error(w, "No fields to update", http.StatusBadRequest)
+		return
+	}
+
+	args = append(args, id)
+	query := fmt.Sprintf(`UPDATE tools SET %s WHERE id = $%d AND scope = 'system'`, strings.Join(updates, ", "), argCount)
+	result, err := h.DB.Exec(r.Context(), query, args...)
+
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to update tool: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	if result.RowsAffected() == 0 {
+		http.Error(w, "System tool not found", http.StatusNotFound)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{
+		"status": "updated",
+		"id":     id,
+	})
+}
+
+// HandleTransitionSystemTool transitions a system tool status (admin only)
+func (h *AdminHandler) HandleTransitionSystemTool(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "Missing tool ID", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		TargetState string `json:"target_state"`
+		Actor       string `json:"actor"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.TargetState == "" {
+		http.Error(w, "Missing target_state", http.StatusBadRequest)
+		return
+	}
+
+	actor := req.Actor
+	if actor == "" {
+		actor = "admin"
+	}
+
+	var currentStatus string
+	err := h.DB.QueryRow(r.Context(), `
+		SELECT status FROM tools WHERE id = $1 AND scope = 'system'
+	`, id).Scan(&currentStatus)
+
+	if err != nil {
+		http.Error(w, "System tool not found", http.StatusNotFound)
+		return
+	}
+
+	_, err = h.DB.Exec(r.Context(), `
+		UPDATE tools SET status = $1 WHERE id = $2 AND scope = 'system'
+	`, req.TargetState, id)
+
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to transition tool: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	h.DB.Exec(r.Context(), `
+		INSERT INTO lifecycle_events (resource_type, resource_id, tenant_id, from_state, to_state, actor)
+		VALUES ('tool', $1, $2, $3, $4, $5)
+	`, id, "platform-system", currentStatus, req.TargetState, actor)
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status": "transitioned",
+		"id":     id,
+		"from":   currentStatus,
+		"to":     req.TargetState,
+	})
+}
+
+// HandleListSystemSkills lists all system skills (admin only)
+func (h *AdminHandler) HandleListSystemSkills(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	rows, err := h.DB.Query(r.Context(), `
+		SELECT id, tenant_id, name, version, description, tools, sop, mutating,
+		       approval_required, hooks, status, published_by, created_at, scope
+		FROM skills
+		WHERE scope = 'system'
+		ORDER BY created_at DESC
+	`)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Query failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var skills []models.SkillManifest
+	for rows.Next() {
+		var sk models.SkillManifest
+		var tools, hooks interface{}
+		if err := rows.Scan(&sk.ID, &sk.TenantID, &sk.Name, &sk.Version, &sk.Description, &tools,
+			&sk.SOP, &sk.Mutating, &sk.ApprovalRequired, &hooks, &sk.Status, &sk.PublishedBy, &sk.CreatedAt, &sk.Scope); err != nil {
+			http.Error(w, fmt.Sprintf("Scan failed: %v", err), http.StatusInternalServerError)
+			return
+		}
+		skills = append(skills, sk)
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"skills": skills,
+		"count":  len(skills),
+	})
+}
+
+// HandleCreateSystemSkill creates a system skill (admin only)
+func (h *AdminHandler) HandleCreateSystemSkill(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	var req struct {
+		Name             string          `json:"name"`
+		Version          string          `json:"version"`
+		Description      string          `json:"description"`
+		Tools            []interface{}   `json:"tools,omitempty"`
+		SOP              string          `json:"sop"`
+		Mutating         bool            `json:"mutating"`
+		ApprovalRequired bool            `json:"approval_required"`
+		Hooks            []interface{}   `json:"hooks,omitempty"`
+		PublishedBy      string          `json:"published_by"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Name == "" || req.Version == "" {
+		http.Error(w, "Missing required fields: name, version", http.StatusBadRequest)
+		return
+	}
+
+	id := uuid.New().String()
+	now := time.Now()
+	publishedBy := req.PublishedBy
+	if publishedBy == "" {
+		publishedBy = "admin"
+	}
+
+	tools, _ := json.Marshal(req.Tools)
+	hooks, _ := json.Marshal(req.Hooks)
+
+	_, err := h.DB.Exec(r.Context(), `
+		INSERT INTO skills (id, tenant_id, name, version, description, tools, sop, mutating,
+		                    approval_required, hooks, status, published_by, created_at, scope)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+	`, id, "platform-system", req.Name, req.Version, req.Description, tools, req.SOP, req.Mutating,
+		req.ApprovalRequired, hooks, "active", publishedBy, now, "system")
+
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create skill: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"id":                  id,
+		"tenant_id":           "platform-system",
+		"name":                req.Name,
+		"version":             req.Version,
+		"description":         req.Description,
+		"tools":               req.Tools,
+		"sop":                 req.SOP,
+		"mutating":            req.Mutating,
+		"approval_required":   req.ApprovalRequired,
+		"hooks":               req.Hooks,
+		"status":              "active",
+		"published_by":        publishedBy,
+		"scope":               "system",
+		"created_at":          now,
+	})
+}
+
+// HandleUpdateSystemSkill updates a system skill (admin only)
+func (h *AdminHandler) HandleUpdateSystemSkill(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "Missing skill ID", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		Name             string        `json:"name,omitempty"`
+		Version          string        `json:"version,omitempty"`
+		Description      string        `json:"description,omitempty"`
+		Tools            []interface{} `json:"tools,omitempty"`
+		SOP              string        `json:"sop,omitempty"`
+		Mutating         *bool         `json:"mutating,omitempty"`
+		ApprovalRequired *bool         `json:"approval_required,omitempty"`
+		Hooks            []interface{} `json:"hooks,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	var updates []string
+	var args []interface{}
+	argCount := 1
+
+	if req.Name != "" {
+		updates = append(updates, fmt.Sprintf("name = $%d", argCount))
+		args = append(args, req.Name)
+		argCount++
+	}
+	if req.Version != "" {
+		updates = append(updates, fmt.Sprintf("version = $%d", argCount))
+		args = append(args, req.Version)
+		argCount++
+	}
+	if req.Description != "" {
+		updates = append(updates, fmt.Sprintf("description = $%d", argCount))
+		args = append(args, req.Description)
+		argCount++
+	}
+	if len(req.Tools) > 0 {
+		toolsJSON, _ := json.Marshal(req.Tools)
+		updates = append(updates, fmt.Sprintf("tools = $%d", argCount))
+		args = append(args, toolsJSON)
+		argCount++
+	}
+	if req.SOP != "" {
+		updates = append(updates, fmt.Sprintf("sop = $%d", argCount))
+		args = append(args, req.SOP)
+		argCount++
+	}
+	if req.Mutating != nil {
+		updates = append(updates, fmt.Sprintf("mutating = $%d", argCount))
+		args = append(args, *req.Mutating)
+		argCount++
+	}
+	if req.ApprovalRequired != nil {
+		updates = append(updates, fmt.Sprintf("approval_required = $%d", argCount))
+		args = append(args, *req.ApprovalRequired)
+		argCount++
+	}
+	if len(req.Hooks) > 0 {
+		hooksJSON, _ := json.Marshal(req.Hooks)
+		updates = append(updates, fmt.Sprintf("hooks = $%d", argCount))
+		args = append(args, hooksJSON)
+		argCount++
+	}
+
+	if len(updates) == 0 {
+		http.Error(w, "No fields to update", http.StatusBadRequest)
+		return
+	}
+
+	args = append(args, id)
+	query := fmt.Sprintf(`UPDATE skills SET %s WHERE id = $%d AND scope = 'system'`, strings.Join(updates, ", "), argCount)
+	result, err := h.DB.Exec(r.Context(), query, args...)
+
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to update skill: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	if result.RowsAffected() == 0 {
+		http.Error(w, "System skill not found", http.StatusNotFound)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{
+		"status": "updated",
+		"id":     id,
+	})
+}
+
+// HandleTransitionSystemSkill transitions a system skill status (admin only)
+func (h *AdminHandler) HandleTransitionSystemSkill(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "Missing skill ID", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		TargetState string `json:"target_state"`
+		Actor       string `json:"actor"`
+		Reason      string `json:"reason,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.TargetState == "" {
+		http.Error(w, "Missing target_state", http.StatusBadRequest)
+		return
+	}
+
+	actor := req.Actor
+	if actor == "" {
+		actor = "admin"
+	}
+
+	var currentStatus string
+	err := h.DB.QueryRow(r.Context(), `
+		SELECT status FROM skills WHERE id = $1 AND scope = 'system'
+	`, id).Scan(&currentStatus)
+
+	if err != nil {
+		http.Error(w, "System skill not found", http.StatusNotFound)
+		return
+	}
+
+	_, err = h.DB.Exec(r.Context(), `
+		UPDATE skills SET status = $1 WHERE id = $2 AND scope = 'system'
+	`, req.TargetState, id)
+
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to transition skill: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	h.DB.Exec(r.Context(), `
+		INSERT INTO lifecycle_events (resource_type, resource_id, tenant_id, from_state, to_state, actor, reason)
+		VALUES ('skill', $1, $2, $3, $4, $5, $6)
+	`, id, "platform-system", currentStatus, req.TargetState, actor, req.Reason)
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status": "transitioned",
+		"id":     id,
+		"from":   currentStatus,
+		"to":     req.TargetState,
+	})
+}

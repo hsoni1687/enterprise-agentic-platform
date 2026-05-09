@@ -78,6 +78,18 @@ func main() {
 	// Audit Log
 	mux.Handle("GET /api/v1/admin/audit", authMiddleware(adminAPIKey, http.HandlerFunc(handler.HandleGetAuditLog)))
 
+	// System Tools Management
+	mux.Handle("GET /api/v1/admin/system-tools", authMiddleware(adminAPIKey, http.HandlerFunc(handler.HandleListSystemTools)))
+	mux.Handle("POST /api/v1/admin/system-tools", authMiddleware(adminAPIKey, http.HandlerFunc(handler.HandleCreateSystemTool)))
+	mux.Handle("PUT /api/v1/admin/system-tools/{id}", authMiddleware(adminAPIKey, http.HandlerFunc(handler.HandleUpdateSystemTool)))
+	mux.Handle("POST /api/v1/admin/system-tools/{id}/transition", authMiddleware(adminAPIKey, http.HandlerFunc(handler.HandleTransitionSystemTool)))
+
+	// System Skills Management
+	mux.Handle("GET /api/v1/admin/system-skills", authMiddleware(adminAPIKey, http.HandlerFunc(handler.HandleListSystemSkills)))
+	mux.Handle("POST /api/v1/admin/system-skills", authMiddleware(adminAPIKey, http.HandlerFunc(handler.HandleCreateSystemSkill)))
+	mux.Handle("PUT /api/v1/admin/system-skills/{id}", authMiddleware(adminAPIKey, http.HandlerFunc(handler.HandleUpdateSystemSkill)))
+	mux.Handle("POST /api/v1/admin/system-skills/{id}/transition", authMiddleware(adminAPIKey, http.HandlerFunc(handler.HandleTransitionSystemSkill)))
+
 	// MCP Server Management
 	mux.Handle("POST /api/v1/admin/mcp/servers", authMiddleware(adminAPIKey, http.HandlerFunc(handler.HandleCreateGlobalMCPServer)))
 	mux.Handle("GET /api/v1/admin/mcp/servers", authMiddleware(adminAPIKey, http.HandlerFunc(handler.HandleListGlobalMCPServers)))
