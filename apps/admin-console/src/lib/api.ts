@@ -219,4 +219,95 @@ export const adminApi = {
     if (!response.ok) throw new Error("Failed to delete MCP server");
     return response.json();
   },
+
+  async listSystemTools(): Promise<any> {
+    const response = await request("GET", "/api/v1/admin/system-tools");
+    if (!response.ok) throw new Error("Failed to fetch system tools");
+    return response.json();
+  },
+
+  async createSystemTool(data: {
+    name: string;
+    version: string;
+    description?: string;
+    auth_level?: string;
+    sandbox_required?: boolean;
+    input_schema?: Record<string, unknown>;
+    output_schema?: Record<string, unknown>;
+    registered_by?: string;
+  }): Promise<any> {
+    const response = await request("POST", "/api/v1/admin/system-tools", data);
+    if (!response.ok) throw new Error("Failed to create system tool");
+    return response.json();
+  },
+
+  async updateSystemTool(id: string, data: Partial<{
+    name: string;
+    version: string;
+    description: string;
+    auth_level: string;
+    sandbox_required: boolean;
+    input_schema: Record<string, unknown>;
+    output_schema: Record<string, unknown>;
+  }>): Promise<any> {
+    const response = await request("PUT", `/api/v1/admin/system-tools/${id}`, data);
+    if (!response.ok) throw new Error("Failed to update system tool");
+    return response.json();
+  },
+
+  async transitionSystemTool(id: string, data: {
+    target_state: string;
+    actor?: string;
+  }): Promise<any> {
+    const response = await request("POST", `/api/v1/admin/system-tools/${id}/transition`, data);
+    if (!response.ok) throw new Error("Failed to transition system tool");
+    return response.json();
+  },
+
+  async listSystemSkills(): Promise<any> {
+    const response = await request("GET", "/api/v1/admin/system-skills");
+    if (!response.ok) throw new Error("Failed to fetch system skills");
+    return response.json();
+  },
+
+  async createSystemSkill(data: {
+    name: string;
+    version: string;
+    description?: string;
+    tools?: Array<{ name: string; version: string }>;
+    sop?: string;
+    mutating?: boolean;
+    approval_required?: boolean;
+    hooks?: unknown[];
+    published_by?: string;
+  }): Promise<any> {
+    const response = await request("POST", "/api/v1/admin/system-skills", data);
+    if (!response.ok) throw new Error("Failed to create system skill");
+    return response.json();
+  },
+
+  async updateSystemSkill(id: string, data: Partial<{
+    name: string;
+    version: string;
+    description: string;
+    tools: Array<{ name: string; version: string }>;
+    sop: string;
+    mutating: boolean;
+    approval_required: boolean;
+    hooks: unknown[];
+  }>): Promise<any> {
+    const response = await request("PUT", `/api/v1/admin/system-skills/${id}`, data);
+    if (!response.ok) throw new Error("Failed to update system skill");
+    return response.json();
+  },
+
+  async transitionSystemSkill(id: string, data: {
+    target_state: string;
+    actor?: string;
+    reason?: string;
+  }): Promise<any> {
+    const response = await request("POST", `/api/v1/admin/system-skills/${id}/transition`, data);
+    if (!response.ok) throw new Error("Failed to transition system skill");
+    return response.json();
+  },
 };
