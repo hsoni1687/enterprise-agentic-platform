@@ -1030,9 +1030,8 @@ func (h *AdminHandler) HandleListSystemTools(w http.ResponseWriter, r *http.Requ
 	var tools []models.ToolSpec
 	for rows.Next() {
 		var t models.ToolSpec
-		var inputSchema, outputSchema interface{}
 		if err := rows.Scan(&t.ID, &t.TenantID, &t.Name, &t.Version, &t.Description, &t.AuthLevel,
-			&t.SandboxRequired, &inputSchema, &outputSchema, &t.Status, &t.RegisteredBy, &t.CreatedAt, &t.Scope); err != nil {
+			&t.SandboxRequired, &t.InputSchema, &t.OutputSchema, &t.Status, &t.RegisteredBy, &t.CreatedAt, &t.Scope); err != nil {
 			http.Error(w, fmt.Sprintf("Scan failed: %v", err), http.StatusInternalServerError)
 			return
 		}

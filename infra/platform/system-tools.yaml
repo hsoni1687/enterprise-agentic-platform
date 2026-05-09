@@ -1,0 +1,135 @@
+# System Tools: Platform-owned tools available to all tenants
+# Schema follows Anthropic's managed tool specification
+# Aligned for portability of Claude tools to this platform
+#
+# To seed/update: bash infra/local/seed_system_tools.sh
+
+tools:
+  - id: system-tool-web-search
+    name: web-search
+    version: "1.0.0"
+    description: Search the web for information and retrieve results
+    input_schema:
+      type: object
+      properties:
+        query:
+          type: string
+          description: Search query
+        max_results:
+          type: integer
+          description: Maximum number of results (default 10)
+          default: 10
+      required:
+        - query
+    _metadata:
+      auth_level: read
+      sandbox_required: false
+      registered_by: platform-admin
+
+  - id: system-tool-code-executor
+    name: code-executor
+    version: "1.0.0"
+    description: Execute code snippets in a sandboxed environment (Python, JavaScript, Bash)
+    input_schema:
+      type: object
+      properties:
+        language:
+          type: string
+          enum: [python, javascript, bash]
+          description: Programming language
+        code:
+          type: string
+          description: Code to execute
+        timeout_seconds:
+          type: integer
+          description: Execution timeout in seconds (default 30, max 300)
+          default: 30
+      required:
+        - language
+        - code
+    _metadata:
+      auth_level: mutating
+      sandbox_required: true
+      registered_by: platform-admin
+
+  - id: system-tool-http-request
+    name: http-request
+    version: "1.0.0"
+    description: Make HTTP requests to external APIs and endpoints
+    input_schema:
+      type: object
+      properties:
+        method:
+          type: string
+          enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS]
+          description: HTTP method
+        url:
+          type: string
+          description: Target URL
+        headers:
+          type: object
+          description: Custom HTTP headers
+        body:
+          type: string
+          description: Request body (for POST/PUT/PATCH)
+        timeout_seconds:
+          type: integer
+          description: Request timeout in seconds (default 30)
+          default: 30
+      required:
+        - method
+        - url
+    _metadata:
+      auth_level: mutating
+      sandbox_required: false
+      registered_by: platform-admin
+
+  - id: system-tool-text-processing
+    name: text-processing
+    version: "1.0.0"
+    description: Advanced text processing operations (regex, parsing, transformation)
+    input_schema:
+      type: object
+      properties:
+        operation:
+          type: string
+          enum: [regex_match, regex_replace, parse_json, parse_csv, extract_urls, extract_emails]
+          description: Processing operation
+        text:
+          type: string
+          description: Input text to process
+        pattern:
+          type: string
+          description: Pattern or configuration for the operation
+      required:
+        - operation
+        - text
+    _metadata:
+      auth_level: read
+      sandbox_required: false
+      registered_by: platform-admin
+
+  - id: system-tool-data-validation
+    name: data-validation
+    version: "1.0.0"
+    description: Validate data against schemas (JSON Schema, type checking, format validation)
+    input_schema:
+      type: object
+      properties:
+        schema_type:
+          type: string
+          enum: [json_schema, email, url, phone, credit_card, uuid]
+          description: Validation schema type
+        data:
+          type: string
+          description: Data to validate
+        schema:
+          type: object
+          description: Optional custom JSON schema
+      required:
+        - schema_type
+        - data
+    _metadata:
+      auth_level: read
+      sandbox_required: false
+      registered_by: platform-admin
