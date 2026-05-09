@@ -84,8 +84,8 @@ function EditAgentSheet({ agent, onUpdated }: { agent: any; onUpdated: () => voi
   });
 
   const { data: activeSkills } = useQuery({
-    queryKey: ["skills", "active"],
-    queryFn: () => skillsApi.list("active"),
+    queryKey: ["skills", "active", "with-system"],
+    queryFn: () => skillsApi.listWithSystem("active"),
   });
 
   const { data: approvedTools } = useQuery({
@@ -245,6 +245,48 @@ function EditAgentSheet({ agent, onUpdated }: { agent: any; onUpdated: () => voi
               </div>
             ))}
           </div>
+
+          {activeSkills && activeSkills.length > 0 && (
+            <div className="p-3 bg-muted/50 rounded-md border border-border text-sm space-y-2">
+              <div className="font-semibold text-xs uppercase text-muted-foreground">Available Skills</div>
+              <div className="space-y-2">
+                {(() => {
+                  const tenantSkills = activeSkills.filter((s: any) => s.scope !== 'system');
+                  const systemSkills = activeSkills.filter((s: any) => s.scope === 'system');
+                  return (
+                    <>
+                      {tenantSkills.length > 0 && (
+                        <div>
+                          <div className="text-xs font-medium text-foreground mb-1">Your Skills</div>
+                          <div className="space-y-1">
+                            {tenantSkills.map((skill: any) => (
+                              <div key={skill.id} className="text-xs px-2 py-1 bg-background rounded cursor-pointer hover:bg-muted" 
+                                onClick={() => append({ name: skill.name, version: skill.version })}>
+                                {skill.name}@{skill.version}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {systemSkills.length > 0 && (
+                        <div>
+                          <div className="text-xs font-medium text-foreground mb-1">🔒 System Skills (read-only)</div>
+                          <div className="space-y-1">
+                            {systemSkills.map((skill: any) => (
+                              <div key={skill.id} className="text-xs px-2 py-1 bg-background rounded cursor-pointer hover:bg-muted" 
+                                onClick={() => append({ name: skill.name, version: skill.version })}>
+                                {skill.name}@{skill.version}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+              </div>
+            </div>
+          )}
 
           <div className="flex flex-col gap-2">
             <Label>MCP Servers</Label>
