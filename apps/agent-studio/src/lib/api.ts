@@ -85,6 +85,11 @@ export const skillsApi = {
       SKILL_CATALOG,
       `/api/v1/skills${status ? `?status=${status}` : ""}`
     ),
+  listWithSystem: (status?: string) =>
+    req<import("./types").SkillManifest[]>(
+      SKILL_CATALOG,
+      `/api/v1/skills?include_system=true${status ? `&status=${status}` : ""}`
+    ),
   get: (id: string) =>
     req<import("./types").SkillManifest>(SKILL_CATALOG, `/api/v1/skills/${id}`),
   create: (body: Partial<import("./types").SkillManifest>) =>
