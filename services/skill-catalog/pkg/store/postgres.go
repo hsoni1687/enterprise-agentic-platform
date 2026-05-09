@@ -27,14 +27,18 @@ func NewPostgresStore(db *sql.DB) (*PostgresStore, error) {
 func (s *PostgresStore) Create(ctx context.Context, sk *models.SkillManifest) error {
 	tools, _ := json.Marshal(sk.Tools)
 	hooks, _ := json.Marshal(sk.Hooks)
+	scope := sk.Scope
+	if scope == "" {
+		scope = "tenant"
+	}
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO skills
 			(id, tenant_id, name, version, description, tools, sop, mutating,
-			 approval_required, hooks, status, published_by, created_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+			 approval_required, hooks, status, published_by, created_at, scope)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
 		sk.ID, sk.TenantID, sk.Name, sk.Version, sk.Description, tools,
 		sk.SOP, sk.Mutating, sk.ApprovalRequired, hooks,
-		string(sk.Status), sk.PublishedBy, sk.CreatedAt,
+		string(sk.Status), sk.PublishedBy, sk.CreatedAt, scope,
 	)
 	return err
 }
@@ -42,26 +46,33 @@ func (s *PostgresStore) Create(ctx context.Context, sk *models.SkillManifest) er
 func (s *PostgresStore) GetByID(ctx context.Context, id, tenantID string) (*models.SkillManifest, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, tenant_id, name, version, description, tools, sop, mutating,
-		       approval_required, hooks, status, published_by, created_at
+		       approval_required, hooks, status, published_by, created_at, scope
 		FROM skills
-		WHERE id = $1 AND tenant_id = $2`, id, tenantID)
+		WHERE id = $1 AND (tenant_id = $2 OR scope = 'system')`, id, tenantID)
 	return scanSkill(row)
 }
 
 func (s *PostgresStore) GetByName(ctx context.Context, name, version, tenantID string) (*models.SkillManifest, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, tenant_id, name, version, description, tools, sop, mutating,
-		       approval_required, hooks, status, published_by, created_at
+		       approval_required, hooks, status, published_by, created_at, scope
 		FROM skills
-		WHERE name = $1 AND version = $2 AND tenant_id = $3`, name, version, tenantID)
+		WHERE name = $1 AND version = $2 AND (tenant_id = $3 OR scope = 'system')`, name, version, tenantID)
 	return scanSkill(row)
 }
 
 func (s *PostgresStore) List(ctx context.Context, f ListFilter) ([]*models.SkillManifest, error) {
-	q := `SELECT id, tenant_id, name, version, description, tools, sop, mutating,
-		         approval_required, hooks, status, published_by, created_at
-		  FROM skills WHERE tenant_id = $1`
+	var q string
 	args := []any{f.TenantID}
+	if f.IncludeSystem {
+		q = `SELECT id, tenant_id, name, version, description, tools, sop, mutating,
+		            approval_required, hooks, status, published_by, created_at, scope
+		     FROM skills WHERE tenant_id = $1 OR scope = 'system'`
+	} else {
+		q = `SELECT id, tenant_id, name, version, description, tools, sop, mutating,
+		            approval_required, hooks, status, published_by, created_at, scope
+		     FROM skills WHERE tenant_id = $1`
+	}
 	if f.Status != "" {
 		q += " AND status = $2"
 		args = append(args, f.Status)
@@ -84,6 +95,13 @@ func (s *PostgresStore) List(ctx context.Context, f ListFilter) ([]*models.Skill
 }
 
 func (s *PostgresStore) Update(ctx context.Context, sk *models.SkillManifest) error {
+	existing, err := s.GetByID(ctx, sk.ID, sk.TenantID)
+	if err != nil {
+		return err
+	}
+	if existing.Scope == "system" {
+		return ErrForbidden
+	}
 	tools, _ := json.Marshal(sk.Tools)
 	hooks, _ := json.Marshal(sk.Hooks)
 	res, err := s.db.ExecContext(ctx, `
@@ -109,6 +127,9 @@ func (s *PostgresStore) Transition(ctx context.Context, id, tenantID string, tar
 	sk, err := s.GetByID(ctx, id, tenantID)
 	if err != nil {
 		return err
+	}
+	if sk.Scope == "system" {
+		return ErrForbidden
 	}
 	if err := validateTransition(sk.Status, target); err != nil {
 		return err
@@ -142,7 +163,7 @@ func scanSkill(s scanner) (*models.SkillManifest, error) {
 	err := s.Scan(
 		&sk.ID, &sk.TenantID, &sk.Name, &sk.Version, &sk.Description, &tools,
 		&sk.SOP, &sk.Mutating, &sk.ApprovalRequired, &hooks,
-		&sk.Status, &sk.PublishedBy, &sk.CreatedAt,
+		&sk.Status, &sk.PublishedBy, &sk.CreatedAt, &sk.Scope,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

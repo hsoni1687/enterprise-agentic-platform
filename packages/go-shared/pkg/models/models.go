@@ -52,6 +52,7 @@ type ToolSpec struct {
 	Status          ResourceStatus  `json:"status"`
 	RegisteredBy    string          `json:"registered_by"`
 	CreatedAt       time.Time       `json:"created_at"`
+	Scope           string          `json:"scope"` // "tenant" | "system"
 }
 
 // ToolRef is a version-pinned reference to a tool used inside a SkillManifest.
@@ -86,6 +87,7 @@ type SkillManifest struct {
 	Status           ResourceStatus `json:"status"`
 	PublishedBy      string         `json:"published_by"`
 	CreatedAt        time.Time      `json:"created_at"`
+	Scope            string         `json:"scope"` // "tenant" | "system"
 }
 
 // SkillRef is a version-pinned reference to a skill used inside SubAgentContract.

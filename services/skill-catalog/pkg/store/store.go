@@ -9,10 +9,12 @@ import (
 )
 
 var ErrNotFound = errors.New("skill not found")
+var ErrForbidden = errors.New("forbidden: system resource is immutable")
 
 type ListFilter struct {
-	TenantID string
-	Status   string
+	TenantID      string
+	Status        string
+	IncludeSystem bool
 }
 
 type Store interface {
@@ -66,11 +68,14 @@ func (s *InMemoryStore) GetByID(_ context.Context, id, tenantID string) (*models
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	sk, ok := s.records[id]
-	if !ok || sk.TenantID != tenantID {
+	if !ok {
 		return nil, ErrNotFound
 	}
-	cp := *sk
-	return &cp, nil
+	if sk.Scope == "system" || sk.TenantID == tenantID {
+		cp := *sk
+		return &cp, nil
+	}
+	return nil, ErrNotFound
 }
 
 func (s *InMemoryStore) GetByName(_ context.Context, name, version, tenantID string) (*models.SkillManifest, error) {
@@ -90,8 +95,14 @@ func (s *InMemoryStore) List(_ context.Context, f ListFilter) ([]*models.SkillMa
 	defer s.mu.RUnlock()
 	var out []*models.SkillManifest
 	for _, sk := range s.records {
-		if sk.TenantID != f.TenantID {
-			continue
+		if f.IncludeSystem {
+			if sk.TenantID != f.TenantID && sk.Scope != "system" {
+				continue
+			}
+		} else {
+			if sk.TenantID != f.TenantID {
+				continue
+			}
 		}
 		if f.Status != "" && string(sk.Status) != f.Status {
 			continue
@@ -109,6 +120,9 @@ func (s *InMemoryStore) Update(_ context.Context, sk *models.SkillManifest) erro
 	if !ok || existing.TenantID != sk.TenantID {
 		return ErrNotFound
 	}
+	if existing.Scope == "system" {
+		return ErrForbidden
+	}
 	cp := *sk
 	s.records[sk.ID] = &cp
 	return nil
@@ -120,6 +134,9 @@ func (s *InMemoryStore) Transition(_ context.Context, id, tenantID string, targe
 	sk, ok := s.records[id]
 	if !ok || sk.TenantID != tenantID {
 		return ErrNotFound
+	}
+	if sk.Scope == "system" {
+		return ErrForbidden
 	}
 	if err := validateTransition(sk.Status, target); err != nil {
 		return err

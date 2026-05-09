@@ -94,8 +94,9 @@ func (h *Handler) handleList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	f := store.ListFilter{
-		TenantID: tid,
-		Status:   r.URL.Query().Get("status"),
+		TenantID:      tid,
+		Status:        r.URL.Query().Get("status"),
+		IncludeSystem: r.URL.Query().Get("include_system") == "true",
 	}
 	skills, err := h.store.List(r.Context(), f)
 	if err != nil {
@@ -129,6 +130,10 @@ func (h *Handler) handleUpdate(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
+		if errors.Is(err, store.ErrForbidden) {
+			http.Error(w, "forbidden: system resource is immutable", http.StatusForbidden)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -154,6 +159,10 @@ func (h *Handler) handleTransition(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		if errors.Is(err, store.ErrForbidden) {
+			http.Error(w, "forbidden: system resource is immutable", http.StatusForbidden)
 			return
 		}
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)

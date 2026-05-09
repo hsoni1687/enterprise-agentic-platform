@@ -9,10 +9,12 @@ import (
 )
 
 var ErrNotFound = errors.New("tool not found")
+var ErrForbidden = errors.New("forbidden: system resource is immutable")
 
 type ListFilter struct {
-	TenantID string
-	Status   string
+	TenantID      string
+	Status        string
+	IncludeSystem bool
 }
 
 type Store interface {
@@ -61,13 +63,16 @@ func (s *InMemoryStore) Create(_ context.Context, t *models.ToolSpec) error {
 
 func (s *InMemoryStore) GetByID(_ context.Context, id, tenantID string) (*models.ToolSpec, error) {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
+	defer s.mu.Unlock()
 	t, ok := s.records[id]
-	if !ok || t.TenantID != tenantID {
+	if !ok {
 		return nil, ErrNotFound
 	}
-	cp := *t
-	return &cp, nil
+	if t.Scope == "system" || t.TenantID == tenantID {
+		cp := *t
+		return &cp, nil
+	}
+	return nil, ErrNotFound
 }
 
 func (s *InMemoryStore) List(_ context.Context, f ListFilter) ([]*models.ToolSpec, error) {
@@ -75,8 +80,14 @@ func (s *InMemoryStore) List(_ context.Context, f ListFilter) ([]*models.ToolSpe
 	defer s.mu.RUnlock()
 	var out []*models.ToolSpec
 	for _, t := range s.records {
-		if t.TenantID != f.TenantID {
-			continue
+		if f.IncludeSystem {
+			if t.TenantID != f.TenantID && t.Scope != "system" {
+				continue
+			}
+		} else {
+			if t.TenantID != f.TenantID {
+				continue
+			}
 		}
 		if f.Status != "" && string(t.Status) != f.Status {
 			continue
@@ -94,6 +105,9 @@ func (s *InMemoryStore) Update(_ context.Context, t *models.ToolSpec) error {
 	if !ok || existing.TenantID != t.TenantID {
 		return ErrNotFound
 	}
+	if existing.Scope == "system" {
+		return ErrForbidden
+	}
 	cp := *t
 	s.records[t.ID] = &cp
 	return nil
@@ -105,6 +119,9 @@ func (s *InMemoryStore) Transition(_ context.Context, id, tenantID string, targe
 	t, ok := s.records[id]
 	if !ok || t.TenantID != tenantID {
 		return ErrNotFound
+	}
+	if t.Scope == "system" {
+		return ErrForbidden
 	}
 	if err := validateTransition(t.Status, target); err != nil {
 		return err

@@ -25,14 +25,18 @@ func NewPostgresStore(db *sql.DB) (*PostgresStore, error) {
 }
 
 func (s *PostgresStore) Create(ctx context.Context, t *models.ToolSpec) error {
+	scope := t.Scope
+	if scope == "" {
+		scope = "tenant"
+	}
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO tools
 			(id, tenant_id, name, version, description, auth_level, sandbox_required,
-			 input_schema, output_schema, status, registered_by, created_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+			 input_schema, output_schema, status, registered_by, created_at, scope)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
 		t.ID, t.TenantID, t.Name, t.Version, t.Description, string(t.AuthLevel),
 		t.SandboxRequired, nullJSON(t.InputSchema), nullJSON(t.OutputSchema),
-		string(t.Status), t.RegisteredBy, t.CreatedAt,
+		string(t.Status), t.RegisteredBy, t.CreatedAt, scope,
 	)
 	return err
 }
@@ -40,17 +44,24 @@ func (s *PostgresStore) Create(ctx context.Context, t *models.ToolSpec) error {
 func (s *PostgresStore) GetByID(ctx context.Context, id, tenantID string) (*models.ToolSpec, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, tenant_id, name, version, description, auth_level, sandbox_required,
-		       input_schema, output_schema, status, registered_by, created_at
+		       input_schema, output_schema, status, registered_by, created_at, scope
 		FROM tools
-		WHERE id = $1 AND tenant_id = $2`, id, tenantID)
+		WHERE id = $1 AND (tenant_id = $2 OR scope = 'system')`, id, tenantID)
 	return scanTool(row)
 }
 
 func (s *PostgresStore) List(ctx context.Context, f ListFilter) ([]*models.ToolSpec, error) {
-	q := `SELECT id, tenant_id, name, version, description, auth_level, sandbox_required,
-		         input_schema, output_schema, status, registered_by, created_at
-		  FROM tools WHERE tenant_id = $1`
+	var q string
 	args := []any{f.TenantID}
+	if f.IncludeSystem {
+		q = `SELECT id, tenant_id, name, version, description, auth_level, sandbox_required,
+		            input_schema, output_schema, status, registered_by, created_at, scope
+		     FROM tools WHERE tenant_id = $1 OR scope = 'system'`
+	} else {
+		q = `SELECT id, tenant_id, name, version, description, auth_level, sandbox_required,
+		            input_schema, output_schema, status, registered_by, created_at, scope
+		     FROM tools WHERE tenant_id = $1`
+	}
 	if f.Status != "" {
 		q += " AND status = $2"
 		args = append(args, f.Status)
@@ -73,6 +84,13 @@ func (s *PostgresStore) List(ctx context.Context, f ListFilter) ([]*models.ToolS
 }
 
 func (s *PostgresStore) Update(ctx context.Context, t *models.ToolSpec) error {
+	existing, err := s.GetByID(ctx, t.ID, t.TenantID)
+	if err != nil {
+		return err
+	}
+	if existing.Scope == "system" {
+		return ErrForbidden
+	}
 	res, err := s.db.ExecContext(ctx, `
 		UPDATE tools
 		SET name=$1, version=$2, description=$3, auth_level=$4, sandbox_required=$5,
@@ -96,6 +114,9 @@ func (s *PostgresStore) Transition(ctx context.Context, id, tenantID string, tar
 	t, err := s.GetByID(ctx, id, tenantID)
 	if err != nil {
 		return err
+	}
+	if t.Scope == "system" {
+		return ErrForbidden
 	}
 	if err := validateTransition(t.Status, target); err != nil {
 		return err
@@ -128,7 +149,7 @@ func scanTool(s scanner) (*models.ToolSpec, error) {
 	var inputSchema, outputSchema sql.NullString
 	err := s.Scan(
 		&t.ID, &t.TenantID, &t.Name, &t.Version, &t.Description, &t.AuthLevel,
-		&t.SandboxRequired, &inputSchema, &outputSchema, &t.Status, &t.RegisteredBy, &t.CreatedAt,
+		&t.SandboxRequired, &inputSchema, &outputSchema, &t.Status, &t.RegisteredBy, &t.CreatedAt, &t.Scope,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
