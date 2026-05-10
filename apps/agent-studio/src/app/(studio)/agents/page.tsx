@@ -361,7 +361,7 @@ export default function AgentsPage() {
             <p className="text-xs text-muted-foreground">
               System tools are auto-injected. Add tenant tools here (mutating tools require HITL approval).
             </p>
-            {approvedTools && approvedTools.length > 0 && (
+            {approvedTools && Array.isArray(approvedTools) && approvedTools.length > 0 && (
               <div className="text-xs text-muted-foreground">
                 Available tools: {approvedTools.map((t) => t.name).join(", ")}
               </div>
