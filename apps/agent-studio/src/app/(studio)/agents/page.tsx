@@ -224,6 +224,36 @@ function CreateAgentSheet({ onCreated }: { onCreated: () => void }) {
             ))}
           </div>
 
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <Label>Direct Tools</Label>
+              <button
+                type="button"
+                onClick={() => appendTool({ name: "", version: "1.0.0" })}
+                className="text-xs text-primary hover:underline flex items-center gap-1"
+              >
+                <Plus className="h-3 w-3" /> Add Tool
+              </button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              System tools are auto-injected. Add tenant tools here (mutating tools require HITL approval).
+            </p>
+            {approvedTools && Array.isArray(approvedTools) && approvedTools.length > 0 && (
+              <div className="text-xs text-muted-foreground">
+                Available tools: {approvedTools.map((t) => t.name).join(", ")}
+              </div>
+            )}
+            {toolFields.map((field, i) => (
+              <div key={field.id} className="flex gap-2">
+                <Input placeholder="tool-name" {...register(`tools.${i}.name`)} className="flex-1" />
+                <Input placeholder="1.0.0" {...register(`tools.${i}.version`)} className="w-24" />
+                <button type="button" onClick={() => removeTool(i)} className="text-muted-foreground hover:text-destructive">
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
+            ))}
+          </div>
+
           {mutation.error && <p className="text-xs text-destructive">{String(mutation.error)}</p>}
 
           <Button type="submit" disabled={mutation.isPending} className="mt-2">
@@ -347,35 +377,6 @@ export default function AgentsPage() {
                     )}
                   </div>
 
-          <div className="flex flex-col gap-2">
-            <div className="flex items-center justify-between">
-              <Label>Direct Tools</Label>
-              <button
-                type="button"
-                onClick={() => appendTool({ name: "", version: "1.0.0" })}
-                className="text-xs text-primary hover:underline flex items-center gap-1"
-              >
-                <Plus className="h-3 w-3" /> Add Tool
-              </button>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              System tools are auto-injected. Add tenant tools here (mutating tools require HITL approval).
-            </p>
-            {approvedTools && Array.isArray(approvedTools) && approvedTools.length > 0 && (
-              <div className="text-xs text-muted-foreground">
-                Available tools: {approvedTools.map((t) => t.name).join(", ")}
-              </div>
-            )}
-            {toolFields.map((field, i) => (
-              <div key={field.id} className="flex gap-2">
-                <Input placeholder="tool-name" {...register(`tools.${i}.name`)} className="flex-1" />
-                <Input placeholder="1.0.0" {...register(`tools.${i}.version`)} className="w-24" />
-                <button type="button" onClick={() => removeTool(i)} className="text-muted-foreground hover:text-destructive">
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              </div>
-            ))}
-          </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   {agent.status === "active" && (
