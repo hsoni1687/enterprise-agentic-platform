@@ -132,8 +132,8 @@ class AgentToolRegistry:
             skill_name = skill_def.get("name", "").replace(" ", "-").replace("_", "-").lower()
             skill_description = skill_def.get("description", f"Execute {skill_name} skill")
 
-            # Create inline tool function for this skill
-            @agent.tool
+            # Create inline tool function for this skill with unique name via decorator
+            @agent.tool(name=skill_name)
             async def _skill_tool(
                 ctx: RunContext[Any],
                 args: dict = None,
@@ -151,9 +151,6 @@ class AgentToolRegistry:
                 tool_args = args or {}
                 return await registry.invoke_skill(_skill_name, tool_args)
 
-            # Set the function name for display
-            _skill_tool.__name__ = skill_name
-
         # 3. MCP tools from discovery
         for mcp_tool in self.mcp_tools:
             server_id = mcp_tool.server_id
@@ -161,8 +158,8 @@ class AgentToolRegistry:
             qualified_name = mcp_tool.qualified_name
             description = mcp_tool.description
 
-            # Create inline tool function for this MCP tool
-            @agent.tool
+            # Create inline tool function for this MCP tool with unique name via decorator
+            @agent.tool(name=qualified_name)
             async def _mcp_tool_func(
                 ctx: RunContext[Any],
                 args: dict = None,
@@ -181,9 +178,6 @@ class AgentToolRegistry:
                 """
                 tool_args = args or {}
                 return await registry.invoke_mcp_tool(_server_id, _tool_name, tool_args)
-
-            # Set the function name for display
-            _mcp_tool_func.__name__ = qualified_name
 
         logger.info(
             f"Registered {1 + len(self.context.skills) + len(self.mcp_tools)} tools for agent"
