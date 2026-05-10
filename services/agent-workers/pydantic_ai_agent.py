@@ -293,31 +293,36 @@ def _convert_openai_tool_to_mcp_definition(openai_tool_dict: dict) -> MCPToolDef
 
 async def extract_tool_calls_from_response(response: Any) -> list[ToolCall]:
     """
-    Extract tool calls from PydanticAI response.
+    Extract tool calls from PydanticAI response (AgentRunResult).
 
-    Converts PydanticAI tool calls to our ToolCall model for
-    compatibility with workflows.py.
+    PydanticAI tool calls are in response.all_messages() as ModelResponse.parts
+    with part_kind='tool-call'. Tool execution happens internally in agent.run(),
+    so this typically returns empty list for text-only responses.
 
     Args:
-        response: PydanticAI agent response
+        response: PydanticAI AgentRunResult
 
     Returns:
         List of ToolCall objects
     """
     tool_calls = []
+    try:
+        from pydantic_ai.messages import ModelResponse
 
-    if hasattr(response, "messages"):
-        # Last message should contain tool calls
-        last_message = response.messages[-1] if response.messages else None
-        if last_message and hasattr(last_message, "tool_calls"):
-            for tc in last_message.tool_calls:
-                tool_calls.append(
-                    ToolCall(
-                        id=tc.get("id", ""),
-                        name=tc.get("function", {}).get("name", ""),
-                        arguments=json.loads(tc.get("function", {}).get("arguments", "{}")),
-                    )
-                )
+        # Use .all_messages() method to get message history
+        for msg in response.all_messages():
+            if isinstance(msg, ModelResponse):
+                for part in msg.parts:
+                    if getattr(part, "part_kind", None) == "tool-call":
+                        tool_calls.append(
+                            ToolCall(
+                                id=getattr(part, "tool_call_id", ""),
+                                name=getattr(part, "tool_name", ""),
+                                arguments=part.args_as_dict() if hasattr(part, "args_as_dict") else {},
+                            )
+                        )
+    except Exception as e:
+        logger.warning(f"Tool call extraction failed: {e}")
 
     return tool_calls
 
@@ -345,15 +350,12 @@ async def convert_response_to_decision(response: Any, mcp_tools: list[MCPToolDef
     messages_delta = []
 
     # Extract text content (final answer)
-    # PydanticAI returns the result data in response.data, or response might be the string itself
-    if hasattr(response, "data"):
-        if isinstance(response.data, str):
-            final_answer = response.data
-        elif isinstance(response.data, dict) and "text" in response.data:
-            final_answer = response.data["text"]
-        elif response.data:
-            # Try to convert to string
-            final_answer = str(response.data)
+    # PydanticAI returns the result in response.output (AgentRunResult field)
+    if hasattr(response, "output"):
+        if isinstance(response.output, str):
+            final_answer = response.output
+        elif response.output is not None:
+            final_answer = str(response.output)
     elif isinstance(response, str):
         final_answer = response
     elif response:
@@ -367,9 +369,11 @@ async def convert_response_to_decision(response: Any, mcp_tools: list[MCPToolDef
     logger.info(f"Extracted tool_calls: {len(tool_calls)} calls")
 
     # Build message delta for state persistence
-    if hasattr(response, "messages"):
-        for msg in response.messages:
+    try:
+        for msg in response.all_messages():
             messages_delta.append(_message_to_dict(msg))
+    except Exception as e:
+        logger.warning(f"Failed to build message delta: {e}")
 
     continue_loop = bool(tool_calls) and not final_answer
     logger.info(f"Decision: final_answer={bool(final_answer)}, tool_calls={len(tool_calls)}, continue_loop={continue_loop}")
@@ -383,10 +387,16 @@ async def convert_response_to_decision(response: Any, mcp_tools: list[MCPToolDef
 
 
 def _message_to_dict(message: Any) -> dict:
-    """Convert PydanticAI message to dict for storage in Temporal."""
-    if hasattr(message, "role"):
+    """Convert PydanticAI ModelRequest/ModelResponse to dict for storage in Temporal."""
+    kind = getattr(message, "kind", None)
+    if kind in ("request", "response"):
+        parts = getattr(message, "parts", [])
+        content_parts = []
+        for part in parts:
+            if getattr(part, "part_kind", None) == "text":
+                content_parts.append(getattr(part, "content", ""))
         return {
-            "role": message.role,
-            "content": getattr(message, "content", ""),
+            "role": kind,
+            "content": " ".join(content_parts),
         }
     return message.__dict__ if hasattr(message, "__dict__") else {}

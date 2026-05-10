@@ -260,9 +260,9 @@ async def pydantic_ai_reasoning_step(
         try:
             with open("/tmp/response-debug.txt", "w") as f:
                 f.write(f"Response type: {type(response)}\n")
-                if hasattr(response, 'data'):
-                    raw_data = str(response.data) if response.data else ""
-                    f.write(f"Raw response.data length: {len(raw_data)} characters\n")
+                if hasattr(response, 'output'):
+                    raw_data = str(response.output) if response.output else ""
+                    f.write(f"Raw response.output length: {len(raw_data)} characters\n")
                     f.write(f"First 300 chars:\n{raw_data[:300]}\n")
                     f.write(f"Last 300 chars:\n{raw_data[-300:]}\n")
                 f.flush()
@@ -272,11 +272,14 @@ async def pydantic_ai_reasoning_step(
         # Debug: log response structure
         logging.info(f"PydanticAI response type: {type(response)}")
         logging.info(f"PydanticAI response attrs: {dir(response)}")
-        if hasattr(response, "data"):
-            data_str = str(response.data) if response.data else "None"
-            logging.info(f"PydanticAI response.data length: {len(data_str)}, first 200 chars: {data_str[:200]}")
-        if hasattr(response, "messages"):
-            logging.info(f"PydanticAI response.messages count: {len(response.messages)}")
+        if hasattr(response, "output"):
+            output_str = str(response.output) if response.output else "None"
+            logging.info(f"PydanticAI response.output length: {len(output_str)}, first 200 chars: {output_str[:200]}")
+        try:
+            messages = response.all_messages()
+            logging.info(f"PydanticAI response.all_messages() count: {len(messages)}")
+        except Exception as e:
+            logging.info(f"Could not get messages: {e}")
 
         # Convert PydanticAI response to our AgentDecision model
         decision = await convert_response_to_decision(response, mcp_tools)
