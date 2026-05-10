@@ -37,7 +37,7 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
     { label: "Tenants", href: "/tenants", icon: Users },
     { label: "LLM Config", href: "/llm-config", icon: Settings },
     { label: "System Agents", href: "/system-agents", icon: Zap },
-    { label: "System Skills", href: "/system-skills", icon: Zap },
+    { label: "System Skills", href: "/system-skills", icon: Wrench },
     { label: "Executions", href: "/executions", icon: BarChart3 },
     { label: "Cost Tracking", href: "/cost", icon: BarChart3 },
     { label: "MCP Servers", href: "/mcp-servers", icon: Server },
