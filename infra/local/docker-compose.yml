@@ -258,10 +258,12 @@ services:
       - TEMPORAL_TASK_QUEUE=default-tenant-agent-queue
       - SANDBOX_MANAGER_URL=http://sandbox-manager:8082/api/v1/execute
       - SKILL_DISPATCHER_URL=http://skill-dispatcher:8085
+      - TOOL_REGISTRY_URL=http://tool-registry:8086
       - POSTGRES_URL=postgresql://postgres:postgres@postgres:5432/agentplatform?sslmode=disable
     depends_on:
       - temporal
       - sandbox-manager
+      - tool-registry
     networks:
       - agent-net
 
@@ -280,12 +282,14 @@ services:
       - TEMPORAL_TASK_QUEUE=platform-system-agent-queue
       - SANDBOX_MANAGER_URL=http://sandbox-manager:8082/api/v1/execute
       - SKILL_DISPATCHER_URL=http://skill-dispatcher:8085
+      - TOOL_REGISTRY_URL=http://tool-registry:8086
       - POSTGRES_URL=postgresql://postgres:postgres@postgres:5432/agentplatform?sslmode=disable
       - BEARTYPE_DOOR_DISABLE_CHECKER=1
       - BEARTYPE_ERROR_ON_NONFATAL_VIOLATION=0
     depends_on:
       - temporal
       - sandbox-manager
+      - tool-registry
     networks:
       - agent-net
 

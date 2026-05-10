@@ -107,6 +107,51 @@ async def invoke_mcp_tool(server_id: str, tool_name: str, args: dict, tenant_id:
 
 
 @activity.defn
+async def fetch_system_tools(tenant_id: str) -> list[dict]:
+    """Fetches platform system tools and returns them as tool definitions."""
+    tool_registry_url = os.getenv("TOOL_REGISTRY_URL", "http://localhost:8086")
+    logging.info(f"Fetching system tools for tenant {tenant_id}")
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                f"{tool_registry_url}/api/v1/tools?include_system=true&status=approved",
+                headers={"X-Tenant-ID": tenant_id},
+                timeout=15.0,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            tools = data.get("tools", [])
+            # Filter to only system tools
+            system_tools = [t for t in tools if t.get("scope") == "system"]
+            logging.info(f"Found {len(system_tools)} system tools")
+            return system_tools
+    except Exception as e:
+        logging.error(f"Failed to fetch system tools: {e}")
+        return []
+
+
+@activity.defn
+async def invoke_direct_tool(tool_name: str, tool_version: str, args: dict, tenant_id: str, agent_id: str, mutating: bool) -> str:
+    """Invokes a direct tool via the skill-dispatcher."""
+    skill_dispatcher_url = os.getenv("SKILL_DISPATCHER_URL", "http://localhost:8085")
+    logging.info(f"Invoking direct tool '{tool_name}' for agent {agent_id}")
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{skill_dispatcher_url}/api/v1/tools/invoke",
+                json={"tool": {"name": tool_name, "version": tool_version}, "args": args, "agent_id": agent_id, "mutating": mutating},
+                headers={"X-Tenant-ID": tenant_id},
+                timeout=30.0,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return json.dumps(data.get("result", data))
+    except Exception as e:
+        logging.error(f"Direct tool invocation failed: {e}")
+        return f"Error invoking tool '{tool_name}': {e}"
+
+
+@activity.defn
 async def resolve_mcp_servers(tenant_id: str, explicit_server_ids: list[str]) -> list[str]:
     """Returns merged list of global + tenant MCP server IDs."""
     mcp_registry_url = os.getenv("MCP_REGISTRY_URL", "http://localhost:8090")

@@ -28,6 +28,16 @@ type InvokeRequest struct {
 	TraceID  string         `json:"trace_id"`
 }
 
+// ToolInvokeRequest is the payload sent to POST /api/v1/tools/invoke.
+type ToolInvokeRequest struct {
+	Tool     models.ToolRef `json:"tool"`
+	Args     map[string]any `json:"args,omitempty"`
+	AgentID  string         `json:"agent_id"`
+	TenantID string         `json:"tenant_id"`
+	TraceID  string         `json:"trace_id,omitempty"`
+	Mutating bool           `json:"mutating"`
+}
+
 // InvokeResponse is returned after skill dispatch completes or is suspended.
 type InvokeResponse struct {
 	Status string `json:"status"`
@@ -70,6 +80,7 @@ func BuildMux(d *Dispatcher) *http.ServeMux {
 		w.Write([]byte("skill-dispatcher healthy\n"))
 	})
 	mux.HandleFunc("POST /api/v1/skills/{name}/invoke", d.handleInvoke)
+	mux.HandleFunc("POST /api/v1/tools/invoke", d.handleToolInvoke)
 	return mux
 }
 
@@ -142,6 +153,67 @@ func (d *Dispatcher) handleInvoke(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Fire post-hooks (non-blocking: errors are logged but don't fail the response).
+	postCtx := hctx
+	postCtx.Phase = hooks.PhasePost
+	postCtx.Result = map[string]any{"output": execResult}
+	d.engine.Fire(context.Background(), postCtx)
+
+	writeJSON(w, http.StatusOK, InvokeResponse{
+		Status: StatusCompleted,
+		Result: execResult,
+	})
+}
+
+func (d *Dispatcher) handleToolInvoke(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.Header.Get("X-Tenant-ID")
+	if tenantID == "" {
+		http.Error(w, "X-Tenant-ID header required", http.StatusBadRequest)
+		return
+	}
+
+	var req ToolInvokeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Tool.Name == "" {
+		http.Error(w, "tool name required", http.StatusBadRequest)
+		return
+	}
+
+	req.TenantID = tenantID
+
+	hctx := hooks.HookContext{
+		Phase:        hooks.PhasePre,
+		TenantID:     tenantID,
+		AgentID:      req.AgentID,
+		SkillName:    req.Tool.Name,
+		SkillVersion: req.Tool.Version,
+		TraceID:      req.TraceID,
+		Timestamp:    time.Now(),
+		Args:         req.Args,
+	}
+	if hctx.Args == nil {
+		hctx.Args = map[string]any{}
+	}
+	hctx.Args["__mutating"] = req.Mutating
+
+	result, _ := d.engine.Fire(r.Context(), hctx)
+	if result.Halt {
+		writeJSON(w, http.StatusAccepted, InvokeResponse{
+			Status:         StatusAwaitingHITL,
+			HITLWorkflowID: "",
+		})
+		return
+	}
+
+	execResult, execErr := d.router.Route(r.Context(), req.Tool, req.Args)
+	if execErr != nil {
+		http.Error(w, fmt.Sprintf("tool execution failed: %v", execErr), http.StatusInternalServerError)
+		return
+	}
+
 	postCtx := hctx
 	postCtx.Phase = hooks.PhasePost
 	postCtx.Result = map[string]any{"output": execResult}

@@ -25,6 +25,8 @@ class AgentContext(BaseModel):
         description="System instruction for LLM"
     )
     skills: list[dict] = Field(default_factory=list, description="Available skill definitions")
+    tools: list[dict] = Field(default_factory=list, description="Direct tool specs from manifest")
+    system_tools: list[dict] = Field(default_factory=list, description="Platform system tools auto-injected")
     mcp_servers: list[str] = Field(
         default_factory=list,
         description="Explicit MCP server IDs to use"

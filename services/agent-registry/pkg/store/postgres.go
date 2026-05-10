@@ -26,12 +26,13 @@ func NewPostgresStore(db *sql.DB) (*PostgresStore, error) {
 
 func (s *PostgresStore) Create(ctx context.Context, rec *AgentRecord) error {
 	skills, _ := json.Marshal(rec.Skills)
+	tools, _ := json.Marshal(rec.Tools)
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO agents
-			(id, tenant_id, name, version, system_prompt, skills, model,
+			(id, tenant_id, name, version, system_prompt, skills, tools, model,
 			 max_iterations, memory_budget_mb, status, created_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-		rec.ID, rec.TenantID, rec.Name, rec.Version, rec.SystemPrompt, skills,
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+		rec.ID, rec.TenantID, rec.Name, rec.Version, rec.SystemPrompt, skills, tools,
 		rec.Model, rec.MaxIterations, rec.MemoryBudgetMB,
 		string(rec.Status), rec.CreatedAt,
 	)
@@ -40,7 +41,7 @@ func (s *PostgresStore) Create(ctx context.Context, rec *AgentRecord) error {
 
 func (s *PostgresStore) GetByID(ctx context.Context, id, tenantID string) (*AgentRecord, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, tenant_id, name, version, system_prompt, skills, model,
+		SELECT id, tenant_id, name, version, system_prompt, skills, tools, model,
 		       max_iterations, memory_budget_mb, status, created_at
 		FROM agents
 		WHERE id = $1 AND tenant_id = $2`, id, tenantID)
@@ -48,7 +49,7 @@ func (s *PostgresStore) GetByID(ctx context.Context, id, tenantID string) (*Agen
 }
 
 func (s *PostgresStore) List(ctx context.Context, f ListFilter) ([]*AgentRecord, error) {
-	q := `SELECT id, tenant_id, name, version, system_prompt, skills, model,
+	q := `SELECT id, tenant_id, name, version, system_prompt, skills, tools, model,
 		         max_iterations, memory_budget_mb, status, created_at
 		  FROM agents WHERE tenant_id = $1`
 	args := []any{f.TenantID}
@@ -75,12 +76,13 @@ func (s *PostgresStore) List(ctx context.Context, f ListFilter) ([]*AgentRecord,
 
 func (s *PostgresStore) Update(ctx context.Context, rec *AgentRecord) error {
 	skills, _ := json.Marshal(rec.Skills)
+	tools, _ := json.Marshal(rec.Tools)
 	res, err := s.db.ExecContext(ctx, `
 		UPDATE agents
-		SET name=$1, version=$2, system_prompt=$3, skills=$4, model=$5,
-		    max_iterations=$6, memory_budget_mb=$7, status=$8
-		WHERE id=$9 AND tenant_id=$10`,
-		rec.Name, rec.Version, rec.SystemPrompt, skills, rec.Model,
+		SET name=$1, version=$2, system_prompt=$3, skills=$4, tools=$5, model=$6,
+		    max_iterations=$7, memory_budget_mb=$8, status=$9
+		WHERE id=$10 AND tenant_id=$11`,
+		rec.Name, rec.Version, rec.SystemPrompt, skills, tools, rec.Model,
 		rec.MaxIterations, rec.MemoryBudgetMB, string(rec.Status),
 		rec.ID, rec.TenantID,
 	)
@@ -127,9 +129,9 @@ type scanner interface {
 
 func scanAgent(s scanner) (*AgentRecord, error) {
 	var rec AgentRecord
-	var skills []byte
+	var skills, tools []byte
 	err := s.Scan(
-		&rec.ID, &rec.TenantID, &rec.Name, &rec.Version, &rec.SystemPrompt, &skills,
+		&rec.ID, &rec.TenantID, &rec.Name, &rec.Version, &rec.SystemPrompt, &skills, &tools,
 		&rec.Model, &rec.MaxIterations, &rec.MemoryBudgetMB, &rec.Status, &rec.CreatedAt,
 	)
 	if err != nil {
@@ -139,5 +141,6 @@ func scanAgent(s scanner) (*AgentRecord, error) {
 		return nil, err
 	}
 	json.Unmarshal(skills, &rec.Skills)
+	json.Unmarshal(tools, &rec.Tools)
 	return &rec, nil
 }

@@ -93,6 +93,25 @@ class AgentToolRegistry:
             logger.error(f"MCP tool invocation failed: {e}")
             return f"Error invoking MCP tool '{tool_name}': {e}"
 
+    async def invoke_direct_tool(self, tool_name: str, tool_version: str, args: dict, mutating: bool) -> str:
+        """Invoke a direct tool via Skill Dispatcher HTTP."""
+        logger.info(f"Invoking direct tool '{tool_name}' for agent {self.context.agent_id}")
+        url = os.getenv("SKILL_DISPATCHER_URL", "http://localhost:8085")
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    f"{url}/api/v1/tools/invoke",
+                    json={"tool": {"name": tool_name, "version": tool_version}, "args": args, "agent_id": self.context.agent_id, "mutating": mutating},
+                    headers={"X-Tenant-ID": self.context.tenant_id},
+                    timeout=30.0,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                return json.dumps(data.get("result", data))
+        except Exception as e:
+            logger.error(f"Direct tool invocation failed: {e}")
+            return f"Error invoking tool '{tool_name}': {e}"
+
     def register_tools(self, agent: Agent) -> Agent:
         """
         Register all available tools with the agent using decorators.
@@ -151,7 +170,35 @@ class AgentToolRegistry:
                 tool_args = args or {}
                 return await registry.invoke_skill(_skill_name, tool_args)
 
-        # 3. MCP tools from discovery
+        # 3. Direct tools (system-injected + manifest-specified)
+        all_direct_tools = list(self.context.system_tools) + list(self.context.tools)
+        for tool_def in all_direct_tools:
+            tool_name = tool_def.get("name", "")
+            tool_version = tool_def.get("version", "1.0.0")
+            tool_description = tool_def.get("description", f"Execute {tool_name} tool")
+            is_mutating = tool_def.get("auth_level", "read") == "mutating"
+            safe_name = tool_name.replace("-", "_").replace(".", "_")
+
+            @agent.tool(name=safe_name)
+            async def _direct_tool_func(
+                ctx: RunContext[Any],
+                args: dict = None,
+                _tool_name: str = tool_name,
+                _tool_version: str = tool_version,
+                _is_mutating: bool = is_mutating,
+            ) -> str:
+                f"""{tool_description}
+
+                Args:
+                    args: Tool arguments as dict
+
+                Returns:
+                    Tool execution result
+                """
+                tool_args = args or {}
+                return await registry.invoke_direct_tool(_tool_name, _tool_version, tool_args, _is_mutating)
+
+        # 4. MCP tools from discovery
         for mcp_tool in self.mcp_tools:
             server_id = mcp_tool.server_id
             tool_name = mcp_tool.tool_name
@@ -179,8 +226,9 @@ class AgentToolRegistry:
                 tool_args = args or {}
                 return await registry.invoke_mcp_tool(_server_id, _tool_name, tool_args)
 
+        direct_tools_count = len(self.context.system_tools) + len(self.context.tools)
         logger.info(
-            f"Registered {1 + len(self.context.skills) + len(self.mcp_tools)} tools for agent"
+            f"Registered {1 + len(self.context.skills) + direct_tools_count + len(self.mcp_tools)} tools for agent"
         )
         return agent
 

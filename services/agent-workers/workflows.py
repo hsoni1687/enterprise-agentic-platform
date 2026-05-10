@@ -82,6 +82,17 @@ class AgentWorkflow:
 
         self._emit({"type": "thinking", "content": f"Starting reasoning for: {prompt[:80]}"})
 
+        # Extract direct tools from manifest
+        direct_tools = manifest.get("tools") or []
+
+        # Fetch system tools (auto-injected for all agents)
+        system_tools = await workflow.execute_activity(
+            "fetch_system_tools",
+            args=[tenant_id],
+            start_to_close_timeout=timedelta(seconds=15),
+            retry_policy=RetryPolicy(maximum_attempts=2),
+        )
+
         # Build agent context
         agent_context = {
             "agent_id": agent_id,
@@ -91,6 +102,8 @@ class AgentWorkflow:
             "max_iterations": max_iterations,
             "system_prompt": system_prompt,
             "skills": skills,
+            "tools": direct_tools,
+            "system_tools": system_tools,
             "mcp_servers": explicit_mcp_servers,
         }
 
