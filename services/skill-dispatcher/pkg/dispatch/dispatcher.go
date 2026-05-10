@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/agent-platform/go-shared/pkg/models"
@@ -212,24 +213,89 @@ func (m *MockWorkflowStarter) Start(_ context.Context, _, _ string, _ map[string
 
 // --- HTTPToolRouter ---
 
-// HTTPToolRouter forwards tool invocations to an HTTP executor (e.g. sandbox-manager).
-type HTTPToolRouter struct {
-	baseURL string
-	client  *http.Client
+// ToolExecutorRouter routes tools to specialized executors based on tool name
+type ToolExecutorRouter struct {
+	client     *http.Client
+	routes     map[string]string // tool name -> executor URL
+	defaultURL string
 }
 
-func NewHTTPToolRouter() *HTTPToolRouter {
-	return &HTTPToolRouter{
-		baseURL: "http://localhost:8082",
-		client:  &http.Client{},
+func NewToolExecutorRouter() *ToolExecutorRouter {
+	bashExecutorURL := os.Getenv("BASH_EXECUTOR_URL")
+	if bashExecutorURL == "" {
+		bashExecutorURL = "http://localhost:8092"
+	}
+
+	sandboxManagerURL := os.Getenv("SANDBOX_MANAGER_URL")
+	if sandboxManagerURL == "" {
+		sandboxManagerURL = "http://localhost:8082"
+	}
+
+	return &ToolExecutorRouter{
+		client: &http.Client{Timeout: 5 * time.Minute},
+		routes: map[string]string{
+			"bash": bashExecutorURL,
+		},
+		defaultURL: sandboxManagerURL,
 	}
 }
 
-func (r *HTTPToolRouter) Route(ctx context.Context, tool models.ToolRef, args map[string]any) (any, error) {
+func (r *ToolExecutorRouter) Route(ctx context.Context, tool models.ToolRef, args map[string]any) (any, error) {
+	// Route bash tool to bash-executor
+	if tool.Name == "bash" {
+		return r.executeBash(ctx, tool, args)
+	}
+
+	// Route other tools to sandbox-manager
+	return r.executeSandbox(ctx, tool, args)
+}
+
+func (r *ToolExecutorRouter) executeBash(ctx context.Context, tool models.ToolRef, args map[string]any) (any, error) {
+	url := r.routes["bash"]
+
+	payload := map[string]any{
+		"script":       args["script"],
+		"timeout_seconds": args["timeout_seconds"],
+		"environment":  args["environment"],
+		"working_dir":  args["working_dir"],
+		"execution_id": fmt.Sprintf("exec-%d", time.Now().UnixNano()),
+	}
+	body, _ := json.Marshal(payload)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url+"/api/v1/execute", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("build bash request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := r.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("execute bash tool: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		var errMsg string
+		if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+			errMsg = fmt.Sprintf("bash tool returned %d (client error)", resp.StatusCode)
+		} else {
+			errMsg = fmt.Sprintf("bash executor failed: %d", resp.StatusCode)
+		}
+		return nil, fmt.Errorf(errMsg)
+	}
+
+	var result map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode bash result: %w", err)
+	}
+	return result, nil
+}
+
+func (r *ToolExecutorRouter) executeSandbox(ctx context.Context, tool models.ToolRef, args map[string]any) (any, error) {
 	payload := map[string]any{"tool": tool.Name, "version": tool.Version, "args": args}
 	body, _ := json.Marshal(payload)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.baseURL+"/api/v1/execute", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.defaultURL+"/api/v1/execute", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
 	}

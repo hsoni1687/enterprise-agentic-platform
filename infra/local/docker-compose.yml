@@ -110,6 +110,9 @@ services:
       - "8085:8085"
     environment:
       - WORKFLOW_INITIATOR_URL=http://workflow-initiator:8081
+      - BASH_EXECUTOR_URL=http://bash-executor:8092
+    depends_on:
+      - bash-executor
     networks:
       - agent-net
 
@@ -197,6 +200,25 @@ services:
       - "8082:8082"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - agent-net
+
+  # ------------------------------------
+  # Bash Executor  (port 8092)
+  # ------------------------------------
+  bash-executor:
+    build:
+      context: ../../
+      dockerfile: services/bash-executor/Dockerfile
+    container_name: bash-executor
+    ports:
+      - "8092:8092"
+    environment:
+      - PORT=8092
+      - MAX_MEMORY_MB=512
+      - MAX_CPU_CORES=2
+      - MAX_TIMEOUT_SECONDS=3600
+      - MAX_OUTPUT_BYTES=67108864
     networks:
       - agent-net
 

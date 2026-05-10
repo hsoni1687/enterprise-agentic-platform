@@ -44,7 +44,7 @@ func main() {
 	}
 
 	catalog := dispatch.NewInMemoryCatalog()
-	router := dispatch.NewHTTPToolRouter()
+	router := dispatch.NewToolExecutorRouter()
 	workflows := dispatch.NewHTTPWorkflowStarter(initiatorURL)
 	d := dispatch.New(catalog, engine, router, workflows)
 

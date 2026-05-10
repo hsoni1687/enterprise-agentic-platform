@@ -133,3 +133,34 @@ tools:
       auth_level: read
       sandbox_required: false
       registered_by: platform-admin
+
+  - id: system-tool-bash
+    name: bash
+    version: "1.0.0"
+    description: Execute bash commands with streaming output and signal handling (platform-only tool)
+    input_schema:
+      type: object
+      properties:
+        script:
+          type: string
+          description: Bash script to execute (set -e -o pipefail enforced)
+        timeout_seconds:
+          type: integer
+          description: Execution timeout in seconds (default 300, max 3600)
+          default: 300
+          minimum: 1
+          maximum: 3600
+        environment:
+          type: object
+          description: Environment variables to set (name -> value)
+          additionalProperties:
+            type: string
+        working_dir:
+          type: string
+          description: Working directory (default /tmp/sandbox/{execution_id})
+      required:
+        - script
+    _metadata:
+      auth_level: mutating
+      sandbox_required: true
+      registered_by: platform-admin
