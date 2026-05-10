@@ -135,38 +135,48 @@ API Gateway → Workflow Initiator → StartTeamWorkflow → Team Orchestrator
 
 ```
 a1-agent-engine/
-├── services/                    # Core microservices
-│   ├── api-gateway/            # REST entry point
-│   ├── workflow-initiator/      # Temporal dispatcher
-│   ├── agent-workers/          # Python Temporal workers
-│   ├── llm-gateway/            # LLM provider proxy
-│   ├── sandbox-manager/        # Container lifecycle
-│   ├── tool-registry/          # Tool CRUD
-│   ├── skill-catalog/          # Skill composition
-│   ├── skill-dispatcher/       # Tool routing
-│   ├── sub-agent-registry/     # Sub-agent contracts
-│   ├── agent-registry/         # Agent manifests
-│   ├── admin-api/              # Platform administration backend
-│   ├── mcp-registry/           # External MCP server hub (client)
-│   └── mcp-server/             # Platform MCP endpoint (server)
+├── services/                    # Core microservices (Go/Python)
+│   ├── api-gateway/            # REST API entry point; webhook validation
+│   ├── workflow-initiator/      # Temporal workflow dispatcher
+│   ├── agent-workers/          # Python Temporal workers; PydanticAI reasoning loops
+│   ├── llm-gateway/            # LLM provider proxy (Anthropic/OpenAI compatible)
+│   ├── sandbox-manager/        # Ephemeral container lifecycle manager
+│   ├── tool-registry/          # Tool registration, versioning, security review
+│   ├── skill-catalog/          # Skill composition and management
+│   ├── skill-dispatcher/       # Tool routing and execution hooks
+│   ├── sub-agent-registry/     # Sub-agent contract definitions
+│   ├── agent-registry/         # Agent manifest storage and versioning
+│   ├── admin-api/              # Platform governance backend (tenants, LLM config, cost)
+│   ├── mcp-registry/           # External MCP server integration (client)
+│   ├── mcp-server/             # Platform MCP endpoint for external clients (server)
+│   ├── bash-executor/          # Code execution service for sandboxed operations
+│   └── dashboard/              # SRE observability dashboard (Streamlit)
 │
 ├── apps/
-│   ├── agent-studio/           # Next.js frontend for agent builders
-│   └── admin-console/          # Next.js frontend for platform admins
+│   ├── agent-studio/           # Next.js frontend for agent builders and simulators
+│   └── admin-console/          # Next.js frontend for platform administration
 │
 ├── packages/
-│   ├── go-shared/              # Shared Go models
-│   ├── shared-protos/          # Protobuf gRPC contracts
-│   ├── webhook-security/       # HMAC validation
-│   └── team-sdk/               # Python team manifest schema
+│   ├── go-shared/              # Shared Go models and utilities
+│   ├── webhook-security/       # HMAC-SHA256 signature validation
+│   ├── hook-engine/            # Pre/post-execution hook engine
+│   ├── py-agent-core/          # Python agent core utilities and base classes
+│   └── ui-components/          # Shared React UI components library
 │
 ├── infra/
-│   └── local/                  # Docker Compose setup
-│       ├── docker-compose.yml
-│       └── .env
+│   ├── local/                  # Local development Docker Compose setup
+│   │   ├── docker-compose.yml
+│   │   └── .env
+│   ├── postgres/               # Database schema and migrations
+│   ├── k8s/                    # Kubernetes manifests and Helm charts
+│   ├── platform/               # Platform infrastructure configuration
+│   └── certs/                  # TLS certificates for local development
+│
+├── src/
+│   └── lib/                    # Shared library utilities
 │
 └── .claude/
-    └── CLAUDE.md              # Project-specific guidelines
+    └── CLAUDE.md              # Project-specific development guidelines
 ```
 
 ## 🔑 Key Features
