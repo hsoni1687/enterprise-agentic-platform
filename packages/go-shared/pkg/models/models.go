@@ -146,6 +146,7 @@ type AgentManifest struct {
 	Version        string         `json:"version"`
 	SystemPrompt   string         `json:"system_prompt"`
 	Skills         []SkillRef     `json:"skills"`
+	Tools          []ToolRef      `json:"tools,omitempty"`
 	Model          string         `json:"model"`
 	MaxIterations  int            `json:"max_iterations"`
 	MemoryBudgetMB int            `json:"memory_budget_mb"`

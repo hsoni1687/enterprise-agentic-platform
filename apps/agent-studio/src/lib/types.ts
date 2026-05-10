@@ -23,6 +23,7 @@ export interface ToolSpec {
   status: ResourceStatus;
   registered_by: string;
   created_at: string;
+  scope?: "tenant" | "system";
 }
 
 export interface ToolRef {
@@ -75,6 +76,7 @@ export interface AgentManifest {
   version: string;
   system_prompt: string;
   skills: SkillRef[];
+  tools?: ToolRef[];
   model: string;
   max_iterations: number;
   memory_budget_mb: number;
@@ -88,6 +90,7 @@ export interface AgentRecord {
   version: string;
   system_prompt: string;
   skills: SkillRef[];
+  tools?: ToolRef[];
   model: string;
   max_iterations: number;
   memory_budget_mb: number;
