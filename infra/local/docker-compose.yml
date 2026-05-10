@@ -111,8 +111,10 @@ services:
     environment:
       - WORKFLOW_INITIATOR_URL=http://workflow-initiator:8081
       - BASH_EXECUTOR_URL=http://bash-executor:8092
+      - SANDBOX_MANAGER_URL=http://sandbox-manager:8082
     depends_on:
       - bash-executor
+      - sandbox-manager
     networks:
       - agent-net
 

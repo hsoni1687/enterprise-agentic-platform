@@ -120,7 +120,8 @@ async def fetch_system_tools(tenant_id: str) -> list[dict]:
             )
             resp.raise_for_status()
             data = resp.json()
-            tools = data.get("tools", [])
+            # API returns list directly, not dict with "tools" key
+            tools = data if isinstance(data, list) else data.get("tools", [])
             # Filter to only system tools
             system_tools = [t for t in tools if t.get("scope") == "system"]
             logging.info(f"Found {len(system_tools)} system tools")

@@ -364,10 +364,16 @@ func (r *ToolExecutorRouter) executeBash(ctx context.Context, tool models.ToolRe
 }
 
 func (r *ToolExecutorRouter) executeSandbox(ctx context.Context, tool models.ToolRef, args map[string]any) (any, error) {
-	payload := map[string]any{"tool": tool.Name, "version": tool.Version, "args": args}
+	// Determine endpoint based on tool name
+	endpoint := "/api/v1/execute"
+	if tool.Name == "web-search" {
+		endpoint = "/api/v1/web-search"
+	}
+
+	payload := map[string]any{"args": args}
 	body, _ := json.Marshal(payload)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.defaultURL+"/api/v1/execute", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.defaultURL+endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
 	}
