@@ -21,6 +21,12 @@ RUN go build -o /sandbox-manager main.go
 # --- Final Stage ---
 FROM alpine:latest
 
+RUN sed -i "s/https/http/g" /etc/apk/repositories && \
+    apk add --no-cache ca-certificates && \
+    sed -i "s/http/https/g" /etc/apk/repositories
+COPY zscaler.pem /usr/local/share/ca-certificates/zscaler.crt
+RUN update-ca-certificates
+
 WORKDIR /
 COPY --from=builder /sandbox-manager /sandbox-manager
 

@@ -366,8 +366,11 @@ func (r *ToolExecutorRouter) executeBash(ctx context.Context, tool models.ToolRe
 func (r *ToolExecutorRouter) executeSandbox(ctx context.Context, tool models.ToolRef, args map[string]any) (any, error) {
 	// Determine endpoint based on tool name
 	endpoint := "/api/v1/execute"
-	if tool.Name == "web-search" {
+	switch tool.Name {
+	case "web-search":
 		endpoint = "/api/v1/web-search"
+	case "web-fetch":
+		endpoint = "/api/v1/web-fetch"
 	}
 
 	payload := map[string]any{"args": args}

@@ -202,6 +202,10 @@ services:
       - "8082:8082"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - LLM_GATEWAY_URL=http://llm-gateway:8083/v1
+    depends_on:
+      - llm-gateway
     networks:
       - agent-net
 
@@ -309,6 +313,24 @@ services:
     entrypoint: ["bash", "/seed.sh"]
     environment:
       - AGENT_REGISTRY_URL=http://agent-registry:8088
+    networks:
+      - agent-net
+
+  # ------------------------------------
+  # System Tools Seeder (one-shot)
+  # ------------------------------------
+  seed-system-tools:
+    image: curlimages/curl:latest
+    container_name: seed-system-tools
+    depends_on:
+      admin-api:
+        condition: service_started
+    volumes:
+      - ./seed_system_tools.sh:/seed.sh:ro
+    entrypoint: ["sh", "/seed.sh"]
+    environment:
+      - ADMIN_API_URL=http://admin-api:8089
+      - ADMIN_API_KEY=dev-admin-key
     networks:
       - agent-net
 

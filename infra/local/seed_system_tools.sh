@@ -15,10 +15,9 @@ echo "Admin API: $ADMIN_API"
 echo "YAML File: $TOOLS_YAML"
 echo "=========================================="
 
-# Check if YAML file exists
+# Check if YAML file exists (optional, fall back to hardcoded tools)
 if [ ! -f "$TOOLS_YAML" ]; then
-  echo "✗ YAML file not found: $TOOLS_YAML"
-  exit 1
+  echo "⚠ YAML file not found: $TOOLS_YAML, using fallback tools list"
 fi
 
 # Wait for admin API to be healthy
@@ -82,16 +81,21 @@ if ! command -v python3 &> /dev/null || ! python3 -c "import yaml" 2>/dev/null; 
   echo "  Installing fallback: manual tool creation"
 
   # Fallback: manually create the standard tools via curl
-  declare -a TOOLS=(
-    "web-search:1.0.0:Search the web for information and retrieve results:read:false"
-    "code-executor:1.0.0:Execute code snippets in a sandboxed environment:mutating:true"
-    "http-request:1.0.0:Make HTTP requests to external APIs:mutating:false"
-    "text-processing:1.0.0:Advanced text processing operations:read:false"
-    "data-validation:1.0.0:Validate data against schemas:read:false"
-  )
+  TOOLS="web-search:1.0.0:Search the web for information and retrieve results:read:false
+web-fetch:1.0.0:Fetch a web page and return a summarized extract with source citation:read:false
+code-executor:1.0.0:Execute code snippets in a sandboxed environment:mutating:true
+http-request:1.0.0:Make HTTP requests to external APIs:mutating:false
+text-processing:1.0.0:Advanced text processing operations:read:false
+data-validation:1.0.0:Validate data against schemas:read:false"
 
-  for TOOL_DEF in "${TOOLS[@]}"; do
-    IFS=':' read -r NAME VERSION DESCRIPTION AUTH_LEVEL SANDBOX <<< "$TOOL_DEF"
+  while IFS= read -r TOOL_DEF; do
+    [ -z "$TOOL_DEF" ] && continue
+
+    NAME=$(echo "$TOOL_DEF" | cut -d: -f1)
+    VERSION=$(echo "$TOOL_DEF" | cut -d: -f2)
+    DESCRIPTION=$(echo "$TOOL_DEF" | cut -d: -f3)
+    AUTH_LEVEL=$(echo "$TOOL_DEF" | cut -d: -f4)
+    SANDBOX=$(echo "$TOOL_DEF" | cut -d: -f5)
 
     echo ""
     echo "Creating system tool: $NAME@$VERSION"
@@ -99,27 +103,17 @@ if ! command -v python3 &> /dev/null || ! python3 -c "import yaml" 2>/dev/null; 
     RESPONSE=$(curl -s -X POST "$ADMIN_API/api/v1/admin/system-tools" \
       -H "Authorization: Bearer $ADMIN_KEY" \
       -H "Content-Type: application/json" \
-      -d @- <<EOF
-{
-  "name": "$NAME",
-  "version": "$VERSION",
-  "description": "$DESCRIPTION",
-  "auth_level": "$AUTH_LEVEL",
-  "sandbox_required": $SANDBOX,
-  "registered_by": "platform-seed"
-}
-EOF
-)
+      -d "{\"name\":\"$NAME\",\"version\":\"$VERSION\",\"description\":\"$DESCRIPTION\",\"auth_level\":\"$AUTH_LEVEL\",\"sandbox_required\":$SANDBOX,\"registered_by\":\"platform-seed\"}")
 
     if echo "$RESPONSE" | grep -q '"status"' || echo "$RESPONSE" | grep -q '"id"'; then
       echo "✓ $NAME@$VERSION created"
-      ((SEEDED++))
+      SEEDED=$((SEEDED + 1))
     else
       echo "✗ Failed to create $NAME@$VERSION"
       echo "  Response: $RESPONSE"
-      ((FAILED++))
+      FAILED=$((FAILED + 1))
     fi
-  done
+  done <<< "$TOOLS"
 else
   # Use Python for full YAML parsing with metadata extraction
   python3 << PYEOF
