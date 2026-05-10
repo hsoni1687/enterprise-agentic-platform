@@ -206,7 +206,10 @@ A Next.js web application providing graphical administration interfaces. Key arc
    - **`/dashboard`** — Summary cards, health checks, recent executions
    - **`/tenants`** — Full CRUD: list, create (modal), detail view with quota editing and status toggles
    - **`/llm-config`** — Mode selection, provider config (URL, keys), per-tenant model allowlists
-   - **`/system-agents`** — List/edit system agents; deploy transitions
+   - **`/system-agents`** — List/edit platform system agents (Manifest Assistant, etc.); lifecycle transitions (draft → staged → active)
+   - **`/system-skills`** — Manage platform system skills catalog; versioning, lifecycle states, skill composition
+   - **`/system-tools`** — Global tool registry; approval workflows, versioning, security review gates
+   - **`/mcp-servers`** — Register and manage global MCP server endpoints; issue/revoke bearer tokens for external MCP client access (e.g., Claude Desktop)
    - **`/executions`** — Cross-tenant execution visualizer with DAG rendering and live streaming
    - **`/cost`** — Per-tenant cost breakdown by agent, skill, model with CSV export
    - **`/audit`** — Immutable audit log with filtering and export
@@ -260,6 +263,22 @@ CREATE TABLE platform_config (
 | GET | `/api/v1/admin/system-agents/:id` | Fetch single system agent manifest |
 | PUT | `/api/v1/admin/system-agents/:id` | Update manifest |
 | POST | `/api/v1/admin/system-agents/:id/transition` | Lifecycle transition |
+| GET | `/api/v1/admin/system-skills` | List platform system skills catalog |
+| POST | `/api/v1/admin/system-skills` | Create new system skill |
+| GET | `/api/v1/admin/system-skills/:id` | Fetch single skill manifest |
+| PUT | `/api/v1/admin/system-skills/:id` | Update skill manifest |
+| POST | `/api/v1/admin/system-skills/:id/transition` | Lifecycle state transition |
+| GET | `/api/v1/admin/system-tools` | List global tool registry |
+| POST | `/api/v1/admin/system-tools` | Register new tool (requires security review) |
+| GET | `/api/v1/admin/system-tools/:id` | Fetch tool specification |
+| PUT | `/api/v1/admin/system-tools/:id` | Update tool spec |
+| POST | `/api/v1/admin/system-tools/:id/approve` | Approve tool for catalog |
+| GET | `/api/v1/admin/mcp/servers` | List global MCP server registrations |
+| POST | `/api/v1/admin/mcp/servers` | Register external MCP server |
+| DELETE | `/api/v1/admin/mcp/servers/:id` | Unregister MCP server |
+| GET | `/api/v1/admin/mcp/tokens` | List issued MCP access tokens |
+| POST | `/api/v1/admin/mcp/tokens` | Issue new token for external client |
+| DELETE | `/api/v1/admin/mcp/tokens/:id` | Revoke token |
 | GET | `/api/v1/admin/executions` | Query execution traces (all tenants) |
 | GET | `/api/v1/admin/executions/:id` | Fetch single execution + DAG |
 | GET | `/api/v1/admin/cost` | Aggregate cost data |

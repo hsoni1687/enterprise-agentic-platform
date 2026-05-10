@@ -144,8 +144,11 @@ These requirements define the core capabilities of the platform, prioritized for
 | **FR15** | **P1** | **Skill Command Interface & Hooks** | Skills are invocable via slash-command syntax (e.g., `/db-triage --target=prod-rds-01 --window=1h`) from the Agent Studio chat interface and the REST API. Arguments are validated against the skill's input schema before dispatch. The platform supports declarative pre/post-skill hooks (YAML-configured) for audit logging, cost metering, and HITL interception — without modifying skill logic. |
 | **FR16** | **P1** | **Capability Lifecycle Management** | All four tiers follow a formal state machine: `Draft → Staged → Active ↔ Paused → Archived`. State transitions are immutably logged. Deployment supports three strategies: All-at-once, Blue-Green, and Canary (10% → 25% → 100% with configurable ramp). Auto-rollback triggers if workflow success rate drops more than 10% from the prior version's baseline over 10 minutes. |
 | **FR17** | **P1** | **Cost & Quota Dashboard** | Real-time cost attribution at tenant, agent, and skill granularity: LLM inference tokens, sandbox execution time, and Vector DB operations. Budget alerts fire at 80% and 100% of the monthly allocation. Soft quota limits queue requests (returning `Retry-After`); hard limits reject with `429 QuotaExceeded`. Quota thresholds are configurable per tenant via Agent Studio settings. |
-| **FR18** | **P1** | **MCP Client Support** | Platform SHALL support connecting to external MCP servers (HTTP + SSE transport) per tenant. Agents can reference MCP server IDs in their manifest; at runtime, tools from those servers are discovered and injected into the agent's tool context. Tool discovery is cached to avoid redundant network calls. MCP tool invocation is routed through the MCP registry service via standard Temporal activities. |
-| **FR19** | **P1** | **MCP Server Support** | Platform SHALL expose its registered skills as an MCP server endpoint (HTTP + SSE). External MCP-compatible clients (e.g., Claude Desktop) can authenticate with a hashed bearer token (scoped to a tenant), discover the platform's skills, and invoke them. MCP server support enables Agentic workflows outside the platform to access platform capabilities. |
+| **FR18** | **P1** | **MCP Client Support** | Platform SHALL support connecting to external MCP servers (HTTP + SSE transport) per tenant. Agents can reference MCP server IDs in their manifest; at runtime, tools from those servers are discovered and injected into the agent's tool context. Tool discovery is cached to avoid redundant network calls. MCP tool invocation is routed through the MCP registry service via standard Temporal activities. ✅ **Implemented** |
+| **FR19** | **P1** | **MCP Server Support** | Platform SHALL expose its registered skills as an MCP server endpoint (HTTP + SSE). External MCP-compatible clients (e.g., Claude Desktop) can authenticate with a hashed bearer token (scoped to a tenant), discover the platform's skills, and invoke them. MCP server support enables Agentic workflows outside the platform to access platform capabilities. ✅ **Implemented**: Global MCP server registration, token management, and Admin Console UI for `/mcp-servers` |
+| **FR20** | **P0** | **System Tools Management** | Admin Console provides platform-wide tool registry management accessible via `/system-tools`. Admins can register new tools, review tool specifications, approve for catalog availability, and manage versioning. All tools require security review approval before becoming available to agents. ✅ **Implemented** |
+| **FR21** | **P0** | **System Skills Management** | Admin Console provides platform-wide skill catalog management accessible via `/system-skills`. Admins can create, edit, and lifecycle-manage skills (draft → staged → active). Skills bundle tools with SOPs and are available for agent composition. Version pinning is enforced for production deployments. ✅ **Implemented** |
+| **FR22** | **P0** | **System Agents Management** | Admin Console provides platform system agent management via `/system-agents`. Admins can view, edit, and deploy platform system agents (e.g., Manifest Assistant, monitoring agents). Lifecycle transitions are logged and enable canary rollout strategies. ✅ **Implemented** |
 
 ## 4. Non-Functional Requirements (NFR)
 
@@ -682,7 +685,36 @@ The Admin Console (`apps/admin-console`, port 3001) is a Next.js web application
 | **NFR-ADMIN-6** | **P1** | **Admin API Observability** | All Admin API endpoints emit OTel spans with: endpoint, actor (from token), tenant (if applicable), status_code, latency_ms, bytes_in, bytes_out. Admin-specific dashboards in Prometheus/Grafana track: admin API throughput, error rates, top admins by request count, slow queries, authentication failures. |
 | **NFR-ADMIN-7** | **P1** | **Consistent Data Across Admin Operations** | Admin API guarantees atomic tenant CRUD: create tenant updates `tenant_settings`, sets default quotas, and logs audit event in a single transaction. Reads of tenants, costs, and execution traces are eventually consistent (reads from replica DBs permissible). Critical writes use strong consistency. |
 
-### 7.4 V2 Roadmap: Advanced Admin Features
+### 7.4 Implementation Notes & Recent Fixes
+
+#### PydanticAI Integration for Default-Tenant Agents
+- **Issue**: Default-tenant agents were returning "Exceeded max reasoning iterations without a conclusion" error consistently.
+- **Root Cause**: Two bugs in `services/agent-workers/pydantic_ai_agent.py`:
+  1. **Response Parsing Mismatch**: Code was checking `response.data` (doesn't exist on `AgentRunResult`); correct field is `response.output`
+  2. **Tool Registration Conflict**: Multiple skills registering with same generic function name via `@agent.tool` decorator without unique names; fixed with `@agent.tool(name=skill_name)` parameter
+- **Fix Commits**: 
+  - `01ffde3`: Fixed response parsing (extract final answer from `response.output`, iterate `response.all_messages()` for tool calls, parse `ModelResponse.parts` correctly)
+  - `e346baa`: Fixed tool registration conflict (use unique names via decorator parameter)
+- **Impact**: Default-tenant agents now execute correctly with PydanticAI's internal reasoning loops. All tool calls are handled internally; Temporal invokes once per high-level step.
+
+#### LLM Gateway OpenAI Response Format Compatibility
+- **Issue**: PydanticAI strictly validates OpenAI chat completion response format and was failing with "Invalid response from OpenAI chat completions endpoint: Input should be 'chat.completion' [type=literal_error, input_value='']"
+- **Root Cause**: LLM Gateway's `handleMockInference` and `handleAnthropicInference` functions were not setting the `Object` field in the OpenAI `ChatCompletionResponse` struct. When not explicitly set, Go serializes as empty string `""`, which failed PydanticAI's strict validation.
+- **Fix Commit**: `ed6422f`: Added `resp.Object = "chat.completion"` in both handlers
+- **Impact**: LLM Gateway now returns properly formatted OpenAI-compatible responses; PydanticAI successfully parses and validates all response objects.
+
+#### Admin Console System Management Pages
+- **Implementation**: Added new Admin Console pages for platform system administration:
+  - **`/system-agents`**: View and manage platform system agents (Manifest Assistant, monitoring agents, etc.) with lifecycle management
+  - **`/system-skills`**: Global skill catalog management with versioning and state transitions (draft → staged → active)
+  - **`/system-tools`**: Tool registry with security review approval workflows
+  - **`/mcp-servers`**: Global MCP server registration and token management for external client access
+- **Fix Commit**: `347605f`: Fixed Admin Console MCP servers page crash (added optional chaining for undefined `serversData.servers` check)
+- **Impact**: Platform admins now have graphical UIs for managing all platform governance aspects without direct database access.
+
+---
+
+### 7.5 V2 Roadmap: Advanced Admin Features
 
 The following capabilities are planned for V2 (Post-MVP) and represent extensions to core admin governance:
 

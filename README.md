@@ -190,6 +190,10 @@ All agent execution backed by Temporal workflows—resumable from last checkpoin
 - **WebSocket**: Full-duplex agent communication
 - **Event Models**: Structured events for reasoning steps, tool calls, results
 
+### Agent Execution Engines
+- **PydanticAI for Default-Tenant Agents**: Default-tenant agents use PydanticAI for full internal reasoning loops with native tool integration. PydanticAI handles all sub-iterations internally; Temporal invokes once per high-level reasoning step.
+- **AsyncOpenAI for System Agents**: Platform system agents (Manifest Assistant, etc.) use AsyncOpenAI for compatibility with OpenAI-based LLM providers through the LLM Gateway.
+
 ### Observability
 - **Temporal UI**: Workflow history, task queue depth, signal monitoring
 - **Streamlit Dashboard**: SRE-focused metrics and logs
@@ -267,6 +271,9 @@ A Next.js web application providing graphical administration. Login at http://lo
 - `/tenants/[id]` — Tenant detail view (Overview, Agents, Cost, Model Access, Audit tabs)
 - `/llm-config` — LLM provider configuration and per-tenant model allowlisting
 - `/system-agents` — Platform system agent manifest management and deployment
+- `/system-skills` — Platform system skill catalog and lifecycle management (draft → active)
+- `/system-tools` — Platform system tool registry and approval workflows
+- `/mcp-servers` — Global MCP server registration and management; MCP token issuance for external client access
 - `/executions` — Cross-tenant execution trace visualizer with filters and live streaming
 - `/cost` — Per-tenant cost breakdown with period selection and CSV export
 - `/audit` — Immutable audit log with resource filtering and compliance export
