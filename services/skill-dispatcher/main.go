@@ -22,13 +22,23 @@ func main() {
 		Priority:  10,
 		Handler:   handlers.NewAuditLogHandler(slog.Default()),
 	})
+	// Mutating skills that require HITL approval
+	mutatingSkills := map[string]bool{
+		"diagnostic-agent":       true, // System diagnostics (infrastructure access)
+		"deployment-checker":     true, // Deployment validation
+		"log-analyzer":           false, // Read-only analysis
+		"backup-validator":       false, // Read-only validation
+		"code-review":            false, // Read-only review
+		"test-generation":        false, // Read-only test generation
+	}
+
 	engine.Register(hooks.HookRegistration{
 		SkillName: "*",
 		Phase:     hooks.PhasePre,
 		Type:      hooks.HookTypeHITLIntercept,
 		Priority:  20,
-		// mutatingSkills map is intentionally empty; runtime config will populate it.
-		Handler: handlers.NewHITLInterceptHandler(map[string]bool{}),
+		// mutatingSkills map marks which skills require human approval
+		Handler: handlers.NewHITLInterceptHandler(mutatingSkills),
 	})
 	engine.Register(hooks.HookRegistration{
 		SkillName: "*",

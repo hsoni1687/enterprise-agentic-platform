@@ -1,0 +1,165 @@
+# System Skills: Platform-owned skills available to all tenants
+# These skills compose platform tools into reusable workflows
+# Schema follows Anthropic's managed skill specification
+#
+# To seed/update: bash infra/local/seed_system_skills.sh
+
+skills:
+  - id: system-skill-diagnostic-agent
+    name: diagnostic-agent
+    version: "1.0.0"
+    description: Performs system diagnostics - collects system information, logs, and health metrics
+    tools:
+      - name: bash
+        version: "1.0.0"
+    mutating: false
+    approval_required: false
+    sop: |
+      System Diagnostic Skill
+      Purpose: Collect comprehensive system diagnostics
+
+      Operations:
+      1. System Information
+         - OS version, kernel, uptime
+         - CPU and memory statistics
+         - Disk usage and mounts
+
+      2. Service Health
+         - Container status (docker ps)
+         - Service port availability
+         - Connectivity checks
+
+      3. Log Analysis
+         - Recent error logs
+         - Service logs (last 50 lines)
+         - System warnings
+
+      4. Resource Metrics
+         - CPU load averages
+         - Memory usage breakdown
+         - Network statistics
+    _metadata:
+      registered_by: platform-admin
+      requires_infrastructure_access: true
+
+  - id: system-skill-deployment-checker
+    name: deployment-checker
+    version: "1.0.0"
+    description: Validates deployment health - verifies services, checks endpoints, validates configurations
+    tools:
+      - name: bash
+        version: "1.0.0"
+    mutating: false
+    approval_required: false
+    sop: |
+      Deployment Checker Skill
+      Purpose: Validate deployment health and configuration
+
+      Pre-Deployment Checks:
+      1. Service Health
+         - All services running and healthy
+         - Ports accessible
+         - Network connectivity
+
+      2. Configuration Validation
+         - Config files present and readable
+         - Environment variables set correctly
+         - Database connectivity
+
+      3. Dependency Verification
+         - Required external services available
+         - Certificate validity
+         - License key validity
+
+      Post-Deployment Validation:
+      1. Smoke Tests
+         - Basic endpoint responses
+         - Health check endpoints
+         - Database operations
+
+      2. Integration Checks
+         - Service-to-service communication
+         - Data flow validation
+         - API availability
+
+      3. Metrics Collection
+         - Performance baselines
+         - Resource utilization
+         - Error rate monitoring
+    _metadata:
+      registered_by: platform-admin
+      requires_infrastructure_access: true
+
+  - id: system-skill-log-analyzer
+    name: log-analyzer
+    version: "1.0.0"
+    description: Analyzes logs for errors, warnings, and anomalies - extracts patterns and root causes
+    tools:
+      - name: bash
+        version: "1.0.0"
+    mutating: false
+    approval_required: false
+    sop: |
+      Log Analyzer Skill
+      Purpose: Extract insights from system and application logs
+
+      Analysis Operations:
+      1. Error Detection
+         - Count error occurrences by type
+         - Identify error patterns
+         - Extract stack traces
+
+      2. Pattern Matching
+         - Failed authentication attempts
+         - Timeouts and retries
+         - Resource exhaustion warnings
+
+      3. Root Cause Analysis
+         - Correlate errors with timestamps
+         - Link related errors across services
+         - Identify cascading failures
+
+      4. Recommendations
+         - Suggest remediation steps
+         - Flag repeated errors
+         - Alert on critical patterns
+    _metadata:
+      registered_by: platform-admin
+      requires_infrastructure_access: true
+
+  - id: system-skill-backup-validator
+    name: backup-validator
+    version: "1.0.0"
+    description: Validates backup integrity - verifies backups exist, checks restore functionality, validates data consistency
+    tools:
+      - name: bash
+        version: "1.0.0"
+    mutating: false
+    approval_required: false
+    sop: |
+      Backup Validator Skill
+      Purpose: Ensure backup reliability and recoverability
+
+      Backup Validation:
+      1. Existence Checks
+         - Latest backups present
+         - Backup file integrity (checksums)
+         - Retention policies met
+
+      2. Restore Testing
+         - Restore to staging environment
+         - Validate restored data
+         - Verify schema and indexes
+
+      3. Data Consistency
+         - Compare source vs restored
+         - Verify row counts
+         - Check foreign key constraints
+
+      4. Recovery Metrics
+         - Backup size and compression
+         - Backup duration
+         - Restore time estimate
+    _metadata:
+      registered_by: platform-admin
+      requires_infrastructure_access: true
