@@ -167,7 +167,7 @@ export default function MCPServersPage() {
         <div className="overflow-x-auto">
           {serversLoading ? (
             <div className="p-6 text-center text-sm text-gray-500">Loading...</div>
-          ) : serversData.servers.length === 0 ? (
+          ) : !serversData?.servers || serversData.servers.length === 0 ? (
             <div className="p-6 text-center text-sm text-gray-500">No global MCP servers registered</div>
           ) : (
             <table className="w-full text-sm">
