@@ -5,7 +5,9 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"time"
 
+	"github.com/agent-platform/go-shared/pkg/models"
 	"github.com/agent-platform/hook-engine/pkg/handlers"
 	"github.com/agent-platform/hook-engine/pkg/hooks"
 	"github.com/agent-platform/skill-dispatcher/pkg/dispatch"
@@ -54,6 +56,9 @@ func main() {
 	}
 
 	catalog := dispatch.NewInMemoryCatalog()
+	// Bootstrap system skills for dev/testing
+	bootstrapSystemSkills(catalog)
+
 	router := dispatch.NewToolExecutorRouter()
 	workflows := dispatch.NewHTTPWorkflowStarter(initiatorURL)
 	d := dispatch.New(catalog, engine, router, workflows)
@@ -64,4 +69,43 @@ func main() {
 	if err := http.ListenAndServe(":8085", mux); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
+}
+
+// bootstrapSystemSkills registers system skills in the in-memory catalog for dev/testing
+func bootstrapSystemSkills(catalog *dispatch.InMemoryCatalog) {
+	systemSkills := []struct {
+		name     string
+		version  string
+		mutating bool
+	}{
+		{name: "diagnostic-agent", version: "1.0.0", mutating: true},
+		{name: "deployment-checker", version: "1.0.0", mutating: true},
+		{name: "log-analyzer", version: "1.0.0", mutating: false},
+		{name: "backup-validator", version: "1.0.0", mutating: false},
+	}
+
+	// Register system skills for both platform-system and all default tenants (for dev testing)
+	tenantIDs := []string{"platform-system", "default-tenant"}
+
+	for i, skill := range systemSkills {
+		for _, tenantID := range tenantIDs {
+			manifest := &models.SkillManifest{
+				ID:       "system-skill-" + skill.name,
+				TenantID: tenantID,
+				Name:     skill.name,
+				Version:  skill.version,
+				Tools: []models.ToolRef{
+					{Name: "bash", Version: "1.0.0"},
+				},
+				Mutating:         skill.mutating,
+				ApprovalRequired: skill.mutating,
+				Status:           models.StatusActive,
+				PublishedBy:      "platform-seed",
+				CreatedAt:        time.Now().Add(time.Duration(i) * time.Second),
+				Scope:            "system",
+			}
+			catalog.Register(manifest)
+		}
+	}
+	log.Printf("Bootstrapped %d system skills into dispatcher catalog", len(systemSkills))
 }

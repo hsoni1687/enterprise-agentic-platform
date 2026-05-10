@@ -14,6 +14,7 @@ import {
   LogOut,
   Server,
   Wrench,
+  Hammer,
 } from "lucide-react";
 
 export default function AdminLayout({ children }: { children: ReactNode }) {
@@ -37,6 +38,7 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
     { label: "Tenants", href: "/tenants", icon: Users },
     { label: "LLM Config", href: "/llm-config", icon: Settings },
     { label: "System Agents", href: "/system-agents", icon: Zap },
+    { label: "System Tools", href: "/system-tools", icon: Hammer },
     { label: "System Skills", href: "/system-skills", icon: Wrench },
     { label: "Executions", href: "/executions", icon: BarChart3 },
     { label: "Cost Tracking", href: "/cost", icon: BarChart3 },
