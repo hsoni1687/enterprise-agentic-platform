@@ -477,6 +477,7 @@ func handleMockInference(w http.ResponseWriter, req openai.ChatCompletionRequest
 	
 	var resp openai.ChatCompletionResponse
 	resp.ID = "mock-resp-123"
+	resp.Object = "chat.completion"
 	resp.Model = req.Model
 	resp.Choices = []openai.ChatCompletionChoice{
 		{
@@ -676,8 +677,9 @@ func handleAnthropicInference(w http.ResponseWriter, req openai.ChatCompletionRe
 
 	// Translate Back to OpenAI
 	openaiResp := openai.ChatCompletionResponse{
-		ID:    antResp.ID,
-		Model: antResp.Model,
+		ID:     antResp.ID,
+		Object: "chat.completion",
+		Model:  antResp.Model,
 		Choices: []openai.ChatCompletionChoice{
 			{
 				Index: 0,
