@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"time"
@@ -349,18 +350,30 @@ func NewToolExecutorRouter() *ToolExecutorRouter {
 }
 
 func (r *ToolExecutorRouter) Route(ctx context.Context, tool models.ToolRef, args map[string]any) (any, error) {
+	log.Printf("[Route] tool.Name=%s | len=%d | first3=%s", tool.Name, len(tool.Name), tool.Name[:min(3, len(tool.Name))])
+
 	// Route bash tool to bash-executor
 	if tool.Name == "bash" {
+		log.Printf("[Route] Routing to bash-executor")
 		return r.executeBash(ctx, tool, args)
 	}
 
 	// Route kg-* tools to kg-service
 	if len(tool.Name) > 3 && tool.Name[:3] == "kg-" {
+		log.Printf("[Route] Routing to kg-service (executeKG)")
 		return r.executeKG(ctx, tool, args)
 	}
 
 	// Route other tools to sandbox-manager
+	log.Printf("[Route] Routing to sandbox-manager")
 	return r.executeSandbox(ctx, tool, args)
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func (r *ToolExecutorRouter) executeBash(ctx context.Context, tool models.ToolRef, args map[string]any) (any, error) {
@@ -461,6 +474,7 @@ func (r *ToolExecutorRouter) executeKG(ctx context.Context, tool models.ToolRef,
 	}
 
 	body, _ := json.Marshal(args)
+	log.Printf("[executeKG %s] URL: %s%s | body: %s", tool.Name, kgServiceURL, endpoint, string(body))
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, kgServiceURL+endpoint, bytes.NewReader(body))
 	if err != nil {
@@ -470,6 +484,7 @@ func (r *ToolExecutorRouter) executeKG(ctx context.Context, tool models.ToolRef,
 	// KG service requires X-Tenant-ID header, extracted from context
 	if tenantID, ok := ctx.Value("tenant_id").(string); ok {
 		req.Header.Set("X-Tenant-ID", tenantID)
+		log.Printf("[executeKG %s] Tenant-ID: %s", tool.Name, tenantID)
 	}
 
 	resp, err := r.client.Do(req)
@@ -478,11 +493,14 @@ func (r *ToolExecutorRouter) executeKG(ctx context.Context, tool models.ToolRef,
 	}
 	defer resp.Body.Close()
 
+	respBody, _ := io.ReadAll(resp.Body)
+	log.Printf("[executeKG %s] Response status: %d | body (first 300 chars): %.300s", tool.Name, resp.StatusCode, string(respBody))
+	log.Printf("[executeKG %s] Full response body: %s", tool.Name, string(respBody))
+
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		var errMsg string
-		body, _ := io.ReadAll(resp.Body)
-		if len(body) > 0 {
-			errMsg = string(body)
+		errMsg := string(respBody)
+		if errMsg == "" {
+			errMsg = fmt.Sprintf("status code %d", resp.StatusCode)
 		}
 		return nil, fmt.Errorf("kg tool %s returned %d: %s", tool.Name, resp.StatusCode, errMsg)
 	}
@@ -493,9 +511,10 @@ func (r *ToolExecutorRouter) executeKG(ctx context.Context, tool models.ToolRef,
 	}
 
 	var result any
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.Unmarshal(respBody, &result); err != nil {
 		return nil, fmt.Errorf("decode kg response: %w", err)
 	}
+	log.Printf("[executeKG %s] Parsed result type: %T | value: %+v", tool.Name, result, result)
 	return result, nil
 }
 

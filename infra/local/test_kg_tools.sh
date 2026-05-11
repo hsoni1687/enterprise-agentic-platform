@@ -53,18 +53,19 @@ fi
 # Test 2: Test kg-create-graph through dispatcher
 echo ""
 echo "[2/6] Testing kg-create-graph tool..."
-GRAPH_RESPONSE=$(make_request POST "$DISPATCHER_URL/api/v1/tools/invoke" '{
-  "tool": {"name": "kg-create-graph", "version": "1.0.0"},
-  "args": {
-    "name": "Test DevOps Graph",
-    "domain": "devops",
-    "description": "A test knowledge graph",
-    "schema": {"entities": ["Service", "Deployment"], "relationships": ["depends_on"]}
+GRAPH_NAME="Test DevOps Graph $(date +%s%N)"
+GRAPH_RESPONSE=$(make_request POST "$DISPATCHER_URL/api/v1/tools/invoke" "{
+  \"tool\": {\"name\": \"kg-create-graph\", \"version\": \"1.0.0\"},
+  \"args\": {
+    \"name\": \"$GRAPH_NAME\",
+    \"domain\": \"devops\",
+    \"description\": \"A test knowledge graph\",
+    \"schema\": {\"entities\": [\"Service\", \"Deployment\"], \"relationships\": [\"depends_on\"]}
   },
-  "agent_id": "test-agent",
-  "mutating": true,
-  "hitl_approval_id": "test-bypass"
-}')
+  \"agent_id\": \"test-agent\",
+  \"mutating\": true,
+  \"hitl_approval_id\": \"test-bypass\"
+}")
 
 GRAPH_ID=$(echo "$GRAPH_RESPONSE" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
 

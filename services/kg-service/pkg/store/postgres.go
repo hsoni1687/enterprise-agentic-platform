@@ -139,31 +139,38 @@ func (ps *PostgresStore) CreateNode(ctx context.Context, n *Node) (*Node, error)
 		embeddingSQL = n.Embedding
 	}
 
+	var propsBytes []byte
 	err := ps.db.QueryRowContext(ctx,
 		`INSERT INTO kg_nodes (graph_id, tenant_id, node_type, label, properties, embedding)
 		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING id, graph_id, tenant_id, node_type, label, properties, embedding, created_at, updated_at`,
 		n.GraphID, n.TenantID, n.NodeType, n.Label, string(propsJSON), embeddingSQL,
-	).Scan(&n.ID, &n.GraphID, &n.TenantID, &n.NodeType, &n.Label, &n.Properties, &n.Embedding, &n.CreatedAt, &n.UpdatedAt)
+	).Scan(&n.ID, &n.GraphID, &n.TenantID, &n.NodeType, &n.Label, &propsBytes, &n.Embedding, &n.CreatedAt, &n.UpdatedAt)
 
 	if err != nil {
 		return nil, err
 	}
+	json.Unmarshal(propsBytes, &n.Properties)
 	return n, nil
 }
 
 func (ps *PostgresStore) GetNode(ctx context.Context, tenantID, nodeID string) (*Node, error) {
 	n := &Node{}
+	var propsBytes []byte
 	err := ps.db.QueryRowContext(ctx,
 		`SELECT id, graph_id, tenant_id, node_type, label, properties, embedding, created_at, updated_at
 		FROM kg_nodes WHERE id = $1 AND tenant_id = $2`,
 		nodeID, tenantID,
-	).Scan(&n.ID, &n.GraphID, &n.TenantID, &n.NodeType, &n.Label, &n.Properties, &n.Embedding, &n.CreatedAt, &n.UpdatedAt)
+	).Scan(&n.ID, &n.GraphID, &n.TenantID, &n.NodeType, &n.Label, &propsBytes, &n.Embedding, &n.CreatedAt, &n.UpdatedAt)
 
 	if err == sql.ErrNoRows {
 		return nil, errors.New("node not found")
 	}
-	return n, err
+	if err != nil {
+		return nil, err
+	}
+	json.Unmarshal(propsBytes, &n.Properties)
+	return n, nil
 }
 
 func (ps *PostgresStore) ListNodes(ctx context.Context, tenantID, graphID string) ([]*Node, error) {
@@ -180,9 +187,11 @@ func (ps *PostgresStore) ListNodes(ctx context.Context, tenantID, graphID string
 	var nodes []*Node
 	for rows.Next() {
 		n := &Node{}
-		if err := rows.Scan(&n.ID, &n.GraphID, &n.TenantID, &n.NodeType, &n.Label, &n.Properties, &n.Embedding, &n.CreatedAt, &n.UpdatedAt); err != nil {
+		var propsBytes []byte
+		if err := rows.Scan(&n.ID, &n.GraphID, &n.TenantID, &n.NodeType, &n.Label, &propsBytes, &n.Embedding, &n.CreatedAt, &n.UpdatedAt); err != nil {
 			return nil, err
 		}
+		json.Unmarshal(propsBytes, &n.Properties)
 		nodes = append(nodes, n)
 	}
 	return nodes, rows.Err()
@@ -201,28 +210,38 @@ func (ps *PostgresStore) DeleteNode(ctx context.Context, tenantID, nodeID string
 func (ps *PostgresStore) CreateEdge(ctx context.Context, e *Edge) (*Edge, error) {
 	propsJSON, _ := json.Marshal(e.Properties)
 
+	var propsBytes []byte
 	err := ps.db.QueryRowContext(ctx,
 		`INSERT INTO kg_edges (graph_id, tenant_id, from_node_id, to_node_id, relationship_type, properties, weight)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING id, graph_id, tenant_id, from_node_id, to_node_id, relationship_type, properties, weight, created_at, updated_at`,
 		e.GraphID, e.TenantID, e.FromNodeID, e.ToNodeID, e.RelationshipType, string(propsJSON), e.Weight,
-	).Scan(&e.ID, &e.GraphID, &e.TenantID, &e.FromNodeID, &e.ToNodeID, &e.RelationshipType, &e.Properties, &e.Weight, &e.CreatedAt, &e.UpdatedAt)
+	).Scan(&e.ID, &e.GraphID, &e.TenantID, &e.FromNodeID, &e.ToNodeID, &e.RelationshipType, &propsBytes, &e.Weight, &e.CreatedAt, &e.UpdatedAt)
 
-	return e, err
+	if err != nil {
+		return nil, err
+	}
+	json.Unmarshal(propsBytes, &e.Properties)
+	return e, nil
 }
 
 func (ps *PostgresStore) GetEdge(ctx context.Context, tenantID, edgeID string) (*Edge, error) {
 	e := &Edge{}
+	var propsBytes []byte
 	err := ps.db.QueryRowContext(ctx,
 		`SELECT id, graph_id, tenant_id, from_node_id, to_node_id, relationship_type, properties, weight, created_at, updated_at
 		FROM kg_edges WHERE id = $1 AND tenant_id = $2`,
 		edgeID, tenantID,
-	).Scan(&e.ID, &e.GraphID, &e.TenantID, &e.FromNodeID, &e.ToNodeID, &e.RelationshipType, &e.Properties, &e.Weight, &e.CreatedAt, &e.UpdatedAt)
+	).Scan(&e.ID, &e.GraphID, &e.TenantID, &e.FromNodeID, &e.ToNodeID, &e.RelationshipType, &propsBytes, &e.Weight, &e.CreatedAt, &e.UpdatedAt)
 
 	if err == sql.ErrNoRows {
 		return nil, errors.New("edge not found")
 	}
-	return e, err
+	if err != nil {
+		return nil, err
+	}
+	json.Unmarshal(propsBytes, &e.Properties)
+	return e, nil
 }
 
 func (ps *PostgresStore) ListEdges(ctx context.Context, tenantID, graphID string) ([]*Edge, error) {
@@ -239,9 +258,11 @@ func (ps *PostgresStore) ListEdges(ctx context.Context, tenantID, graphID string
 	var edges []*Edge
 	for rows.Next() {
 		e := &Edge{}
-		if err := rows.Scan(&e.ID, &e.GraphID, &e.TenantID, &e.FromNodeID, &e.ToNodeID, &e.RelationshipType, &e.Properties, &e.Weight, &e.CreatedAt, &e.UpdatedAt); err != nil {
+		var propsBytes []byte
+		if err := rows.Scan(&e.ID, &e.GraphID, &e.TenantID, &e.FromNodeID, &e.ToNodeID, &e.RelationshipType, &propsBytes, &e.Weight, &e.CreatedAt, &e.UpdatedAt); err != nil {
 			return nil, err
 		}
+		json.Unmarshal(propsBytes, &e.Properties)
 		edges = append(edges, e)
 	}
 	return edges, rows.Err()
@@ -261,9 +282,11 @@ func (ps *PostgresStore) ListEdgesFrom(ctx context.Context, tenantID, fromNodeID
 	var edges []*Edge
 	for rows.Next() {
 		e := &Edge{}
-		if err := rows.Scan(&e.ID, &e.GraphID, &e.TenantID, &e.FromNodeID, &e.ToNodeID, &e.RelationshipType, &e.Properties, &e.Weight, &e.CreatedAt, &e.UpdatedAt); err != nil {
+		var propsBytes []byte
+		if err := rows.Scan(&e.ID, &e.GraphID, &e.TenantID, &e.FromNodeID, &e.ToNodeID, &e.RelationshipType, &propsBytes, &e.Weight, &e.CreatedAt, &e.UpdatedAt); err != nil {
 			return nil, err
 		}
+		json.Unmarshal(propsBytes, &e.Properties)
 		edges = append(edges, e)
 	}
 	return edges, rows.Err()
@@ -283,9 +306,11 @@ func (ps *PostgresStore) ListEdgesTo(ctx context.Context, tenantID, toNodeID str
 	var edges []*Edge
 	for rows.Next() {
 		e := &Edge{}
-		if err := rows.Scan(&e.ID, &e.GraphID, &e.TenantID, &e.FromNodeID, &e.ToNodeID, &e.RelationshipType, &e.Properties, &e.Weight, &e.CreatedAt, &e.UpdatedAt); err != nil {
+		var propsBytes []byte
+		if err := rows.Scan(&e.ID, &e.GraphID, &e.TenantID, &e.FromNodeID, &e.ToNodeID, &e.RelationshipType, &propsBytes, &e.Weight, &e.CreatedAt, &e.UpdatedAt); err != nil {
 			return nil, err
 		}
+		json.Unmarshal(propsBytes, &e.Properties)
 		edges = append(edges, e)
 	}
 	return edges, rows.Err()
