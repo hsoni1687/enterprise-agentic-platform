@@ -1,0 +1,80 @@
+# DevOps/SRE Cookbook Manifest
+# This cookbook provides a complete template for building agentic SRE solutions
+
+name: "devops-sre"
+version: "1.0.0"
+description: |
+  A comprehensive cookbook for building SRE and DevOps agents.
+  Includes ontology for microservices, deployments, monitoring, and incident management.
+
+domain: "devops"
+
+# What this cookbook creates when imported
+creates:
+  knowledge_graphs:
+    - name: "DevOps Platform"
+      description: "Structural knowledge about your infrastructure"
+      schema_file: "kg-schema.yaml"
+      seed_data_file: "seed-kg.yaml"
+
+  agents:
+    - file: "agents/sre-agent.yaml"
+      description: "SRE agent for incident response and platform awareness"
+    - file: "agents/devops-assistant.yaml"
+      description: "DevOps assistant for deployment and infrastructure queries"
+
+  skills: []  # Uses platform system skills
+
+# MCP servers recommended for this domain
+mcp_recommendations:
+  - name: "pagerduty"
+    description: "PagerDuty incident management integration"
+    required: false
+    config_template:
+      url: "mcp+pagerduty://your-subdomain"
+      auth:
+        api_key_env: "PAGERDUTY_API_KEY"
+
+  - name: "prometheus"
+    description: "Prometheus metrics and alerting"
+    required: false
+    config_template:
+      url: "http://prometheus:9090"
+      basic_auth:
+        username_env: "PROMETHEUS_USER"
+        password_env: "PROMETHEUS_PASSWORD"
+
+  - name: "github"
+    description: "GitHub for incident tracking and deployment info"
+    required: false
+    config_template:
+      url: "mcp+github://api.github.com"
+      auth:
+        token_env: "GITHUB_TOKEN"
+
+# Variables to customize during import
+variables:
+  - name: "org_name"
+    description: "Your organization name"
+    default: "My Company"
+    type: "string"
+
+  - name: "env_names"
+    description: "Environment names (comma-separated)"
+    default: "dev,staging,prod"
+    type: "string"
+
+  - name: "alert_channel"
+    description: "Default alert channel (slack, email, etc)"
+    default: "slack"
+    type: "string"
+
+# Tags for categorization
+tags:
+  - "infrastructure"
+  - "incident-management"
+  - "monitoring"
+  - "deployment"
+
+# Minimum platform version
+min_platform_version: "1.0.0"

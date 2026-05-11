@@ -1,0 +1,188 @@
+# DevOps Cookbook - MCP Server Recommendations
+# These are the recommended MCP integrations for SRE/DevOps domain
+
+mcp_servers:
+  - id: "pagerduty"
+    name: "PagerDuty"
+    description: "Incident management and on-call scheduling"
+    category: "incident-management"
+    priority: "high"
+    config:
+      url: "mcp+pagerduty://your-pagerduty-domain"
+      auth_type: "api_key"
+      auth_config:
+        api_key: "${PAGERDUTY_API_KEY}"
+    capabilities:
+      - "get_incidents"
+      - "create_incident"
+      - "update_incident_status"
+      - "get_oncall_user"
+      - "get_escalation_policy"
+    use_cases:
+      - "Real-time incident visibility"
+      - "Automated incident creation and updates"
+      - "On-call user detection for automated escalation"
+      - "Team availability and schedule lookup"
+
+  - id: "prometheus"
+    name: "Prometheus"
+    description: "Metrics and monitoring"
+    category: "monitoring"
+    priority: "high"
+    config:
+      url: "http://prometheus:9090"
+      auth_type: "basic"
+      auth_config:
+        username: "${PROMETHEUS_USER}"
+        password: "${PROMETHEUS_PASSWORD}"
+    capabilities:
+      - "query_metrics"
+      - "query_range"
+      - "get_alerts"
+      - "get_alert_rules"
+    use_cases:
+      - "Query service metrics (latency, error rate, CPU, memory)"
+      - "Check alert firing status"
+      - "Historical metric queries for trend analysis"
+      - "Correlation of metrics during incidents"
+
+  - id: "datadog"
+    name: "Datadog"
+    description: "Unified monitoring and observability"
+    category: "monitoring"
+    priority: "medium"
+    config:
+      url: "https://api.datadoghq.com"
+      auth_type: "api_key"
+      auth_config:
+        api_key: "${DATADOG_API_KEY}"
+        app_key: "${DATADOG_APP_KEY}"
+    capabilities:
+      - "query_metrics"
+      - "search_logs"
+      - "get_monitors"
+      - "get_events"
+    use_cases:
+      - "Query APM traces and logs"
+      - "Monitor status and SLO tracking"
+      - "Log search and correlation"
+
+  - id: "github"
+    name: "GitHub"
+    description: "Repository and deployment tracking"
+    category: "source-control"
+    priority: "high"
+    config:
+      url: "https://api.github.com"
+      auth_type: "token"
+      auth_config:
+        token: "${GITHUB_TOKEN}"
+    capabilities:
+      - "get_repository"
+      - "list_commits"
+      - "list_releases"
+      - "list_pull_requests"
+      - "get_deployment_status"
+    use_cases:
+      - "Track recent deployments"
+      - "Link incidents to commits/PRs"
+      - "Service version tracking"
+      - "Deployment status and history"
+
+  - id: "slack"
+    name: "Slack"
+    description: "Team communication"
+    category: "communication"
+    priority: "medium"
+    config:
+      url: "https://slack.com/api"
+      auth_type: "oauth"
+      auth_config:
+        bot_token: "${SLACK_BOT_TOKEN}"
+    capabilities:
+      - "send_message"
+      - "post_thread_message"
+      - "update_message"
+      - "get_channel_info"
+    use_cases:
+      - "Send incident notifications to channels"
+      - "Thread incident discussions"
+      - "Reference team channels from KG"
+
+  - id: "grafana"
+    name: "Grafana"
+    description: "Visualization and dashboards"
+    category: "monitoring"
+    priority: "medium"
+    config:
+      url: "http://grafana:3000"
+      auth_type: "api_key"
+      auth_config:
+        api_key: "${GRAFANA_API_KEY}"
+    capabilities:
+      - "get_dashboard"
+      - "search_dashboards"
+      - "get_annotation"
+      - "create_annotation"
+    use_cases:
+      - "Link to service dashboards"
+      - "Create incident annotations on graphs"
+      - "Historical dashboard snapshots"
+
+  - id: "kubernetes"
+    name: "Kubernetes"
+    description: "Container orchestration"
+    category: "infrastructure"
+    priority: "high"
+    config:
+      url: "https://kubernetes.default.svc"
+      auth_type: "service_account"
+      auth_config:
+        service_account_token: "${KUBE_SA_TOKEN}"
+        ca_cert: "${KUBE_CA_CERT}"
+    capabilities:
+      - "get_pod"
+      - "list_pods"
+      - "get_deployment"
+      - "get_service"
+      - "get_events"
+    use_cases:
+      - "Query pod status and logs"
+      - "Deployment status checks"
+      - "Pod restart history for incident correlation"
+
+  - id: "elastic"
+    name: "Elasticsearch"
+    description: "Log aggregation and search"
+    category: "logging"
+    priority: "medium"
+    config:
+      url: "http://elasticsearch:9200"
+      auth_type: "basic"
+      auth_config:
+        username: "${ELASTIC_USER}"
+        password: "${ELASTIC_PASSWORD}"
+    capabilities:
+      - "search_logs"
+      - "get_log_stats"
+      - "query_time_series"
+    use_cases:
+      - "Search service logs during incidents"
+      - "Error log pattern detection"
+      - "Cross-service log correlation"
+
+optional_servers:
+  - id: "aws"
+    name: "AWS"
+    description: "AWS infrastructure and services"
+    reason: "Needed if infrastructure runs on AWS"
+
+  - id: "gcp"
+    name: "Google Cloud"
+    description: "Google Cloud infrastructure"
+    reason: "Needed if infrastructure runs on GCP"
+
+  - id: "terraform"
+    name: "Terraform"
+    description: "Infrastructure as code"
+    reason: "Useful for tracking infrastructure state and changes"

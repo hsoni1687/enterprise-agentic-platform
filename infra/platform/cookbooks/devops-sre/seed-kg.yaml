@@ -1,0 +1,243 @@
+# DevOps Cookbook - Seed Knowledge Graph Data
+# Provides a starter graph structure for typical DevOps setups
+
+nodes:
+  # Environments
+  - id: "env-dev"
+    type: "Environment"
+    label: "Development"
+    properties:
+      tier: "dev"
+      region: "us-west-2"
+      sla_uptime: 95
+
+  - id: "env-staging"
+    type: "Environment"
+    label: "Staging"
+    properties:
+      tier: "staging"
+      region: "us-west-2"
+      sla_uptime: 99
+
+  - id: "env-prod"
+    type: "Environment"
+    label: "Production"
+    properties:
+      tier: "prod"
+      region: "us-west-2"
+      sla_uptime: 99.99
+
+  # Core Services
+  - id: "svc-api-gateway"
+    type: "Service"
+    label: "API Gateway"
+    properties:
+      language: "go"
+      owner_team: "platform"
+      repo_url: "github.com/myorg/api-gateway"
+
+  - id: "svc-user-service"
+    type: "Service"
+    label: "User Service"
+    properties:
+      language: "nodejs"
+      owner_team: "backend"
+      repo_url: "github.com/myorg/user-service"
+
+  - id: "svc-order-service"
+    type: "Service"
+    label: "Order Service"
+    properties:
+      language: "python"
+      owner_team: "backend"
+      repo_url: "github.com/myorg/order-service"
+
+  - id: "svc-payment-service"
+    type: "Service"
+    label: "Payment Service"
+    properties:
+      language: "go"
+      owner_team: "platform"
+      repo_url: "github.com/myorg/payment-service"
+
+  # Databases
+  - id: "db-postgres-main"
+    type: "Database"
+    label: "PostgreSQL Main"
+    properties:
+      type: "postgres"
+      version: "14"
+      backup_frequency: "daily"
+
+  - id: "db-redis-cache"
+    type: "Database"
+    label: "Redis Cache"
+    properties:
+      type: "redis"
+      version: "7"
+      backup_frequency: "hourly"
+
+  # Teams
+  - id: "team-platform"
+    type: "Team"
+    label: "Platform Team"
+    properties:
+      slack_channel: "#platform"
+      on_call_rotation: "weekday"
+
+  - id: "team-backend"
+    type: "Team"
+    label: "Backend Team"
+    properties:
+      slack_channel: "#backend"
+      on_call_rotation: "24/7"
+
+  # Runbooks
+  - id: "runbook-api-gateway-down"
+    type: "Runbook"
+    label: "API Gateway Down"
+    properties:
+      severity: "p1"
+      incident_type: "down"
+      mttr_target: "15 minutes"
+
+  - id: "runbook-high-error-rate"
+    type: "Runbook"
+    label: "High Error Rate"
+    properties:
+      severity: "p2"
+      incident_type: "error_rate"
+      mttr_target: "30 minutes"
+
+  - id: "runbook-latency-spike"
+    type: "Runbook"
+    label: "Latency Spike"
+    properties:
+      severity: "p3"
+      incident_type: "latency"
+      mttr_target: "1 hour"
+
+edges:
+  # Service deployments across environments
+  - id: "edge-api-gateway-dev"
+    from_node_id: "svc-api-gateway"
+    to_node_id: "env-dev"
+    relationship_type: "deployed_in"
+    properties:
+      version: "1.2.3"
+
+  - id: "edge-api-gateway-staging"
+    from_node_id: "svc-api-gateway"
+    to_node_id: "env-staging"
+    relationship_type: "deployed_in"
+    properties:
+      version: "1.2.3"
+
+  - id: "edge-api-gateway-prod"
+    from_node_id: "svc-api-gateway"
+    to_node_id: "env-prod"
+    relationship_type: "deployed_in"
+    properties:
+      version: "1.2.2"
+
+  - id: "edge-user-service-prod"
+    from_node_id: "svc-user-service"
+    to_node_id: "env-prod"
+    relationship_type: "deployed_in"
+    properties:
+      version: "2.0.1"
+
+  - id: "edge-order-service-prod"
+    from_node_id: "svc-order-service"
+    to_node_id: "env-prod"
+    relationship_type: "deployed_in"
+    properties:
+      version: "1.5.0"
+
+  - id: "edge-payment-service-prod"
+    from_node_id: "svc-payment-service"
+    to_node_id: "env-prod"
+    relationship_type: "deployed_in"
+    properties:
+      version: "3.1.0"
+
+  # Service dependencies
+  - id: "edge-gateway-depends-user"
+    from_node_id: "svc-api-gateway"
+    to_node_id: "svc-user-service"
+    relationship_type: "depends_on"
+    properties:
+      optional: false
+
+  - id: "edge-gateway-depends-order"
+    from_node_id: "svc-api-gateway"
+    to_node_id: "svc-order-service"
+    relationship_type: "depends_on"
+    properties:
+      optional: false
+
+  - id: "edge-order-depends-payment"
+    from_node_id: "svc-order-service"
+    to_node_id: "svc-payment-service"
+    relationship_type: "depends_on"
+    properties:
+      optional: false
+
+  # Database usage
+  - id: "edge-user-uses-postgres"
+    from_node_id: "svc-user-service"
+    to_node_id: "db-postgres-main"
+    relationship_type: "uses_database"
+    properties:
+      read_heavy: true
+
+  - id: "edge-order-uses-postgres"
+    from_node_id: "svc-order-service"
+    to_node_id: "db-postgres-main"
+    relationship_type: "uses_database"
+    properties:
+      read_heavy: false
+
+  - id: "edge-gateway-uses-redis"
+    from_node_id: "svc-api-gateway"
+    to_node_id: "db-redis-cache"
+    relationship_type: "uses_database"
+    properties:
+      read_heavy: true
+
+  # Ownership
+  - id: "edge-api-owned-platform"
+    from_node_id: "svc-api-gateway"
+    to_node_id: "team-platform"
+    relationship_type: "owned_by"
+
+  - id: "edge-user-owned-backend"
+    from_node_id: "svc-user-service"
+    to_node_id: "team-backend"
+    relationship_type: "owned_by"
+
+  - id: "edge-order-owned-backend"
+    from_node_id: "svc-order-service"
+    to_node_id: "team-backend"
+    relationship_type: "owned_by"
+
+  - id: "edge-payment-owned-platform"
+    from_node_id: "svc-payment-service"
+    to_node_id: "team-platform"
+    relationship_type: "owned_by"
+
+  # Runbooks
+  - id: "edge-api-runbook-down"
+    from_node_id: "svc-api-gateway"
+    to_node_id: "runbook-api-gateway-down"
+    relationship_type: "has_runbook"
+
+  - id: "edge-order-runbook-error"
+    from_node_id: "svc-order-service"
+    to_node_id: "runbook-high-error-rate"
+    relationship_type: "has_runbook"
+
+  - id: "edge-user-runbook-latency"
+    from_node_id: "svc-user-service"
+    to_node_id: "runbook-latency-spike"
+    relationship_type: "has_runbook"

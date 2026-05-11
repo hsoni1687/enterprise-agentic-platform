@@ -1,0 +1,177 @@
+# DevOps/SRE Knowledge Graph Schema
+# Defines the entity types and relationships for DevOps infrastructure
+
+entity_types:
+  - name: "Service"
+    description: "Microservice or application component"
+    icon: "cog"
+    properties:
+      - name: "version"
+        type: "string"
+        description: "Current deployed version"
+      - name: "owner_team"
+        type: "string"
+        description: "Team responsible for the service"
+      - name: "language"
+        type: "string"
+        description: "Programming language (go, python, nodejs, etc)"
+      - name: "repo_url"
+        type: "string"
+        description: "Repository URL"
+      - name: "slack_channel"
+        type: "string"
+        description: "Team Slack channel"
+
+  - name: "Deployment"
+    description: "A specific deployment of a service in an environment"
+    icon: "cloud"
+    properties:
+      - name: "status"
+        type: "string"
+        enum: ["healthy", "degraded", "down"]
+        description: "Current deployment status"
+      - name: "replicas"
+        type: "integer"
+        description: "Number of running replicas"
+      - name: "resource_limits"
+        type: "object"
+        description: "CPU and memory limits"
+
+  - name: "Environment"
+    description: "Deployment environment (dev, staging, prod)"
+    icon: "folder"
+    properties:
+      - name: "tier"
+        type: "string"
+        enum: ["dev", "staging", "prod"]
+        description: "Environment tier"
+      - name: "region"
+        type: "string"
+        description: "Cloud region"
+      - name: "sla_uptime"
+        type: "number"
+        description: "SLA uptime percentage target"
+
+  - name: "Database"
+    description: "Database (PostgreSQL, MySQL, MongoDB, etc)"
+    icon: "database"
+    properties:
+      - name: "type"
+        type: "string"
+        enum: ["postgres", "mysql", "mongodb", "redis", "dynamodb"]
+        description: "Database type"
+      - name: "version"
+        type: "string"
+        description: "Database version"
+      - name: "backup_frequency"
+        type: "string"
+        description: "Backup schedule"
+
+  - name: "Runbook"
+    description: "Runbook for handling incidents"
+    icon: "book"
+    properties:
+      - name: "severity"
+        type: "string"
+        enum: ["p1", "p2", "p3", "p4"]
+        description: "Incident severity"
+      - name: "incident_type"
+        type: "string"
+        description: "Type of incident (latency, error rate, down, etc)"
+      - name: "mttr_target"
+        type: "string"
+        description: "Mean time to recovery target"
+
+  - name: "Team"
+    description: "Engineering team"
+    icon: "users"
+    properties:
+      - name: "on_call_rotation"
+        type: "string"
+        description: "On-call rotation schedule"
+      - name: "slack_channel"
+        type: "string"
+        description: "Team Slack channel"
+      - name: "pagerduty_schedule_id"
+        type: "string"
+        description: "PagerDuty schedule ID"
+
+  - name: "Alert"
+    description: "Monitoring alert"
+    icon: "alert-triangle"
+    properties:
+      - name: "severity"
+        type: "string"
+        enum: ["critical", "warning", "info"]
+        description: "Alert severity"
+      - name: "threshold"
+        type: "string"
+        description: "Alert threshold"
+      - name: "query"
+        type: "string"
+        description: "Prometheus/monitoring query"
+
+relationship_types:
+  - name: "deployed_in"
+    description: "Service deployed in environment"
+    cardinality: "many-to-many"
+    source: "Service"
+    target: "Environment"
+    properties:
+      - name: "version"
+        type: "string"
+
+  - name: "runs_on"
+    description: "Service deployment runs on infrastructure"
+    cardinality: "many-to-many"
+    source: "Deployment"
+    target: "Environment"
+
+  - name: "uses_database"
+    description: "Service uses a database"
+    cardinality: "many-to-many"
+    source: "Service"
+    target: "Database"
+    properties:
+      - name: "read_heavy"
+        type: "boolean"
+
+  - name: "depends_on"
+    description: "Service depends on another service"
+    cardinality: "many-to-many"
+    source: "Service"
+    target: "Service"
+    properties:
+      - name: "optional"
+        type: "boolean"
+        description: "Is the dependency optional?"
+
+  - name: "has_runbook"
+    description: "Service has a runbook"
+    cardinality: "one-to-many"
+    source: "Service"
+    target: "Runbook"
+
+  - name: "owned_by"
+    description: "Service or infrastructure owned by team"
+    cardinality: "many-to-one"
+    source: "Service"
+    target: "Team"
+
+  - name: "on_call"
+    description: "Team is on-call for incident"
+    cardinality: "many-to-many"
+    source: "Team"
+    target: "Service"
+
+  - name: "fires_alert"
+    description: "Alert fires for a service"
+    cardinality: "many-to-many"
+    source: "Alert"
+    target: "Service"
+
+  - name: "shares_database"
+    description: "Services share a database"
+    cardinality: "many-to-many"
+    source: "Service"
+    target: "Service"
