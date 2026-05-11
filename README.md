@@ -1,11 +1,52 @@
 # A1 Agent Engine
 
-**Enterprise Agentic PaaS** — A production-grade platform for building, deploying, and orchestrating AI-driven agent workflows with durable execution, multi-tenancy, and comprehensive observability.
+**Enterprise Agentic PaaS** — A production-grade platform for building, deploying, and orchestrating AI-driven agent workflows with durable execution, multi-tenancy, domain-oriented knowledge graphs, and comprehensive observability.
 
-## 🎯 What is A1 Agent Engine?
+## 🎯 Platform Vision
 
-A1 Agent Engine is a complete platform for agentic AI applications. It enables:
+A1 Agent Engine transforms how enterprises build and operate AI-driven automation. It provides a **full-stack agentic solution factory** for vertical domains—enabling organizations to deploy sophisticated multi-agent systems in hours rather than weeks.
 
+### Three-Layer Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│ LAYER 3: DOMAIN SOLUTIONS (Cookbooks)                              │
+│                                                                     │
+│  DevOps/SRE Cookbook    Fintech Cookbook     Healthcare Cookbook  │
+│  • Agent templates       • Agent templates    • Agent templates    │
+│  • KG ontology           • KG ontology        • KG ontology        │
+│  • MCP recommendations   • MCP recs           • MCP recs           │
+│  • Seed data             • Seed data          • Seed data          │
+│  → Deploy production-ready agents in minutes                       │
+└─────────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼ (architect customizes cookbook)
+┌─────────────────────────────────────────────────────────────────────┐
+│ LAYER 2: DOMAIN KNOWLEDGE & CONTEXT                                │
+│                                                                     │
+│  Knowledge Graph          KG-Architect Agent    MCP Servers        │
+│  • Structural ontology    • Builds KGs from     • PagerDuty        │
+│  • Entity relationships   natural language      • Jira/GitHub      │
+│  • pgvector search        • Iterative refinement• Bloomberg        │
+│  • RLS multi-tenancy      • No-code interaction• Custom APIs      │
+│  → Static domain structure + Live operational context              │
+└─────────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼ (agents are wired to both layers)
+┌─────────────────────────────────────────────────────────────────────┐
+│ LAYER 1: PLATFORM PRIMITIVES (4-Tier Capability Hierarchy)         │
+│                                                                     │
+│  Tools → Skills → Sub-Agents → Agent Teams                         │
+│  • bash, web-search      • Tool bundles       • Contracts          │
+│  • kg-* operations       • SOPs & hooks       • Orchestration      │
+│  • Custom APIs           • Versioning        • Parallelization    │
+│  → Governed composition without lock-in                            │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Key Capabilities
+
+**Core Platform Features:**
 - **Agent Workflows** — Define AI agents with reasoning loops, memory, and tool access
 - **Team Orchestration** — Coordinate multi-agent teams with parallel execution and result synthesis
 - **Durable Execution** — All workflows backed by Temporal for crash recovery and HITL integration
@@ -13,7 +54,19 @@ A1 Agent Engine is a complete platform for agentic AI applications. It enables:
 - **Tool Ecosystem** — Build and compose tools, organize into skills, version-control everything
 - **Enterprise Security** — HMAC webhook validation, OIDC token issuance, JIT credential fetching
 - **Real-Time Observability** — Stream agent events as Server-Sent Events or WebSocket, monitor via Temporal UI
-- **AI-Assisted Agent Design** — Embedded Manifest Assistant helps no-code users design agent manifests conversationally, recommending skills and drafting system prompts in real-time
+- **AI-Assisted Agent Design** — Embedded Manifest Assistant helps no-code users design agent manifests conversationally
+
+**Knowledge Graph Layer (NEW):**
+- **Structural Domain Context** — PostgreSQL + pgvector knowledge graphs store entity types, relationships, and ontologies per tenant
+- **KG-Architect Agent** — Natural-language interface for building and refining domain knowledge graphs; no schema design needed
+- **Agent-Callable KG Tools** — Five system tools enable agents to query domain topology without external API calls: `kg-query`, `kg-search`, `kg-add-node`, `kg-add-edge`, `kg-create-graph`
+- **Semantic Search** — pgvector enables meaning-based entity discovery (e.g., "services with SLA < 99%")
+
+**Vertical Domain Cookbooks (NEW):**
+- **Pre-Built Templates** — Domain-specific agent templates, skill bundles, and KG schemas for DevOps/SRE, Fintech, Healthcare, etc.
+- **Seed Knowledge** — Each cookbook includes starter KG data (common entities, relationships) for faster onboarding
+- **MCP Recommendations** — Curated external data source integrations (PagerDuty, Jira, Bloomberg) per vertical
+- **One-Click Import** — Admin Console wizard guides architects through cookbook selection, customization, and deployment
 
 ## 🚀 Quick Start
 
@@ -69,7 +122,7 @@ curl http://localhost:8093/health
 
 **Note:** Frontends run on host, not Docker, for rapid development iteration. Admin API runs in Docker and is automatically started with `docker-compose up -d`.
 
-## 🏗️ Architecture
+## 🏗️ Platform Architecture
 
 ### Four-Tier Capability Hierarchy
 
@@ -82,6 +135,183 @@ Sub-Agents (Reusable agent contracts, team members)
   ↓
 Agent Teams (Orchestration, decomposition, synthesis)
 ```
+
+### Domain-Oriented Solution Factory: Cookbook System
+
+The **Cookbook System** enables rapid deployment of domain-specific agentic solutions. Each cookbook is a production-ready template for a vertical (DevOps/SRE, Fintech, Healthcare, etc.).
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│ COOKBOOK BUNDLE (infra/platform/cookbooks/<vertical>/)           │
+│                                                                  │
+│ ├─ manifest.yaml              Chef's recipe: cookbook metadata  │
+│ │  └─ name, version, description, setup artifacts             │
+│ │                                                               │
+│ ├─ kg-schema.yaml             Domain ontology definition        │
+│ │  └─ Entity types (Service, Deployment, Environment)         │
+│ │  └─ Relationship types (depends_on, deployed_in, etc.)      │
+│ │  └─ Property suggestions per entity type                    │
+│ │                                                               │
+│ ├─ agents/                    Pre-built agent templates         │
+│ │  ├─ manifest-sre-agent.yaml SRE specialist (draft template) │
+│ │  ├─ manifest-oncall-agent.yaml On-call responder            │
+│ │  └─ ...                                                       │
+│ │                                                               │
+│ ├─ skills/                    Domain-specific skill bundles    │
+│ │  ├─ incident-triage-skill.yaml Multi-tool investigation    │
+│ │  ├─ remediation-skill.yaml    Automated fixes              │
+│ │  └─ ...                                                       │
+│ │                                                               │
+│ ├─ mcp-recommendations.yaml   External data sources           │
+│ │  └─ PagerDuty (incident management)                         │
+│ │  └─ Datadog (metrics & logs)                                │
+│ │  └─ GitHub (code & deployment context)                      │
+│ │                                                               │
+│ └─ seed-kg.yaml               Starter knowledge graph          │
+│    └─ Common entities: prod/staging/dev environments          │
+│    └─ Shared infrastructure: databases, caches, load-balancers│
+│    └─ Team structure & ownership mappings                      │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+**Cookbook Lifecycle:**
+
+1. **Import**: Admin Console → Cookbooks → Select vertical (e.g., DevOps/SRE)
+   - Wizard guides configuration: company name, environment names, team structure
+   - Platform creates agent templates, skill definitions, KG schema
+
+2. **Customize**: Domain architect refines via KG-Architect agent
+   - Natural language: "Our 12 microservices depend on shared Redis and Postgres"
+   - KG-Architect builds graph: entities, relationships, properties
+   - Architect can review and iteratively refine
+
+3. **Connect**: Admin Console → MCP Servers → Register external data sources
+   - PagerDuty for incident alerts
+   - Datadog for metrics and logs
+   - GitHub for code deployments
+   - (Token-gated, per-tenant isolation)
+
+4. **Deploy**: Create agents from cookbook templates
+   - Pre-populated system prompt with domain context
+   - Skills pre-selected based on vertical
+   - KG + MCP servers wired automatically
+   - No-code deployment in Agent Studio
+
+5. **Operate**: Agents reason over KG + live MCP data
+   - "api-gateway 5xx" → KG query for dependencies → MCP call for active alerts
+   - Synthesized context + recommendations auto-posted to Slack
+
+### End-to-End: Domain Architect Deploys a DevOps Agentic Solution
+
+**Example Workflow (start to finish in 2 hours):**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Step 1: Import DevOps/SRE Cookbook (10 min)                    │
+├─────────────────────────────────────────────────────────────────┤
+│ Admin imports "DevOps/SRE" cookbook from Admin Console          │
+│ Wizard prompts:                                                 │
+│  • Company: "TechCorp"                                          │
+│  • Environments: prod, staging, dev                             │
+│  • Services: api-gateway, user-service, order-service           │
+│                                                                 │
+│ Platform creates:                                               │
+│  ✓ 3 agent templates (SRE Triager, On-Call Responder, etc.)   │
+│  ✓ 5 skill bundles (Incident Triage, K8s Remediation, etc.)  │
+│  ✓ KG schema (Service, Deployment, Environment entities)       │
+│  ✓ Starter KG with common entities                            │
+└─────────────────────────────────────────────────────────────────┘
+        │
+        ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ Step 2: Build Domain KG via KG-Architect (30 min)              │
+├─────────────────────────────────────────────────────────────────┤
+│ Architect: "We have 3 services. api-gateway depends on both     │
+│            user-service and product-service. They share a       │
+│            Postgres cluster. Each service has a runbook."       │
+│                                                                 │
+│ KG-Architect calls kg-* tools:                                 │
+│  • kg-create-graph (DevOps graph)                              │
+│  • kg-add-node × 3 (services)                                  │
+│  • kg-add-node × 1 (shared postgres)                           │
+│  • kg-add-edge × 3 (depends_on, uses_database)                │
+│  • kg-query (verify: api-gateway → [user-svc, product-svc])  │
+│                                                                 │
+│ Result: Production-ready KG with 4 nodes, 3 edges             │
+└─────────────────────────────────────────────────────────────────┘
+        │
+        ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ Step 3: Register External Data Sources (15 min)                │
+├─────────────────────────────────────────────────────────────────┤
+│ Admin Console → MCP Servers:                                    │
+│  • PagerDuty: prod-pagerduty.example.com (token issued)        │
+│  • Datadog: metrics.datadoghq.com (token issued)               │
+│  • GitHub: github.com (PAT registered)                         │
+│                                                                 │
+│ MCP Registry auto-discovers tools from each server             │
+│ Tools cached; no repeated discovery calls                       │
+└─────────────────────────────────────────────────────────────────┘
+        │
+        ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ Step 4: Create SRE Agent from Template (15 min)                │
+├─────────────────────────────────────────────────────────────────┤
+│ Agent Studio → Create Agent → Select "SRE Triager" template    │
+│                                                                 │
+│ Pre-populated:                                                  │
+│  • System prompt: "You are an autonomous SRE agent..."         │
+│  • Skills: Incident Triage, K8s Remediation, Log Analysis      │
+│  • Tools: kg-query, kg-search + PagerDuty + Datadog MCPs      │
+│  • KG: DevOps graph (TechCorp's 4 nodes, 3 edges)             │
+│  • Memory: Redis session + pgvector semantic memory            │
+│                                                                 │
+│ Architect fine-tunes system prompt, deploys to canary (10%)    │
+└─────────────────────────────────────────────────────────────────┘
+        │
+        ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ Step 5: Test Agent with Real Incident (20 min)                │
+├─────────────────────────────────────────────────────────────────┤
+│ Test in Agent Studio:                                           │
+│  "api-gateway returning 5xx errors"                             │
+│                                                                 │
+│ Agent executes:                                                │
+│  1. kg-query(start=api-gateway, depth=2)                       │
+│     → Returns: [user-service, product-service, postgres]       │
+│                                                                 │
+│  2. Call PagerDuty MCP: get_active_alerts(services=[...])     │
+│     → Returns: 2 P1 alerts on product-service                 │
+│                                                                 │
+│  3. Call Datadog MCP: query_metrics(services=[...])           │
+│     → Returns: postgres conn pool at 99%                       │
+│                                                                 │
+│  4. LLM synthesis:                                              │
+│     "api-gateway failure cascades to downstream services.      │
+│      Root cause: postgres connection pool saturation on        │
+│      product-service. Recommend scaling postgres or            │
+│      investigating long-running queries."                      │
+│                                                                 │
+│ Result: Agent posts analysis + remediation steps to Slack      │
+└─────────────────────────────────────────────────────────────────┘
+        │
+        ▼
+┌─────────────────────────────────────────────────────────────────┐
+│ Step 6: Promote to Production (5 min)                          │
+├─────────────────────────────────────────────────────────────────┤
+│ Architect configures:                                           │
+│  • PagerDuty webhook → Trigger this agent on P1 alerts        │
+│  • Canary rollout: 10% → 25% → 100% over 24 hours            │
+│  • Auto-rollback if success rate drops > 10%                  │
+│  • Cost budget: $500/month for this agent                      │
+│                                                                 │
+│ ✅ LIVE: SRE Agent responding to real incidents               │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Time Investment: ~2 hours → Production SRE automation team deployed**
+
+(Without platform: weeks of prompt engineering, tool integration, testing)
 
 ### Service Topology
 
@@ -186,6 +416,49 @@ a1-agent-engine/
 └── .claude/
     └── CLAUDE.md              # Project-specific development guidelines
 ```
+
+### Knowledge Graph + Cookbook: The Power Combination
+
+The KG layer and Cookbook system work together to enable rapid domain solution deployment:
+
+| Aspect | Knowledge Graph | Cookbook |
+|--------|-----------------|----------|
+| **What it stores** | Structural domain topology (static) | Solution templates + seed KG (reusable) |
+| **Who builds it** | Domain Architect (via KG-Architect) | Platform team (per vertical) |
+| **Who uses it** | Agents (via kg-query, kg-search tools) | Customers (import → customize → deploy) |
+| **Query patterns** | "What depends on X?" "Which services use Postgres?" | "Deploy SRE solution for our infrastructure" |
+| **Lifecycle** | Evolves with domain (new services, relationships) | Versioned; released quarterly per vertical |
+| **Data partition** | Per-tenant (RLS enforced) | Per-vertical (DevOps, Fintech, Healthcare) |
+| **Complements** | MCP servers (live operational data) | Agent templates (reasoning capability) |
+
+**Example: Incident Response Workflow**
+```
+1. PagerDuty Alert (MCP server) → Agent receives: "api-gateway 5xx"
+                    │
+                    ▼
+2. Agent calls kg-query(api-gateway, depth=2)
+   KG returns: depends-on relationships
+              → [user-service, product-service]
+                    │
+                    ▼
+3. Agent calls Datadog MCP (live)
+   Returns: active alerts on product-service
+                    │
+                    ▼
+4. Agent synthesizes:
+   KG (static topology) + MCP (live data) = Incident intelligence
+   → Posts: "api-gateway failure cascades to downstream.
+             Product-service has 2 active P1 alerts. Root cause likely in postgres."
+```
+
+**Why This Matters:**
+- **Agents reason with full context**: KG provides "what is the structure" + MCP provides "what is happening now"
+- **No external API calls for topology**: KG is in-database; agents get instant responses without rate limits
+- **Domain-specific in minutes**: Cookbook templates eliminate setup friction; architects focus on customization, not configuration
+- **Multi-tenant by design**: Every customer gets isolated KG; RLS ensures data never leaks between tenants
+- **Semantic search**: pgvector enables meaning-based entity discovery ("services with < 99% SLA")
+
+---
 
 ## 🔑 Key Features
 
