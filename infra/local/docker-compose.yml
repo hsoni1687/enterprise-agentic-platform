@@ -337,6 +337,24 @@ services:
       - agent-net
 
   # ------------------------------------
+  # KG Service (port 8093)
+  # ------------------------------------
+  kg-service:
+    build:
+      context: ../../
+      dockerfile: services/kg-service/Dockerfile
+    container_name: kg-service
+    ports:
+      - "8093:8093"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/agentplatform?sslmode=disable
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - agent-net
+
+  # ------------------------------------
   # MCP Registry (port 8090) - MCP Client Hub
   # ------------------------------------
   mcp-registry:
@@ -435,17 +453,20 @@ services:
         NEXT_PUBLIC_TOOL_REGISTRY_URL: http://localhost:8086
         NEXT_PUBLIC_SKILL_CATALOG_URL: http://localhost:8087
         NEXT_PUBLIC_AGENT_REGISTRY_URL: http://localhost:8088
+        NEXT_PUBLIC_KG_SERVICE_URL: http://localhost:8093
         NEXT_PUBLIC_TENANT_ID: default-tenant
     container_name: agent-studio
     ports:
       - "3000:3000"
     environment:
       - API_GATEWAY_URL=http://api-gateway:8080
+      - KG_SERVICE_URL=http://kg-service:8093
     depends_on:
       - api-gateway
       - tool-registry
       - skill-catalog
       - agent-registry
+      - kg-service
     networks:
       - agent-net
 
