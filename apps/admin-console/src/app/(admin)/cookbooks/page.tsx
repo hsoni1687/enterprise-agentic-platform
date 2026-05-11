@@ -46,7 +46,20 @@ export default function CookbooksPage() {
   }
 
   if (error) {
-    return <div className="p-6 text-red-600">Error: {error}</div>;
+    return (
+      <div className="p-6">
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+          <h2 className="font-semibold text-red-900 mb-2">Error Loading Cookbooks</h2>
+          <p className="text-red-700 text-sm mb-3">{error}</p>
+          {error?.includes("Unauthorized") && (
+            <p className="text-red-600 text-sm">
+              Please ensure you are logged in with the correct admin API key.
+              <a href="/login" className="underline ml-2">Go to login →</a>
+            </p>
+          )}
+        </div>
+      </div>
+    );
   }
 
   return (

@@ -414,6 +414,9 @@ services:
       - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/agentplatform?sslmode=disable
       - ADMIN_API_KEY=dev-admin-key
       - TEMPORAL_HOSTPORT=temporal:7233
+      - COOKBOOKS_DIR=/app/infra/platform/cookbooks
+    volumes:
+      - ../../infra/platform/cookbooks:/app/infra/platform/cookbooks:ro
     depends_on:
       migrate:
         condition: service_completed_successfully
