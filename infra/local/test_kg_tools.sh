@@ -62,7 +62,8 @@ GRAPH_RESPONSE=$(make_request POST "$DISPATCHER_URL/api/v1/tools/invoke" '{
     "schema": {"entities": ["Service", "Deployment"], "relationships": ["depends_on"]}
   },
   "agent_id": "test-agent",
-  "mutating": true
+  "mutating": true,
+  "hitl_approval_id": "test-bypass"
 }')
 
 GRAPH_ID=$(echo "$GRAPH_RESPONSE" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
@@ -87,7 +88,8 @@ NODE1_RESPONSE=$(make_request POST "$DISPATCHER_URL/api/v1/tools/invoke" "{
     \"properties\": {\"port\": 8080}
   },
   \"agent_id\": \"test-agent\",
-  \"mutating\": true
+  \"mutating\": true,
+  \"hitl_approval_id\": \"test-bypass\"
 }")
 
 NODE1_ID=$(echo "$NODE1_RESPONSE" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
@@ -112,7 +114,8 @@ NODE2_RESPONSE=$(make_request POST "$DISPATCHER_URL/api/v1/tools/invoke" "{
     \"properties\": {\"port\": 8081}
   },
   \"agent_id\": \"test-agent\",
-  \"mutating\": true
+  \"mutating\": true,
+  \"hitl_approval_id\": \"test-bypass\"
 }")
 
 NODE2_ID=$(echo "$NODE2_RESPONSE" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
@@ -137,7 +140,8 @@ EDGE_RESPONSE=$(make_request POST "$DISPATCHER_URL/api/v1/tools/invoke" "{
     \"weight\": 1.0
   },
   \"agent_id\": \"test-agent\",
-  \"mutating\": true
+  \"mutating\": true,
+  \"hitl_approval_id\": \"test-bypass\"
 }")
 
 EDGE_ID=$(echo "$EDGE_RESPONSE" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)

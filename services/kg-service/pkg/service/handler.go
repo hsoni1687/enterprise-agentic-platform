@@ -1,7 +1,10 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
+	"io"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -24,11 +27,16 @@ func (h *Handler) CreateGraph(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	body, _ := io.ReadAll(r.Body)
+	log.Printf("[CreateGraph] Request body: %s", string(body))
+
 	var g store.Graph
-	if err := json.NewDecoder(r.Body).Decode(&g); err != nil {
+	if err := json.Unmarshal(body, &g); err != nil {
+		log.Printf("[CreateGraph] Decode error: %v", err)
 		http.Error(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
+	log.Printf("[CreateGraph] Decoded graph: %+v", g)
 
 	g.TenantID = r.Header.Get("X-Tenant-ID")
 	if g.TenantID == "" {
@@ -36,13 +44,15 @@ func (h *Handler) CreateGraph(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := r.Context()
+	ctx := context.WithValue(r.Context(), "tenant_id", g.TenantID)
 	result, err := h.store.CreateGraph(ctx, &g)
 	if err != nil {
+		log.Printf("[CreateGraph] Store error: %v", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
+	log.Printf("[CreateGraph] Result: %+v", result)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(result)
 }

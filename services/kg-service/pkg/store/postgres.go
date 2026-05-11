@@ -33,12 +33,13 @@ func (ps *PostgresStore) CreateGraph(ctx context.Context, g *Graph) (*Graph, err
 	schemaJSON, _ := json.Marshal(g.Schema)
 	sharedWithArray := pq.Array(g.SharedWith)
 
+	var schemaBytes []byte
 	err := ps.db.QueryRowContext(ctx,
 		`INSERT INTO kg_graphs (tenant_id, name, domain, description, scope, shared_with, schema)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING id, tenant_id, name, domain, description, scope, shared_with, schema, created_at, updated_at`,
 		tenantID, g.Name, g.Domain, g.Description, g.Scope, sharedWithArray, string(schemaJSON),
-	).Scan(&g.ID, &g.TenantID, &g.Name, &g.Domain, &g.Description, &g.Scope, pq.Array(&g.SharedWith), &g.Schema, &g.CreatedAt, &g.UpdatedAt)
+	).Scan(&g.ID, &g.TenantID, &g.Name, &g.Domain, &g.Description, &g.Scope, pq.Array(&g.SharedWith), &schemaBytes, &g.CreatedAt, &g.UpdatedAt)
 
 	if err != nil {
 		if err.Error() == "pq: duplicate key value violates unique constraint \"kg_graphs_tenant_id_name_key\"" {
@@ -46,6 +47,7 @@ func (ps *PostgresStore) CreateGraph(ctx context.Context, g *Graph) (*Graph, err
 		}
 		return nil, err
 	}
+	json.Unmarshal(schemaBytes, &g.Schema)
 	return g, nil
 }
 
