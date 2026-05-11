@@ -422,9 +422,113 @@ graph TD
 ════════════════════════════════════════════════════════════════════════════════════════════
 ```
 
-- **Control Plane**: The command center for all four tiers. Platform engineers register Tools via the Tool Registry (security review required). Skill Developers compose Tools into Skills in the Skill Catalog. Sub-Agent Developers define capability contracts in the Sub-Agent Registry. No-Code creators wire Sub-Agents into Team Manifests and Agent Manifests. The Lifecycle Manager governs state transitions and deployment strategies across all tiers. The **Manifest Assistant Chat UI** is embedded in the Agent Creation dialog, allowing users to interactively design agent manifests with AI assistance.
+- **Control Plane (Agent Studio - Domain Architects)**: The command center where domain architects work within their tenant workspace. Architects import and customize cookbooks, build knowledge graphs via KG-Architect natural-language chat, create agents from pre-built templates, configure tenant-specific MCP integrations, deploy agents, and monitor executions—all no-code. Behind the scenes: Platform engineers register Tools via the Tool Registry (security review required). Skill Developers compose Tools into Skills in the Skill Catalog. Sub-Agent Developers define capability contracts in the Sub-Agent Registry. The Lifecycle Manager governs state transitions and deployment strategies across all tiers. The **Manifest Assistant Chat UI** is embedded in the Agent Creation dialog for interactive manifest design; **KG-Architect Chat** provides natural-language knowledge graph building.
 
 - **Knowledge Graph Plane**: A dedicated layer for storing and querying structural domain context. The KG Service provides HTTP APIs for CRUD operations on graphs, nodes, and edges with PostgreSQL + pgvector backend. Five system tools (`kg-*`) enable agents to query domain topology. The KG-Architect system agent helps domain architects build knowledge graphs conversationally. Multi-tenant isolation enforced via PostgreSQL RLS policies.
+
+---
+
+## 1.0b Two-User Model: Platform Operators vs Domain Architects
+
+A1 Agent Engine deliberately separates platform administration from domain-solution creation, enabling a clean division of labor:
+
+### Platform Operators (Admin Console - port 3001)
+
+**Who**: Platform engineers, DevOps teams managing the A1 platform itself
+
+**Responsibilities**:
+1. **Publish Cookbooks** — Upload domain-specific cookbook bundles to `infra/platform/cookbooks/<vertical>/`
+   - DevOps/SRE cookbook (agent templates, skill definitions, KG schema, MCP recommendations)
+   - Fintech cookbook, Healthcare cookbook, etc.
+   - Version and release cookbooks
+
+2. **Manage System Agents & Skills**
+   - Lifecycle transitions for Manifest Assistant, KG-Architect
+   - Publish system-wide skills to skill catalog
+   - Register system tools with security review
+
+3. **Configure LLM Providers**
+   - Anthropic API endpoint + keys
+   - OpenAI endpoint + keys
+   - Local vLLM/Ollama endpoints
+   - Per-tenant model access allowlists
+
+4. **Register Global MCP Servers**
+   - PagerDuty instance endpoint + credentials
+   - Datadog endpoint + API keys
+   - GitHub endpoint + PAT
+   - Custom enterprise API endpoints
+   - (Domain architects create tenant-scoped MCP connections)
+
+5. **Tenant & Quota Management**
+   - Create/suspend/delete tenants
+   - Set monthly token budgets
+   - Configure per-tenant model access restrictions
+   - View cross-tenant cost aggregations and SLO metrics
+
+6. **Governance & Audit**
+   - Immutable audit logs of all platform actions
+   - Cost attribution per tenant/agent/skill
+   - Cross-tenant execution traces
+   - Compliance reports
+
+**Access**: Admin Console (separate from Agent Studio) via bearer token authentication
+
+---
+
+### Domain Architects (Agent Studio - port 3000, within Tenant Workspace)
+
+**Who**: DevOps leads, SRE managers, Fintech engineers, Healthcare IT teams using the platform to build domain-specific agentic solutions
+
+**Responsibilities** (All within their tenant):
+1. **Import & Customize Cookbooks** (Agent Studio → Cookbooks)
+   - Browse published cookbooks (DevOps/SRE, Fintech, Healthcare, etc.)
+   - One-click import into their tenant
+   - Platform auto-creates tenant-scoped agent templates, skills, KG schema
+
+2. **Build Knowledge Graphs** (Agent Studio → KG-Architect Chat)
+   - Natural language: "Describe your infrastructure, services, relationships"
+   - KG-Architect system agent iteratively builds graph via kg-* tools
+   - Semantic search on domain entities (pgvector)
+   - Iterate and refine in conversational chat
+
+3. **Configure Tenant MCP Integrations** (Agent Studio → Settings → External Integrations)
+   - Register their PagerDuty instance (token issued per tenant)
+   - Integrate their Datadog metrics (API key scoped to tenant)
+   - Connect their GitHub/Jira instances
+   - All connections tenant-isolated; no cross-tenant data leakage
+
+4. **Create & Deploy Agents** (Agent Studio → Create Agent)
+   - Select cookbook template (e.g., "SRE Incident Triager")
+   - Pre-populated with: system prompt, skills, KG context, MCP integrations
+   - Customize and fine-tune
+   - Deploy to canary/production with auto-rollback
+
+5. **Test & Monitor** (Agent Studio → Simulator & Executions)
+   - Agent Simulator for testing before production
+   - Live execution traces showing KG queries and MCP calls
+   - Cost monitoring per agent
+   - Iterate on performance
+
+6. **Configure Automation** (Agent Studio → Agent Settings)
+   - Webhook triggers (PagerDuty alert → invoke agent)
+   - Scheduled execution (periodic health checks)
+   - Budget alerts and soft/hard quota limits
+
+**Access**: Agent Studio within their tenant context; never access Admin Console
+
+---
+
+### Why This Separation Matters
+
+| Concern | Platform Operator | Domain Architect |
+|---------|-------------------|------------------|
+| **Scope** | Cross-tenant system resources | Single-tenant domain solution |
+| **Access** | Admin Console (bearer token) | Agent Studio (enterprise SSO) |
+| **Data Visibility** | All tenants (no RLS) | Own tenant only (RLS enforced) |
+| **Responsibilities** | Platform uptime, cookbook publishing, LLM configuration | Domain KG, agent customization, tenant MCP setup |
+| **Skill Level** | Platform/DevOps engineers | Domain experts (no coding required) |
+| **Iteration Speed** | Quarterly cookbook releases | Minutes (KG-Architect, template customization) |
 
 ---
 
@@ -723,7 +827,7 @@ sequenceDiagram
 
 ## 1.3 Admin Plane Architecture
 
-- **Admin Plane (Platform Governance)**: A dedicated governance layer for platform operators. The **Admin Console UI** (Next.js frontend on port 3001) provides graphical administration. The **Admin API Gateway** (Go service on port 8089) enforces bearer-token authentication and aggregates cross-tenant data without tenant filtering. Responsibilities: tenant CRUD (creation, quotas, status), LLM provider configuration (proxy URL, API keys, per-tenant model allowlists), system agent management (lifecycle transitions for Manifest Assistant and other platform agents), cost attribution and billing (per-tenant/agent/skill aggregation from `cost_events`), audit log queries (immutable records of all lifecycle events across resources), and cross-tenant execution visibility (no tenant isolation for admin queries). The Admin Plane also manages Knowledge Graphs: viewing aggregate KG statistics, inspecting tenant graphs, managing domain ontologies. The Admin Plane integrates with Tenant Store, Cost Store, OTel Data Plane, and KG Service for governance data.
+- **Admin Plane (Platform Operators - Admin Console)**: A dedicated governance layer for platform administrators, **NOT for domain architects**. Domain architects work exclusively in Agent Studio (Control Plane) within their tenant. The **Admin Console UI** (Next.js frontend on port 3001) is accessible only to platform operators with admin credentials. The **Admin API Gateway** (Go service on port 8089) enforces bearer-token authentication and aggregates cross-tenant data without tenant filtering. Platform operator responsibilities: (1) **Cookbook Management** — publish and version domain cookbooks (DevOps/SRE, Fintech, Healthcare); (2) **System Resources** — manage platform system agents (Manifest Assistant, KG-Architect), system skills, system tools; (3) **Global Configuration** — LLM provider setup (proxy URLs, API keys), global MCP endpoint registration; (4) **Tenant Management** — CRUD, quotas, status, model access allowlists; (5) **Governance** — cost attribution and billing (per-tenant/agent/skill), audit log queries, cross-tenant execution visibility, KG statistics. The Admin Plane integrates with Tenant Store, Cost Store, OTel Data Plane, and KG Service for governance data.
 - **Orchestration Plane (The Brain)**: The Agent API Gateway validates inbound requests (HMAC on webhooks) and routes to the Temporal Workflow Engine. For single agents, the engine dispatches to an Agent Worker. For teams, it dispatches to the Team Orchestrator, which fans out to the Sub-Agent Dispatcher, launching parallel Agent Workers per sub-agent. HITL signals propagate team-wide, suspending all parallel branches. A **System Agent Worker** pool runs on the isolated `platform-system-agent-queue` for platform system agents (e.g., Manifest Assistant), keeping platform automation separate from user workflows.
 - **Execution Plane (The Hands)**: The Skill Dispatcher receives slash-command-style invocations, validates arguments, fires pre/post hooks, and routes tool chains through the Tool Router. The Tool Router dispatches to Ephemeral Sandboxes (arbitrary code) or Internal Go Microservices (typed platform APIs).
 - **Data Plane**: Redis for short-term session context; pgvector (tenant-partitioned) for long-term semantic memory; a Lifecycle State Store for immutable audit trails of all four-tier transitions; a Cost Attribution Store (TimescaleDB) for per-tenant/agent/skill cost metering; OTel collectors for unified observability. The Tenant Settings Store (`tenant_settings` table) is managed by the Admin Plane for storing tenant metadata, quotas, and status.

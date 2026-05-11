@@ -174,142 +174,175 @@ The **Cookbook System** enables rapid deployment of domain-specific agentic solu
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-**Cookbook Lifecycle:**
+**Cookbook Lifecycle: Two-Actor Model**
 
-1. **Import**: Admin Console → Cookbooks → Select vertical (e.g., DevOps/SRE)
-   - Wizard guides configuration: company name, environment names, team structure
-   - Platform creates agent templates, skill definitions, KG schema
+**Platform Administrator (Admin Console):**
+1. **Publish Cookbook**: Upload DevOps/SRE, Fintech, Healthcare cookbook bundles
+   - Platform team defines agent templates, skill bundles, KG schemas, MCP recommendations
+   - Cookbooks versioned and marked "ready for use"
+   - Stored in `infra/platform/cookbooks/<vertical>/`
 
-2. **Customize**: Domain architect refines via KG-Architect agent
-   - Natural language: "Our 12 microservices depend on shared Redis and Postgres"
-   - KG-Architect builds graph: entities, relationships, properties
-   - Architect can review and iteratively refine
+2. **Manage Global Resources**: System agents, skills, tools, and MCP endpoints
+   - Configure LLM providers, secrets, audit policies
+   - Register recommended MCP servers (PagerDuty, Datadog, etc.)
+   - Tenant management and quotas
 
-3. **Connect**: Admin Console → MCP Servers → Register external data sources
-   - PagerDuty for incident alerts
-   - Datadog for metrics and logs
-   - GitHub for code deployments
-   - (Token-gated, per-tenant isolation)
+---
 
-4. **Deploy**: Create agents from cookbook templates
-   - Pre-populated system prompt with domain context
-   - Skills pre-selected based on vertical
-   - KG + MCP servers wired automatically
-   - No-code deployment in Agent Studio
+**Domain Architect (Agent Studio - No-Code):**
+All within their **tenant workspace**:
 
-5. **Operate**: Agents reason over KG + live MCP data
-   - "api-gateway 5xx" → KG query for dependencies → MCP call for active alerts
-   - Synthesized context + recommendations auto-posted to Slack
+1. **Browse & Import Cookbook** (Agent Studio → Cookbooks)
+   - Select published cookbook (e.g., "DevOps/SRE v1.2.0")
+   - One-click import into their tenant
+   - Platform creates: agent templates, skills, KG schema (tenant-isolated)
+
+2. **Build Domain KG** (Agent Studio → KG-Architect Chat)
+   - Natural language: "We have 12 microservices. api-gateway depends on user-service and product-service. They share a Postgres cluster."
+   - KG-Architect system agent iteratively calls kg-* tools to build graph
+   - Architect reviews, refines, and approves
+   - Result: Production-ready KG in their tenant
+
+3. **Configure Tenant MCPs** (Agent Studio → Settings → External Integrations)
+   - Register PagerDuty, Datadog, GitHub instances for their infrastructure
+   - Token-gated access scoped to their tenant
+   - MCP tools auto-discovered and cached
+
+4. **Create Agents from Templates** (Agent Studio → Create Agent → From Cookbook)
+   - Select cookbook template (e.g., "SRE Incident Triager")
+   - Pre-populated with:
+     - System prompt (customizable)
+     - Skills (from cookbook, can modify)
+     - KG context (their tenant's graph)
+     - MCP integrations (their tenant's connections)
+   - Deploy to canary/production
+
+5. **Operate & Monitor** (Agent Studio → Executions)
+   - Agents query KG + MCP in real-time
+   - Monitor execution traces, costs, performance
+   - Iterate on system prompt and skill composition
+   - Configure webhooks/schedules for automation
 
 ### End-to-End: Domain Architect Deploys a DevOps Agentic Solution
 
-**Example Workflow (start to finish in 2 hours):**
+**Example Workflow (start to finish in 2 hours):** All within Agent Studio (Architect's Tenant Workspace)
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│ Step 1: Import DevOps/SRE Cookbook (10 min)                    │
+│ Step 1: Import DevOps/SRE Cookbook (5 min)                     │
 ├─────────────────────────────────────────────────────────────────┤
-│ Admin imports "DevOps/SRE" cookbook from Admin Console          │
-│ Wizard prompts:                                                 │
-│  • Company: "TechCorp"                                          │
-│  • Environments: prod, staging, dev                             │
-│  • Services: api-gateway, user-service, order-service           │
+│ LOCATION: Agent Studio → Cookbooks                             │
 │                                                                 │
-│ Platform creates:                                               │
+│ Architect selects "DevOps/SRE v1.2.0" cookbook                │
+│ One-click import → Platform creates in their tenant:           │
 │  ✓ 3 agent templates (SRE Triager, On-Call Responder, etc.)   │
 │  ✓ 5 skill bundles (Incident Triage, K8s Remediation, etc.)  │
 │  ✓ KG schema (Service, Deployment, Environment entities)       │
-│  ✓ Starter KG with common entities                            │
+│  ✓ Starter KG with dev/staging/prod environments              │
+│                                                                 │
+│ All resources tenant-isolated (RLS enforced in DB)             │
 └─────────────────────────────────────────────────────────────────┘
         │
         ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │ Step 2: Build Domain KG via KG-Architect (30 min)              │
 ├─────────────────────────────────────────────────────────────────┤
-│ Architect: "We have 3 services. api-gateway depends on both     │
-│            user-service and product-service. They share a       │
-│            Postgres cluster. Each service has a runbook."       │
+│ LOCATION: Agent Studio → KG-Architect Chat                     │
 │                                                                 │
-│ KG-Architect calls kg-* tools:                                 │
-│  • kg-create-graph (DevOps graph)                              │
+│ Architect: "We have 3 services. api-gateway depends on both    │
+│            user-service and product-service. They share        │
+│            Postgres. Each has a runbook."                      │
+│                                                                 │
+│ KG-Architect system agent calls kg-* tools:                    │
+│  • kg-create-graph (DevOps-TechCorp)                           │
 │  • kg-add-node × 3 (services)                                  │
 │  • kg-add-node × 1 (shared postgres)                           │
 │  • kg-add-edge × 3 (depends_on, uses_database)                │
-│  • kg-query (verify: api-gateway → [user-svc, product-svc])  │
+│  • kg-query (verify structure)                                 │
 │                                                                 │
-│ Result: Production-ready KG with 4 nodes, 3 edges             │
+│ Result: Tenant's KG ready with 4 nodes, 3 edges              │
+│ (Architect can refine iteratively in chat)                     │
 └─────────────────────────────────────────────────────────────────┘
         │
         ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│ Step 3: Register External Data Sources (15 min)                │
+│ Step 3: Register Tenant MCP Integrations (10 min)              │
 ├─────────────────────────────────────────────────────────────────┤
-│ Admin Console → MCP Servers:                                    │
-│  • PagerDuty: prod-pagerduty.example.com (token issued)        │
-│  • Datadog: metrics.datadoghq.com (token issued)               │
-│  • GitHub: github.com (PAT registered)                         │
+│ LOCATION: Agent Studio → Settings → External Integrations      │
 │                                                                 │
-│ MCP Registry auto-discovers tools from each server             │
-│ Tools cached; no repeated discovery calls                       │
+│ Architect configures MCP connections:                          │
+│  • PagerDuty: prod-pagerduty.example.com (token)              │
+│  • Datadog: metrics.datadoghq.com (API key)                   │
+│  • GitHub: github.com (PAT)                                    │
+│                                                                 │
+│ All connections are tenant-scoped                              │
+│ MCP Registry auto-discovers available tools                    │
 └─────────────────────────────────────────────────────────────────┘
         │
         ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│ Step 4: Create SRE Agent from Template (15 min)                │
+│ Step 4: Create SRE Agent from Template (10 min)                │
 ├─────────────────────────────────────────────────────────────────┤
-│ Agent Studio → Create Agent → Select "SRE Triager" template    │
+│ LOCATION: Agent Studio → Create Agent → From Cookbook          │
 │                                                                 │
-│ Pre-populated:                                                  │
+│ Select template: "SRE Incident Triager"                        │
+│ Pre-populated automatically:                                    │
 │  • System prompt: "You are an autonomous SRE agent..."         │
 │  • Skills: Incident Triage, K8s Remediation, Log Analysis      │
-│  • Tools: kg-query, kg-search + PagerDuty + Datadog MCPs      │
-│  • KG: DevOps graph (TechCorp's 4 nodes, 3 edges)             │
-│  • Memory: Redis session + pgvector semantic memory            │
+│  • Tools: kg-query, kg-search (their tenant's KG)             │
+│  • MCPs: PagerDuty, Datadog, GitHub (their credentials)       │
+│  • Memory: Redis session + pgvector (tenant-isolated)          │
 │                                                                 │
-│ Architect fine-tunes system prompt, deploys to canary (10%)    │
+│ Architect fine-tunes system prompt                             │
+│ Deploys to canary (10%)                                        │
 └─────────────────────────────────────────────────────────────────┘
         │
         ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│ Step 5: Test Agent with Real Incident (20 min)                │
+│ Step 5: Test Agent in Simulator (20 min)                       │
 ├─────────────────────────────────────────────────────────────────┤
-│ Test in Agent Studio:                                           │
-│  "api-gateway returning 5xx errors"                             │
+│ LOCATION: Agent Studio → Agent Simulator                       │
 │                                                                 │
-│ Agent executes:                                                │
-│  1. kg-query(start=api-gateway, depth=2)                       │
+│ Test message: "api-gateway returning 5xx errors"               │
+│                                                                 │
+│ Agent flow:                                                     │
+│  1. kg-query(api-gateway, depth=2)                             │
 │     → Returns: [user-service, product-service, postgres]       │
 │                                                                 │
-│  2. Call PagerDuty MCP: get_active_alerts(services=[...])     │
+│  2. MCP call: PagerDuty.get_active_alerts(services=[...])     │
 │     → Returns: 2 P1 alerts on product-service                 │
 │                                                                 │
-│  3. Call Datadog MCP: query_metrics(services=[...])           │
+│  3. MCP call: Datadog.query_metrics(services=[...])           │
 │     → Returns: postgres conn pool at 99%                       │
 │                                                                 │
 │  4. LLM synthesis:                                              │
-│     "api-gateway failure cascades to downstream services.      │
-│      Root cause: postgres connection pool saturation on        │
-│      product-service. Recommend scaling postgres or            │
-│      investigating long-running queries."                      │
+│     "api-gateway failure cascades to downstream. Root cause:   │
+│      postgres connection pool saturation. Recommend scaling    │
+│      postgres or investigating long-running queries."          │
 │                                                                 │
-│ Result: Agent posts analysis + remediation steps to Slack      │
+│ Architect reviews trace, iterates on system prompt             │
 └─────────────────────────────────────────────────────────────────┘
         │
         ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │ Step 6: Promote to Production (5 min)                          │
 ├─────────────────────────────────────────────────────────────────┤
-│ Architect configures:                                           │
-│  • PagerDuty webhook → Trigger this agent on P1 alerts        │
-│  • Canary rollout: 10% → 25% → 100% over 24 hours            │
+│ LOCATION: Agent Studio → Agent Settings                        │
+│                                                                 │
+│ Architect configures:                                          │
+│  • Webhook: PagerDuty P1 alerts → Trigger agent               │
+│  • Rollout: Canary 10% → 25% → 100% (24 hours)               │
 │  • Auto-rollback if success rate drops > 10%                  │
 │  • Cost budget: $500/month for this agent                      │
 │                                                                 │
 │ ✅ LIVE: SRE Agent responding to real incidents               │
+│ (No Admin Console access needed by architect)                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 **Time Investment: ~2 hours → Production SRE automation team deployed**
+
+**All within Agent Studio (no Admin Console required)**
 
 (Without platform: weeks of prompt engineering, tool integration, testing)
 
