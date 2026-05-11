@@ -115,3 +115,39 @@ export interface ChatEvent {
   approval_id?: string;
   reason?: string;
 }
+
+export interface KGGraph {
+  id: string;
+  tenant_id: string;
+  name: string;
+  domain?: string;
+  description?: string;
+  scope: string;
+  schema?: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KGNode {
+  id: string;
+  graph_id: string;
+  tenant_id: string;
+  node_type: string;
+  label: string;
+  properties?: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KGEdge {
+  id: string;
+  graph_id: string;
+  tenant_id: string;
+  from_node_id: string;
+  to_node_id: string;
+  relationship_type: string;
+  properties?: Record<string, unknown>;
+  weight?: number;
+  created_at: string;
+  updated_at: string;
+}

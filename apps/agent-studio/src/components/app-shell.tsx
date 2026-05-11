@@ -11,6 +11,7 @@ import {
   Settings,
   ChevronRight,
   CheckCircle,
+  Network,
 } from "lucide-react";
 import {
   Sidebar,
@@ -32,6 +33,7 @@ const navItems = [
   { href: "/tools", label: "Tools", icon: Wrench },
   { href: "/skills", label: "Skills", icon: Zap },
   { href: "/agents", label: "Agents", icon: Bot },
+  { href: "/knowledge-graphs", label: "Knowledge Graphs", icon: Network },
   { href: "/chat", label: "Chat", icon: MessageSquare },
   { href: "/approvals", label: "Approvals", icon: CheckCircle },
   { href: "/logs", label: "Logs", icon: ScrollText },

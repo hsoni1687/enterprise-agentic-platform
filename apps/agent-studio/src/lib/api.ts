@@ -24,6 +24,8 @@ const MCP_REGISTRY =
 const ADMIN_API =
   process.env.NEXT_PUBLIC_ADMIN_API_URL ?? "http://localhost:8089";
 const ADMIN_KEY = process.env.NEXT_PUBLIC_ADMIN_API_KEY ?? "dev-admin-key";
+const KG_SERVICE =
+  process.env.NEXT_PUBLIC_KG_SERVICE_URL ?? "http://localhost:8093";
 
 async function req<T>(base: string, path: string, init?: RequestInit): Promise<T> {
   const url = `${base}${path}`;
@@ -239,6 +241,19 @@ export const systemAgentsApi = {
         tenant_id: "platform-system",
       }),
     }),
+  kgArchitectChat: (message: string, graphId?: string): Promise<Response> =>
+    fetch(`${API_GATEWAY}/api/v1/agents/kg-architect/chat`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": "platform-system",
+      },
+      body: JSON.stringify({
+        message,
+        tenant_id: "platform-system",
+        context: graphId ? { graph_id: graphId } : undefined,
+      }),
+    }),
 };
 
 // Admin API
@@ -271,4 +286,41 @@ export const mcpApi = {
       servers: import("./types").MCPServer[];
       count: number;
     }>(MCP_REGISTRY, "/api/v1/mcp/servers"),
+};
+
+// Knowledge Graph API
+export const kgApi = {
+  listGraphs: () =>
+    req<import("./types").KGGraph[]>(KG_SERVICE, "/graphs/list"),
+  getGraph: (id: string) =>
+    req<import("./types").KGGraph>(KG_SERVICE, `/graphs/get?id=${id}`),
+  createGraph: (data: Partial<import("./types").KGGraph>) =>
+    req<import("./types").KGGraph>(KG_SERVICE, "/graphs/create", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  deleteGraph: (id: string) =>
+    req<void>(KG_SERVICE, `/graphs/delete?id=${id}`, { method: "DELETE" }),
+  listNodes: (graphId: string) =>
+    req<import("./types").KGNode[]>(KG_SERVICE, `/nodes/list?graph_id=${graphId}`),
+  listEdges: (graphId: string) =>
+    req<import("./types").KGEdge[]>(KG_SERVICE, `/edges/list?graph_id=${graphId}`),
+  queryGraph: (graphId: string, startNodeId: string, maxDepth = 2) =>
+    req<{ nodes: import("./types").KGNode[]; edges: import("./types").KGEdge[] }>(
+      KG_SERVICE,
+      "/query",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          graph_id: graphId,
+          start_node_id: startNodeId,
+          max_depth: maxDepth,
+        }),
+      }
+    ),
+  searchNodes: (graphId: string, nodeType: string, limit = 100) =>
+    req<import("./types").KGNode[]>(
+      KG_SERVICE,
+      `/search/nodes?graph_id=${graphId}&node_type=${nodeType}&limit=${limit}`
+    ),
 };
