@@ -112,9 +112,11 @@ services:
       - WORKFLOW_INITIATOR_URL=http://workflow-initiator:8081
       - BASH_EXECUTOR_URL=http://bash-executor:8092
       - SANDBOX_MANAGER_URL=http://sandbox-manager:8082
+      - KG_SERVICE_URL=http://kg-service:8093
     depends_on:
       - bash-executor
       - sandbox-manager
+      - kg-service
     networks:
       - agent-net
 

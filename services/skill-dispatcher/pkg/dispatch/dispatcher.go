@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"time"
@@ -329,10 +330,16 @@ func NewToolExecutorRouter() *ToolExecutorRouter {
 		sandboxManagerURL = "http://localhost:8082"
 	}
 
+	kgServiceURL := os.Getenv("KG_SERVICE_URL")
+	if kgServiceURL == "" {
+		kgServiceURL = "http://localhost:8093"
+	}
+
 	return &ToolExecutorRouter{
 		client: &http.Client{Timeout: 5 * time.Minute},
 		routes: map[string]string{
-			"bash": bashExecutorURL,
+			"bash":  bashExecutorURL,
+			"kg":    kgServiceURL,
 		},
 		defaultURL: sandboxManagerURL,
 	}
@@ -342,6 +349,11 @@ func (r *ToolExecutorRouter) Route(ctx context.Context, tool models.ToolRef, arg
 	// Route bash tool to bash-executor
 	if tool.Name == "bash" {
 		return r.executeBash(ctx, tool, args)
+	}
+
+	// Route kg-* tools to kg-service
+	if len(tool.Name) > 3 && tool.Name[:3] == "kg-" {
+		return r.executeKG(ctx, tool, args)
 	}
 
 	// Route other tools to sandbox-manager
@@ -421,6 +433,65 @@ func (r *ToolExecutorRouter) executeSandbox(ctx context.Context, tool models.Too
 	var result map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("decode tool response: %w", err)
+	}
+	return result, nil
+}
+
+func (r *ToolExecutorRouter) executeKG(ctx context.Context, tool models.ToolRef, args map[string]any) (any, error) {
+	kgServiceURL := r.routes["kg"]
+
+	// Map KG tool names to KG service endpoints
+	var endpoint string
+	switch tool.Name {
+	case "kg-create-graph":
+		endpoint = "/graphs/create"
+	case "kg-add-node":
+		endpoint = "/nodes/create"
+	case "kg-add-edge":
+		endpoint = "/edges/create"
+	case "kg-query":
+		endpoint = "/query"
+	case "kg-search":
+		endpoint = "/search/nodes"
+	default:
+		return nil, fmt.Errorf("unknown kg tool: %s", tool.Name)
+	}
+
+	body, _ := json.Marshal(args)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, kgServiceURL+endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("build kg request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	// KG service requires X-Tenant-ID header, extracted from context
+	if tenantID, ok := ctx.Value("tenant_id").(string); ok {
+		req.Header.Set("X-Tenant-ID", tenantID)
+	}
+
+	resp, err := r.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("execute kg tool %s: %w", tool.Name, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		var errMsg string
+		body, _ := io.ReadAll(resp.Body)
+		if len(body) > 0 {
+			errMsg = string(body)
+		}
+		return nil, fmt.Errorf("kg tool %s returned %d: %s", tool.Name, resp.StatusCode, errMsg)
+	}
+
+	// For operations that return no content, return success
+	if resp.StatusCode == http.StatusNoContent {
+		return map[string]any{"status": "success"}, nil
+	}
+
+	var result any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode kg response: %w", err)
 	}
 	return result, nil
 }

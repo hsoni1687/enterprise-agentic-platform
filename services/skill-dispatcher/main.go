@@ -37,6 +37,13 @@ func main() {
 		"bash":                   true, // Shell commands (mutating)
 		"http-request":           true, // HTTP requests (can be mutating)
 		"code-executor":          true, // Code execution (can be mutating)
+		// KG tools (mutating)
+		"kg-create-graph":        true, // Creates KG (mutating)
+		"kg-add-node":            true, // Modifies KG (mutating)
+		"kg-add-edge":            true, // Modifies KG (mutating)
+		// KG tools (read-only)
+		"kg-query":               false, // Read-only query
+		"kg-search":              false, // Read-only search
 	}
 
 	engine.Register(hooks.HookRegistration{

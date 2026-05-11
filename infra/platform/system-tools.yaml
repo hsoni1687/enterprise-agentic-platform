@@ -164,3 +164,170 @@ tools:
       auth_level: mutating
       sandbox_required: true
       registered_by: platform-admin
+
+  # Knowledge Graph Tools
+  - id: system-tool-kg-create-graph
+    name: kg-create-graph
+    version: "1.0.0"
+    description: Create a new knowledge graph for a domain (e.g., DevOps, Fintech, Healthcare)
+    input_schema:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Unique name for the knowledge graph within the tenant
+        domain:
+          type: string
+          description: Domain vertical (e.g., devops, fintech, healthcare, supply-chain)
+        description:
+          type: string
+          description: Human-readable description of the graph's purpose
+        scope:
+          type: string
+          enum: [private, shared, global]
+          description: Visibility scope (default private)
+          default: private
+        schema:
+          type: object
+          description: JSON schema defining entity types and relationship types
+          additionalProperties: true
+      required:
+        - name
+        - domain
+    _metadata:
+      auth_level: mutating
+      sandbox_required: false
+      registered_by: platform-admin
+
+  - id: system-tool-kg-add-node
+    name: kg-add-node
+    version: "1.0.0"
+    description: Add a node (entity) to a knowledge graph
+    input_schema:
+      type: object
+      properties:
+        graph_id:
+          type: string
+          description: UUID of the knowledge graph
+        node_type:
+          type: string
+          description: Type of entity (e.g., Service, Deployment, Alert, Team)
+        label:
+          type: string
+          description: Human-readable label/name for the node
+        properties:
+          type: object
+          description: Custom properties as key-value pairs
+          additionalProperties: true
+        embedding:
+          type: array
+          description: Optional semantic embedding (1536-dimensional vector)
+          items:
+            type: number
+      required:
+        - graph_id
+        - node_type
+        - label
+    _metadata:
+      auth_level: mutating
+      sandbox_required: false
+      registered_by: platform-admin
+
+  - id: system-tool-kg-add-edge
+    name: kg-add-edge
+    version: "1.0.0"
+    description: Add an edge (relationship) between two nodes in a knowledge graph
+    input_schema:
+      type: object
+      properties:
+        graph_id:
+          type: string
+          description: UUID of the knowledge graph
+        from_node_id:
+          type: string
+          description: UUID of the source node
+        to_node_id:
+          type: string
+          description: UUID of the target node
+        relationship_type:
+          type: string
+          description: Type of relationship (e.g., depends_on, triggers, escalates_to, owned_by)
+        properties:
+          type: object
+          description: Custom properties for the edge
+          additionalProperties: true
+        weight:
+          type: number
+          description: Optional weight for traversal (default 1.0)
+          default: 1.0
+      required:
+        - graph_id
+        - from_node_id
+        - to_node_id
+        - relationship_type
+    _metadata:
+      auth_level: mutating
+      sandbox_required: false
+      registered_by: platform-admin
+
+  - id: system-tool-kg-query
+    name: kg-query
+    version: "1.0.0"
+    description: Query a knowledge graph to find related nodes and edges via BFS traversal
+    input_schema:
+      type: object
+      properties:
+        graph_id:
+          type: string
+          description: UUID of the knowledge graph
+        start_node_id:
+          type: string
+          description: UUID of the starting node for traversal
+        max_depth:
+          type: integer
+          description: Maximum traversal depth (default 3, max 10)
+          default: 3
+          minimum: 1
+          maximum: 10
+      required:
+        - graph_id
+        - start_node_id
+    _metadata:
+      auth_level: read
+      sandbox_required: false
+      registered_by: platform-admin
+
+  - id: system-tool-kg-search
+    name: kg-search
+    version: "1.0.0"
+    description: Search knowledge graph nodes by type or semantic similarity
+    input_schema:
+      type: object
+      properties:
+        graph_id:
+          type: string
+          description: UUID of the knowledge graph
+        search_type:
+          type: string
+          enum: [by_type, by_embedding]
+          description: Search method (by_type or by_embedding)
+        node_type:
+          type: string
+          description: Entity type to filter by (required for by_type search)
+        embedding:
+          type: array
+          description: Semantic embedding vector (required for by_embedding search)
+          items:
+            type: number
+        limit:
+          type: integer
+          description: Maximum number of results (default 100)
+          default: 100
+          maximum: 1000
+      required:
+        - graph_id
+        - search_type
+    _metadata:
+      auth_level: read
+      sandbox_required: false
+      registered_by: platform-admin
