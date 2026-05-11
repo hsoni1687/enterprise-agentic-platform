@@ -1,4 +1,5 @@
 const API_BASE_URL = process.env.NEXT_PUBLIC_ADMIN_API_URL || "http://localhost:8089";
+const KG_SERVICE = process.env.NEXT_PUBLIC_KG_SERVICE_URL || "http://localhost:8093";
 
 function getAuthHeader() {
   if (typeof window === "undefined") return {};
@@ -308,6 +309,85 @@ export const adminApi = {
   }): Promise<any> {
     const response = await request("POST", `/api/v1/admin/system-skills/${id}/transition`, data);
     if (!response.ok) throw new Error("Failed to transition system skill");
+    return response.json();
+  },
+
+  // Knowledge Graph API (calls KG Service directly)
+  async listAllGraphs(): Promise<any> {
+    // For admin view: list graphs across all known tenants
+    try {
+      const tenantsRes = await this.listTenants();
+      const tenants = tenantsRes.tenants || [];
+
+      const allGraphs: any[] = [];
+      for (const tenant of tenants) {
+        try {
+          const response = await fetch(`${KG_SERVICE}/graphs/list`, {
+            method: "GET",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Tenant-ID": tenant.tenant_id,
+            },
+          });
+          if (response.ok) {
+            const graphs = await response.json();
+            allGraphs.push(...graphs);
+          }
+        } catch (e) {
+          console.warn(`Failed to fetch graphs for tenant ${tenant.tenant_id}:`, e);
+        }
+      }
+      return allGraphs;
+    } catch (e) {
+      throw new Error("Failed to fetch knowledge graphs");
+    }
+  },
+
+  async getGraph(graphId: string, tenantId: string): Promise<any> {
+    const response = await fetch(`${KG_SERVICE}/graphs/get?id=${graphId}`, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": tenantId,
+      },
+    });
+    if (!response.ok) throw new Error("Failed to fetch graph");
+    return response.json();
+  },
+
+  async getGraphNodes(graphId: string, tenantId: string): Promise<any> {
+    const response = await fetch(`${KG_SERVICE}/nodes/list?graph_id=${graphId}`, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": tenantId,
+      },
+    });
+    if (!response.ok) throw new Error("Failed to fetch nodes");
+    return response.json();
+  },
+
+  async getGraphEdges(graphId: string, tenantId: string): Promise<any> {
+    const response = await fetch(`${KG_SERVICE}/edges/list?graph_id=${graphId}`, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": tenantId,
+      },
+    });
+    if (!response.ok) throw new Error("Failed to fetch edges");
+    return response.json();
+  },
+
+  async deleteGraph(graphId: string, tenantId: string): Promise<any> {
+    const response = await fetch(`${KG_SERVICE}/graphs/delete?id=${graphId}`, {
+      method: "DELETE",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Tenant-ID": tenantId,
+      },
+    });
+    if (!response.ok) throw new Error("Failed to delete graph");
     return response.json();
   },
 };
