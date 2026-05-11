@@ -40,10 +40,22 @@ func main() {
 	}
 	defer temporalClient.Close()
 
+	agentRegistryURL := os.Getenv("AGENT_REGISTRY_URL")
+	if agentRegistryURL == "" {
+		agentRegistryURL = "http://localhost:8088"
+	}
+
+	kgServiceURL := os.Getenv("KG_SERVICE_URL")
+	if kgServiceURL == "" {
+		kgServiceURL = "http://localhost:8093"
+	}
+
 	handler := &service.AdminHandler{
-		DB:           dbPool,
-		AdminKey:     adminAPIKey,
-		TemporalClient: temporalClient,
+		DB:               dbPool,
+		AdminKey:         adminAPIKey,
+		TemporalClient:   temporalClient,
+		AgentRegistryURL: agentRegistryURL,
+		KGServiceURL:     kgServiceURL,
 	}
 
 	mux := http.NewServeMux()

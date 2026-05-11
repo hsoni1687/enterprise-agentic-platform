@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -20,9 +21,11 @@ import (
 
 // AdminHandler handles admin API requests.
 type AdminHandler struct {
-	DB             *pgxpool.Pool
-	AdminKey       string
-	TemporalClient client.Client
+	DB               *pgxpool.Pool
+	AdminKey         string
+	TemporalClient   client.Client
+	AgentRegistryURL string
+	KGServiceURL     string
 }
 
 // getPricingModel retrieves the pricing model from platform_config.
@@ -1630,6 +1633,42 @@ func (h *AdminHandler) HandleListCookbooks(w http.ResponseWriter, r *http.Reques
 	})
 }
 
+// agentYAML represents an agent template in a cookbook
+type agentYAML struct {
+	Name           string `yaml:"name"`
+	Version        string `yaml:"version"`
+	SystemPrompt   string `yaml:"system_prompt"`
+	Model          string `yaml:"model"`
+	MaxIterations  int    `yaml:"max_iterations"`
+	MemoryBudgetMB int    `yaml:"memory_budget_mb"`
+	Tools []struct {
+		Name    string `yaml:"name"`
+		Version string `yaml:"version"`
+	} `yaml:"tools"`
+	Skills []struct {
+		Name    string `yaml:"name"`
+		Version string `yaml:"version"`
+	} `yaml:"skills"`
+	MCPServers []string `yaml:"mcp_servers"`
+}
+
+// seedKGYAML represents seed data for a knowledge graph
+type seedKGYAML struct {
+	Nodes []struct {
+		ID         string                 `yaml:"id"`
+		Type       string                 `yaml:"type"`
+		Label      string                 `yaml:"label"`
+		Properties map[string]interface{} `yaml:"properties"`
+	} `yaml:"nodes"`
+	Edges []struct {
+		ID               string                 `yaml:"id"`
+		FromNodeID       string                 `yaml:"from_node_id"`
+		ToNodeID         string                 `yaml:"to_node_id"`
+		RelationshipType string                 `yaml:"relationship_type"`
+		Properties       map[string]interface{} `yaml:"properties"`
+	} `yaml:"edges"`
+}
+
 // HandleImportCookbook imports a cookbook to a tenant (admin only)
 func (h *AdminHandler) HandleImportCookbook(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
@@ -1676,19 +1715,230 @@ func (h *AdminHandler) HandleImportCookbook(w http.ResponseWriter, r *http.Reque
 
 	// Start import
 	importID := uuid.New().String()
+	createdGraphIDs := []string{}
+	createdAgentIDs := []string{}
+	warnings := []string{}
+
+	// Step 1: Create knowledge graphs and seed nodes/edges
+	for _, kg := range manifest.Creates.KnowledgeGraphs {
+		graphResp, err := h.createKnowledgeGraph(r.Context(), kg, cookbookPath, req.TenantID)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("Failed to create KG '%s': %v", kg.Name, err))
+			continue
+		}
+		createdGraphIDs = append(createdGraphIDs, graphResp)
+	}
+
+	// Step 2: Create agents
+	for _, agentRef := range manifest.Creates.Agents {
+		agentPath := filepath.Join(cookbookPath, agentRef.File)
+		agentID, err := h.createAgentFromYAML(r.Context(), agentPath, req.TenantID, req.Variables)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("Failed to create agent from '%s': %v", agentRef.File, err))
+			continue
+		}
+		createdAgentIDs = append(createdAgentIDs, agentID)
+	}
+
+	// Step 3: MCPs are recommendations only (currently not enforced)
+
 	results := map[string]interface{}{
 		"import_id": importID,
 		"cookbook":  cookbookID,
 		"tenant_id": req.TenantID,
 		"status":    "completed",
-		"resources": map[string]interface{}{},
+		"resources": map[string]interface{}{
+			"knowledge_graphs": createdGraphIDs,
+			"agents":           createdAgentIDs,
+		},
 	}
-
-	// For now, just return success. Actual import would:
-	// 1. Seed KG to tenant's database
-	// 2. Create agents in agent-registry
-	// 3. Register MCPs in mcp-server
+	if len(warnings) > 0 {
+		results["warnings"] = warnings
+	}
 
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(results)
+}
+
+// createKnowledgeGraph creates a KG graph and seeds its nodes/edges
+func (h *AdminHandler) createKnowledgeGraph(ctx context.Context, kg struct {
+	Name          string `yaml:"name"`
+	Description   string `yaml:"description"`
+	SchemaFile    string `yaml:"schema_file"`
+	SeedDataFile  string `yaml:"seed_data_file"`
+}, cookbookPath string, tenantID string) (string, error) {
+	// Parse schema
+	schemaPath := filepath.Join(cookbookPath, kg.SchemaFile)
+	schemaData, err := os.ReadFile(schemaPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read schema: %w", err)
+	}
+	var schema map[string]interface{}
+	if err := yaml.Unmarshal(schemaData, &schema); err != nil {
+		return "", fmt.Errorf("failed to parse schema: %w", err)
+	}
+
+	// Create graph via kg-service
+	graphReq := map[string]interface{}{
+		"name":        kg.Name,
+		"description": kg.Description,
+		"scope":       "private",
+		"schema":      schema,
+	}
+	graphBody, _ := json.Marshal(graphReq)
+	resp, err := h.httpPost(h.KGServiceURL+"/graphs/create", tenantID, graphBody)
+	if err != nil {
+		return "", fmt.Errorf("failed to create graph: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("kg-service returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	var graphResp map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&graphResp); err != nil {
+		return "", fmt.Errorf("failed to decode graph response: %w", err)
+	}
+	graphID, ok := graphResp["id"].(string)
+	if !ok {
+		return "", fmt.Errorf("invalid graph response: missing id")
+	}
+
+	// Parse and seed nodes/edges
+	seedPath := filepath.Join(cookbookPath, kg.SeedDataFile)
+	seedData, err := os.ReadFile(seedPath)
+	if err != nil {
+		return graphID, fmt.Errorf("failed to read seed data: %w", err)
+	}
+	var seedKG seedKGYAML
+	if err := yaml.Unmarshal(seedData, &seedKG); err != nil {
+		return graphID, fmt.Errorf("failed to parse seed data: %w", err)
+	}
+
+	// Create nodes
+	for _, node := range seedKG.Nodes {
+		nodeReq := map[string]interface{}{
+			"id":        node.ID,
+			"graph_id":  graphID,
+			"node_type": node.Type,
+			"label":     node.Label,
+		}
+		if node.Properties != nil {
+			nodeReq["properties"] = node.Properties
+		}
+		nodeBody, _ := json.Marshal(nodeReq)
+		resp, err := h.httpPost(h.KGServiceURL+"/nodes/create", tenantID, nodeBody)
+		if err != nil {
+			resp.Body.Close()
+			continue
+		}
+		resp.Body.Close()
+	}
+
+	// Create edges
+	for _, edge := range seedKG.Edges {
+		edgeReq := map[string]interface{}{
+			"id":                edge.ID,
+			"graph_id":          graphID,
+			"from_node_id":      edge.FromNodeID,
+			"to_node_id":        edge.ToNodeID,
+			"relationship_type": edge.RelationshipType,
+		}
+		if edge.Properties != nil {
+			edgeReq["properties"] = edge.Properties
+		}
+		edgeBody, _ := json.Marshal(edgeReq)
+		resp, err := h.httpPost(h.KGServiceURL+"/edges/create", tenantID, edgeBody)
+		if err != nil {
+			resp.Body.Close()
+			continue
+		}
+		resp.Body.Close()
+	}
+
+	return graphID, nil
+}
+
+// createAgentFromYAML creates an agent from a YAML file and posts it to agent-registry
+func (h *AdminHandler) createAgentFromYAML(ctx context.Context, yamlPath string, tenantID string, vars map[string]string) (string, error) {
+	// Parse agent YAML
+	data, err := os.ReadFile(yamlPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read agent yaml: %w", err)
+	}
+	var agent agentYAML
+	if err := yaml.Unmarshal(data, &agent); err != nil {
+		return "", fmt.Errorf("failed to parse agent yaml: %w", err)
+	}
+
+	// Apply variable substitution
+	for k, v := range vars {
+		agent.SystemPrompt = strings.ReplaceAll(agent.SystemPrompt, "{{"+k+"}}", v)
+	}
+
+	// Build tools array
+	tools := []map[string]string{}
+	for _, tool := range agent.Tools {
+		tools = append(tools, map[string]string{"name": tool.Name, "version": tool.Version})
+	}
+
+	// Build skills array
+	skills := []map[string]string{}
+	for _, skill := range agent.Skills {
+		skills = append(skills, map[string]string{"name": skill.Name, "version": skill.Version})
+	}
+
+	// Create agent manifest for agent-registry
+	manifest := map[string]interface{}{
+		"name":              agent.Name,
+		"version":           agent.Version,
+		"system_prompt":     agent.SystemPrompt,
+		"model":             agent.Model,
+		"max_iterations":    agent.MaxIterations,
+		"memory_budget_mb":  agent.MemoryBudgetMB,
+	}
+	if len(tools) > 0 {
+		manifest["tools"] = tools
+	}
+	if len(skills) > 0 {
+		manifest["skills"] = skills
+	}
+	if len(agent.MCPServers) > 0 {
+		manifest["mcp_servers"] = agent.MCPServers
+	}
+
+	body, _ := json.Marshal(manifest)
+	resp, err := h.httpPost(h.AgentRegistryURL+"/api/v1/agents", tenantID, body)
+	if err != nil {
+		return "", fmt.Errorf("failed to create agent: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("agent-registry returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	var agentResp map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&agentResp); err != nil {
+		return "", fmt.Errorf("failed to decode agent response: %w", err)
+	}
+	agentID, ok := agentResp["id"].(string)
+	if !ok {
+		return "", fmt.Errorf("invalid agent response: missing id")
+	}
+
+	return agentID, nil
+}
+
+// httpPost is a helper to POST with X-Tenant-ID header
+func (h *AdminHandler) httpPost(url string, tenantID string, body []byte) (*http.Response, error) {
+	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Tenant-ID", tenantID)
+	client := &http.Client{Timeout: 30 * time.Second}
+	return client.Do(req)
 }

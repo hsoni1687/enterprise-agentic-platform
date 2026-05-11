@@ -415,6 +415,8 @@ services:
       - ADMIN_API_KEY=dev-admin-key
       - TEMPORAL_HOSTPORT=temporal:7233
       - COOKBOOKS_DIR=/app/infra/platform/cookbooks
+      - AGENT_REGISTRY_URL=http://agent-registry:8088
+      - KG_SERVICE_URL=http://kg-service:8093
     volumes:
       - ../../infra/platform/cookbooks:/app/infra/platform/cookbooks:ro
     depends_on:

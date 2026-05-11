@@ -136,7 +136,7 @@ export default function CookbookImportPage() {
           <select
             value={selectedTenant}
             onChange={(e) => setSelectedTenant(e.target.value)}
-            className="w-full border rounded px-3 py-2"
+            className="w-full border rounded px-3 py-2 bg-white text-gray-900"
           >
             <option value="">Select a tenant...</option>
             {tenants.map((t) => (
@@ -168,7 +168,7 @@ export default function CookbookImportPage() {
                     })
                   }
                   placeholder={variable.default}
-                  className="w-full border rounded px-3 py-2"
+                  className="w-full border rounded px-3 py-2 bg-white text-gray-900"
                 />
               </div>
             ))}
