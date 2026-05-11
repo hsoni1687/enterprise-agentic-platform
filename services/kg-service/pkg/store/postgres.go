@@ -359,9 +359,11 @@ func (ps *PostgresStore) QueryGraph(ctx context.Context, tenantID, graphID, star
 	nodeIDs := make(map[string]bool)
 	for rows.Next() {
 		n := &Node{}
-		if err := rows.Scan(&n.ID, &n.GraphID, &n.TenantID, &n.NodeType, &n.Label, &n.Properties, &n.Embedding, &n.CreatedAt, &n.UpdatedAt); err != nil {
+		var propsBytes []byte
+		if err := rows.Scan(&n.ID, &n.GraphID, &n.TenantID, &n.NodeType, &n.Label, &propsBytes, &n.Embedding, &n.CreatedAt, &n.UpdatedAt); err != nil {
 			return nil, nil, err
 		}
+		json.Unmarshal(propsBytes, &n.Properties)
 		nodes = append(nodes, n)
 		nodeIDs[n.ID] = true
 	}
@@ -380,9 +382,11 @@ func (ps *PostgresStore) QueryGraph(ctx context.Context, tenantID, graphID, star
 
 	for edgeRows.Next() {
 		e := &Edge{}
-		if err := edgeRows.Scan(&e.ID, &e.GraphID, &e.TenantID, &e.FromNodeID, &e.ToNodeID, &e.RelationshipType, &e.Properties, &e.Weight, &e.CreatedAt, &e.UpdatedAt); err != nil {
+		var propsBytes []byte
+		if err := edgeRows.Scan(&e.ID, &e.GraphID, &e.TenantID, &e.FromNodeID, &e.ToNodeID, &e.RelationshipType, &propsBytes, &e.Weight, &e.CreatedAt, &e.UpdatedAt); err != nil {
 			return nil, nil, err
 		}
+		json.Unmarshal(propsBytes, &e.Properties)
 		if nodeIDs[e.FromNodeID] && nodeIDs[e.ToNodeID] {
 			edges = append(edges, e)
 		}
@@ -408,9 +412,11 @@ func (ps *PostgresStore) SearchNodes(ctx context.Context, tenantID, graphID, nod
 	var nodes []*Node
 	for rows.Next() {
 		n := &Node{}
-		if err := rows.Scan(&n.ID, &n.GraphID, &n.TenantID, &n.NodeType, &n.Label, &n.Properties, &n.Embedding, &n.CreatedAt, &n.UpdatedAt); err != nil {
+		var propsBytes []byte
+		if err := rows.Scan(&n.ID, &n.GraphID, &n.TenantID, &n.NodeType, &n.Label, &propsBytes, &n.Embedding, &n.CreatedAt, &n.UpdatedAt); err != nil {
 			return nil, err
 		}
+		json.Unmarshal(propsBytes, &n.Properties)
 		nodes = append(nodes, n)
 	}
 	return nodes, rows.Err()
@@ -433,9 +439,11 @@ func (ps *PostgresStore) SearchNodesByEmbedding(ctx context.Context, tenantID, g
 	var nodes []*Node
 	for rows.Next() {
 		n := &Node{}
-		if err := rows.Scan(&n.ID, &n.GraphID, &n.TenantID, &n.NodeType, &n.Label, &n.Properties, &n.Embedding, &n.CreatedAt, &n.UpdatedAt); err != nil {
+		var propsBytes []byte
+		if err := rows.Scan(&n.ID, &n.GraphID, &n.TenantID, &n.NodeType, &n.Label, &propsBytes, &n.Embedding, &n.CreatedAt, &n.UpdatedAt); err != nil {
 			return nil, err
 		}
+		json.Unmarshal(propsBytes, &n.Properties)
 		nodes = append(nodes, n)
 	}
 	return nodes, rows.Err()

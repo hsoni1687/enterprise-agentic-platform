@@ -382,17 +382,34 @@ func (h *Handler) DeleteEdge(w http.ResponseWriter, r *http.Request) {
 // ============== Query ==============
 
 func (h *Handler) QueryGraph(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
+	if r.Method != http.MethodPost && r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	graphID := r.URL.Query().Get("graph_id")
-	startNodeID := r.URL.Query().Get("start_node_id")
-	maxDepth := 3
-	if d := r.URL.Query().Get("max_depth"); d != "" {
-		if parsed, err := strconv.Atoi(d); err == nil {
-			maxDepth = parsed
+	var graphID, startNodeID string
+	var maxDepth = 3
+
+	if r.Method == http.MethodPost {
+		var queryReq struct {
+			GraphID     string `json:"graph_id"`
+			StartNodeID string `json:"start_node_id"`
+			MaxDepth    int    `json:"max_depth,omitempty"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&queryReq); err == nil {
+			graphID = queryReq.GraphID
+			startNodeID = queryReq.StartNodeID
+			if queryReq.MaxDepth > 0 {
+				maxDepth = queryReq.MaxDepth
+			}
+		}
+	} else {
+		graphID = r.URL.Query().Get("graph_id")
+		startNodeID = r.URL.Query().Get("start_node_id")
+		if d := r.URL.Query().Get("max_depth"); d != "" {
+			if parsed, err := strconv.Atoi(d); err == nil {
+				maxDepth = parsed
+			}
 		}
 	}
 
