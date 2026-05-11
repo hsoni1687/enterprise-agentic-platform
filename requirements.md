@@ -120,6 +120,57 @@ To contextualize the platform's requirements, the following journeys illustrate 
 
 * **Step 6:** The SRE also wants to give external partners access to internal platform skills. They issue an MCP server token via the Admin Console, share the token and the platform's MCP endpoint with external partners. Claude Desktop and other MCP clients can now discover and invoke platform skills using the token.
 
+### Journey 8: Domain Architect Builds DevOps Knowledge Graph (Persona: Domain Architect / SRE Lead)
+
+* **Step 1:** A Domain Architect opens Agent Studio and launches the **KG-Architect** system agent chat interface to model their infrastructure.
+
+* **Step 2:** They describe their domain structure naturally: "We have a microservices architecture with 12 services. Each service has deployments in dev, staging, and prod environments. Some services depend on shared databases. We have runbooks for common incidents."
+
+* **Step 3:** The **KG-Architect** agent parses the requirements and creates the domain model step-by-step:
+  - Calls `kg-create-graph` with entity types: Service, Deployment, Environment, Runbook, Database
+  - Calls `kg-add-node` for each service (12 nodes)
+  - Calls `kg-add-node` for each environment (3 nodes)
+  - Calls `kg-add-edge` to express "Service deployed_in Environment" relationships
+
+* **Step 4:** The Architect reviews the generated graph in Agent Studio and refines it: "Add that api-gateway depends_on both user-service and product-service."
+
+* **Step 5:** KG-Architect calls `kg-add-edge` twice to establish the `depends_on` relationships. The graph now captures 15 nodes and 20+ edges of domain topology.
+
+* **Step 6:** The graph is persisted and ready for use by all agents in the tenant. Agents can now call `kg-query` and `kg-search` to understand infrastructure topology during incident response.
+
+### Journey 9: SRE Agent Queries KG for Blast Radius (Persona: SRE / Incident Responder)
+
+* **Step 1:** A PagerDuty alert fires: "api-gateway is returning 5xx errors." The alert triggers the "SRE Incident Triage Agent."
+
+* **Step 2:** The SRE Agent begins reasoning and calls the `kg-query` tool: "Query graph ID=devops-infra, start_node=api-gateway, depth=2"
+
+* **Step 3:** The KG Service traverses the graph and returns:
+  - Direct dependents: user-service, product-service
+  - Downstream impact: order-service (depends on product-service)
+  - Shared resources: postgres-cluster (used by product-service and order-service)
+
+* **Step 4:** The Agent simultaneously calls the PagerDuty MCP tool to fetch active alerts across the returned services.
+
+* **Step 5:** By combining KG context (topology) and live MCP data (alerts), the agent synthesizes: "api-gateway failure is cascading to product-service and order-service. product-service has 2 active P1 alerts and shares postgres-cluster. Likely root cause: postgres connection pool saturation. Recommend checking product-service runbook."
+
+* **Step 6:** The agent posts a structured analysis to the SRE Slack channel with KG-derived relationships and recommended runbook references.
+
+### Journey 10: Multi-Tenant KG Isolation & Domain-Specific Ontologies (Persona: Platform Operator / Multi-Tenant Admin)
+
+* **Step 1:** Two separate customers onboard to the platform:
+  - **Customer A (DevOps/SRE)**: Creates a DevOps KG with entity types: Service, Deployment, Environment, Team, Runbook
+  - **Customer B (Fintech)**: Creates a Fintech KG with entity types: Portfolio, Asset, Risk, Counterparty, Trade
+
+* **Step 2:** PostgreSQL Row-Level Security (RLS) enforces strict tenant isolation. Customer A's KG queries only return their 20 nodes/40 edges. Customer B's queries only return their 100 nodes/300 edges. Cross-tenant query attempts return empty results (RLS filters at DB layer).
+
+* **Step 3:** An SRE Agent in Customer A's tenant calls `kg-search` to find "services with SLA <99%". The search uses pgvector semantic similarity on node properties stored in Customer A's isolated KG only.
+
+* **Step 4:** A Risk Agent in Customer B's tenant calls `kg-query` to find "assets exposed to EUR/USD volatility > 5%". Its queries never see Customer A's infrastructure KG — complete data partition.
+
+* **Step 5:** The platform operator (Admin Console, not subject to RLS) can view aggregate KG statistics across all tenants: "10 tenants, 500 total graphs, avg 25 nodes per graph." But standard user queries cannot cross this boundary.
+
+* **Step 6:** Both customers independently refine their domain models using KG-Architect, creating specialized ontologies for their business domains. The shared platform infrastructure ensures isolation, scalability, and consistency.
+
 ## 3. Functional Requirements (FR)
 
 These requirements define the core capabilities of the platform, prioritized for an MVP to Production roadmap.
@@ -149,6 +200,10 @@ These requirements define the core capabilities of the platform, prioritized for
 | **FR20** | **P0** | **System Tools Management** | Admin Console provides platform-wide tool registry management accessible via `/system-tools`. Admins can register new tools, review tool specifications, approve for catalog availability, and manage versioning. All tools require security review approval before becoming available to agents. ✅ **Implemented** |
 | **FR21** | **P0** | **System Skills Management** | Admin Console provides platform-wide skill catalog management accessible via `/system-skills`. Admins can create, edit, and lifecycle-manage skills (draft → staged → active). Skills bundle tools with SOPs and are available for agent composition. Version pinning is enforced for production deployments. ✅ **Implemented** |
 | **FR22** | **P0** | **System Agents Management** | Admin Console provides platform system agent management via `/system-agents`. Admins can view, edit, and deploy platform system agents (e.g., Manifest Assistant, monitoring agents). Lifecycle transitions are logged and enable canary rollout strategies. ✅ **Implemented** |
+| **FR23** | **P1** | **Knowledge Graph Foundation** | Platform provides a persistent, tenant-isolated Knowledge Graph (KG) service backed by PostgreSQL with pgvector semantic search. KGs store domain structure: graphs (collections), nodes (typed entities), and edges (relationships with properties). Multi-tenant isolation enforced via PostgreSQL RLS policies on `tenant_id`. Agents can query KGs for structural context without external API calls. ✅ **Implemented (Phase 1)** |
+| **FR24** | **P1** | **KG System Tools** | Platform exposes five system tools for agent-callable KG operations: (1) `kg-create-graph` — Create domain KG; (2) `kg-add-node` — Add typed entities; (3) `kg-add-edge` — Add relationships; (4) `kg-query` — Traverse with depth limits; (5) `kg-search` — Semantic search on properties via pgvector. All tools route through Skill Dispatcher and are available to all agents for ontology queries. ✅ **Implemented (Phase 3)** |
+| **FR25** | **P1** | **KG-Architect System Agent** | Platform includes a specialized system agent (`kg-architect`) for natural-language knowledge graph construction. Domain architects describe structure conversationally; the agent parses requirements, calls kg-* tools, and iteratively builds the ontology. Simplifies KG creation for non-technical users. Runs on isolated `platform-system-agent-queue`. ✅ **Implemented (Phase 3)** |
+| **FR26** | **P2** | **Knowledge Graph Management UI** | Admin Console provides `/knowledge-graphs` page for KG administration: list all tenant KGs, inspect graphs (nodes, edges, properties), search entities, view graph statistics, delete graphs. Agents access KGs via tools; UI is for operators to inspect and manage domain structures. |
 
 ## 4. Non-Functional Requirements (NFR)
 

@@ -19,7 +19,7 @@ Architecturally, the system is designed from the ground up to fulfill several st
 ---
 
 ## 1. Logical Architecture
-The logical architecture decouples the definition of an agent from its execution across seven planes. It separates primitive capability registration (Tools) from governed composition (Skills), single-agent reasoning from coordinated multi-agent execution (Agent Teams), and agent creation from platform administration. A dedicated Security Plane enforces zero-trust policy across all planes as a cross-cutting concern.
+The logical architecture decouples the definition of an agent from its execution across eight planes. It separates primitive capability registration (Tools) from governed composition (Skills), single-agent reasoning from coordinated multi-agent execution (Agent Teams), and agent creation from platform administration. A dedicated Knowledge Graph Plane stores structural domain context, while a Security Plane enforces zero-trust policy across all planes as a cross-cutting concern.
 
 ```mermaid
 graph TD
@@ -42,6 +42,7 @@ graph TD
         AdminAPI --> SystemAgentMgr[System Agent Manager]
         AdminAPI --> CostTracker[Cost Tracking & Billing]
         AdminAPI --> AuditLog[Audit Log Query]
+        AdminAPI --> KGMgr[Knowledge Graph Manager]
     end
 
     subgraph Orchestration_Plane
@@ -62,9 +63,18 @@ graph TD
         InternalAPI[Internal Go Microservices]
     end
 
+    subgraph Knowledge_Graph_Plane
+        KGService[KG Service]
+        KGTools[KG System Tools: kg-create-graph, kg-add-node, kg-add-edge, kg-query, kg-search]
+        KGArchitect[KG-Architect System Agent]
+        KGService --> KGTools
+        KGService --> KGArchitect
+    end
+
     subgraph Data_Plane
         ShortMem[Session Cache - Redis]
         LongMem[Vector DB - tenant-partitioned]
+        StructuralContext[Knowledge Graph - PostgreSQL + pgvector]
         LifecycleStore[Lifecycle State Store]
         CostStore[Cost Attribution Store]
         TenantStore[Tenant Settings Store]
@@ -88,16 +98,20 @@ graph TD
     AdminAPI -.-> TenantStore
     AdminAPI -.-> CostStore
     AdminAPI -.-> OTel
+    AdminAPI -.-> StructuralContext
     SystemAgentMgr -.-> AgentRegistry
     AgentWorker --> SkillDispatcher
     SystemAgentWorker --> SkillDispatcher
     SkillDispatcher --> Router
     Router --> Sandbox
     Router --> InternalAPI
+    Router --> KGTools
     AgentWorker --> ShortMem
     SystemAgentWorker --> ShortMem
     AgentWorker --> LongMem
     SystemAgentWorker --> LongMem
+    AgentWorker --> StructuralContext
+    SystemAgentWorker --> StructuralContext
     AgentWorker --> OTel
     SystemAgentWorker --> OTel
     TeamOrchestrator --> CostStore
@@ -106,20 +120,617 @@ graph TD
     SystemAgentWorker --> LLMRouter
     LLMRouter --> PublicLLM
     LLMRouter --> LocalLLM
+    KGArchitect --> StructuralContext
     Security_Plane -.->|cross-cutting| Orchestration_Plane
     Security_Plane -.->|cross-cutting| Execution_Plane
+    Security_Plane -.->|cross-cutting| Knowledge_Graph_Plane
     Security_Plane -.->|cross-cutting| Admin_Plane
 ```
 
+---
+
+## 1.0a Full-Stack Platform Conceptual Architecture
+
+```
+┌──────────────────────────────────────────────────────────────────────────────────────────┐
+│                              PRESENTATION LAYER                                          │
+│                                                                                          │
+│  Agent Studio                  Admin Console                    Claude Desktop         │
+│  (3000)                        (3001)                           (via MCP client)        │
+│  • Agent creation UI           • Tenant management              • KG queries           │
+│  • Skill compose UI            • LLM config                     • Tool invocation      │
+│  • Agent testing               • System agents                  • External access     │
+│  • Execution logs              • Cost tracking                  via MCP Servers       │
+└──────────────────────────────────────────────────────────────────────────────────────────┘
+                                        │
+                                        ▼
+┌──────────────────────────────────────────────────────────────────────────────────────────┐
+│                            API GATEWAY LAYER                                             │
+│                                                                                          │
+│  API Gateway (8080)                              Admin API (8089)                       │
+│  • HMAC webhook validation                       • Bearer token auth                    │
+│  • Tenant isolation (X-Tenant-ID)                • Cross-tenant visibility              │
+│  • Request routing                               • Platform governance                  │
+│  • Rate limiting                                 • Cost aggregation                     │
+└──────────────────────────────────────────────────────────────────────────────────────────┘
+                                        │
+                    ┌───────────────────┴───────────────────┐
+                    ▼                                       ▼
+┌────────────────────────────────────────────┐  ┌──────────────────────────────────────────┐
+│         ORCHESTRATION & EXECUTION           │  │     PLATFORM GOVERNANCE                 │
+│                                            │  │                                          │
+│  Workflow Initiator (8081)                 │  │  Tenant Manager                          │
+│  • Temporal workflow dispatch              │  │  LLM Config Manager                      │
+│  • Team orchestration                      │  │  System Agent Manager                    │
+│  • HITL signal management                  │  │  Cost Tracker                            │
+│  • Sub-agent fan-out                       │  │  Audit Log                               │
+│                                            │  │                                          │
+│  Agent Workers (Temporal queue)            │  │  Admin API Router                        │
+│  • Single-agent execution                  │  │                                          │
+│  • Tool invocation cycle                   │  │                                          │
+│  • LLM inference calls                     │  │                                          │
+│  • HITL suspension/resume                  │  │                                          │
+│                                            │  │                                          │
+│  System Agent Workers                      │  │  Config Persistence                      │
+│  • platform-system queue                   │  │  (platform_config table)                 │
+│  • Manifest Assistant                      │  │                                          │
+│  • KG-Architect agent                      │  │                                          │
+└────────────────────────────────────────────┘  └──────────────────────────────────────────┘
+                    │                                        │
+                    └───────────────┬───────────────────────┘
+                                    ▼
+┌──────────────────────────────────────────────────────────────────────────────────────────┐
+│                            SERVICE LAYER (Microservices)                                 │
+│                                                                                          │
+│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐  ┌─────────────────┐ │
+│  │ Skill Dispatcher │  │ Tool Registry    │  │ MCP Registry     │  │ KG Service      │ │
+│  │ (8082)           │  │ (8083)           │  │ (8090)           │  │ (8093)          │ │
+│  │                  │  │                  │  │                  │  │                 │ │
+│  │ • Skill routing  │  │ • Tool catalog   │  │ • MCP endpoints  │  │ • KG CRUD API   │ │
+│  │ • Hook execution │  │ • Versioning     │  │ • Bearer tokens  │  │ • Traversal     │ │
+│  │ • Pre/post hooks │  │ • Approval flows │  │ • Client mgmt    │  │ • Semantic      │ │
+│  │ • Tool chains    │  │                  │  │ • Endpoint test  │  │   search        │ │
+│  └──────────────────┘  └──────────────────┘  └──────────────────┘  │ • Query API     │ │
+│                                                                      │ • RLS isolation │ │
+│  ┌──────────────────┐  ┌──────────────────┐  ┌─────────────────┐   └─────────────────┘ │
+│  │ Agent Registry   │  │ Skill Catalog    │  │ LLM Gateway     │                       │
+│  │ (8084)           │  │ (8085)           │  │ (internal)      │   4-Tier Hierarchy   │
+│  │                  │  │                  │  │                 │   ───────────────    │
+│  │ • Agent manifests│  │ • Skill catalog  │  │ • Provider proxy│   Tools              │
+│  │ • Versioning     │  │ • Skill versioning  │ • Model routing │   • bash             │
+│  │ • Lifecycle mgmt │  │ • Lifecycle      │  │ • Rate limits   │   • web-search       │
+│  │                  │  │                  │  │ • Cost tracking │   • kg-*             │
+│  └──────────────────┘  └──────────────────┘  └─────────────────┘   • custom tools      │
+│                                                                                          │
+│  Skill = Bundle(Tools)          Sub-Agent = Agent(Skills)       Agent Team = Multi     │
+│                                                                  Sub-Agent Workflow    │
+└──────────────────────────────────────────────────────────────────────────────────────────┘
+                                        │
+                    ┌───────────────────┴───────────────────┐
+                    ▼                                       ▼
+┌────────────────────────────────────────────┐  ┌──────────────────────────────────────────┐
+│       EXECUTION ADAPTERS                    │  │     EXTERNAL INTEGRATIONS                │
+│                                            │  │                                          │
+│  Skill Dispatcher Routes to:               │  │  Domain MCP Servers                      │
+│                                            │  │  ─────────────────                       │
+│  • Ephemeral Sandboxes                     │  │  • PagerDuty (incident context)         │
+│    - bash execution (Docker)               │  │  • Jira/GitHub (project context)        │
+│    - Python runtime                        │  │  • Bloomberg (market data)               │
+│    - Node.js runtime                       │  │  • Custom enterprise APIs                │
+│                                            │  │                                          │
+│  • Internal Go Microservices               │  │  Platform MCP Server (port 8091)         │
+│    - Tool execution via RPC                │  │  ──────────────────────────             │
+│    - Type-safe invocation                  │  │  Exposes platform capabilities:         │
+│    - Structured responses                  │  │  • kg_search_entities                   │
+│                                            │  │  • kg_get_relationships                 │
+│  Tool Router                               │  │  • kg_query_graph                       │
+│  • Verb dispatch (invoke, list, approve)  │  │  • invoke_tool_via_dispatcher           │
+│  • Error handling                          │  │  • list_skills_in_catalog               │
+│  • Response formatting                     │  │                                          │
+│                                            │  │  External Claude Desktop                 │
+│                                            │  │  • Connects via MCP client               │
+│                                            │  │  • Full KG query access                  │
+│                                            │  │  • Tool invocation capability            │
+└────────────────────────────────────────────┘  └──────────────────────────────────────────┘
+                    │                                        │
+                    └───────────────┬───────────────────────┘
+                                    ▼
+┌──────────────────────────────────────────────────────────────────────────────────────────┐
+│                              DATA LAYER                                                  │
+│                                                                                          │
+│  ┌────────────────────────┐  ┌──────────────────────┐  ┌─────────────────────────────┐  │
+│  │   PostgreSQL           │  │   Redis              │  │   Vector DB (pgvector)      │  │
+│  │   (Multi-Tenant RLS)   │  │   (Session Cache)    │  │   (Semantic Memory)         │  │
+│  │                        │  │                      │  │                             │  │
+│  │ agents                 │  │ • Agent sessions     │  │ • Tenant-partitioned        │  │
+│  │ skills                 │  │ • Execution context  │  │ • Node embeddings           │  │
+│  │ tools                  │  │ • HITL state         │  │ • Entity vectors            │  │
+│  │ agent_teams            │  │ • Rate limit counters│  │ • Relationship embeddings   │  │
+│  │ tenant_settings        │  │ • LLM routing state  │  │ • Semantic search index     │  │
+│  │ lifecycle_events       │  │                      │  │                             │  │
+│  │ cost_events            │  │ TTL: 24 hours        │  │ Queried by kg-search        │  │
+│  │ agent_executions       │  │                      │  │ agent system tool           │  │
+│  │                        │  │                      │  │                             │  │
+│  │ kg_graphs              │  │                      │  │                             │  │
+│  │ kg_nodes               │  │                      │  │                             │  │
+│  │ kg_edges               │  │                      │  │                             │  │
+│  │                        │  │                      │  │                             │  │
+│  │ RLS Isolation:         │  │                      │  │                             │  │
+│  │ Tenant via             │  │                      │  │                             │  │
+│  │ app.tenant_id          │  │                      │  │                             │  │
+│  │ setting & policies     │  │                      │  │                             │  │
+│  └────────────────────────┘  └──────────────────────┘  └─────────────────────────────┘  │
+│                                                                                          │
+│  ┌────────────────────────────────────────────────────────────────────────────────┐   │
+│  │   TimescaleDB (Cost Attribution)              OTel (Observability)             │   │
+│  │                                                                                │   │
+│  │   cost_events                                 • Trace export (Jaeger)         │   │
+│  │   • tenant_id                                 • Metric export (Prometheus)    │   │
+│  │   • agent_id / skill_id / tool_id            • Log aggregation (Loki)        │   │
+│  │   • model_id                                  • Distributed tracing           │   │
+│  │   • input_tokens / output_tokens              • SLO monitoring               │   │
+│  │   • cost (USD)                                • Alert rules                  │   │
+│  │   • timestamp                                                                 │   │
+│  │                                                                                │   │
+│  │   Used for: Cost tracking, SLO burn-rate, Per-tenant invoicing              │   │
+│  └────────────────────────────────────────────────────────────────────────────────┘   │
+│                                                                                          │
+└──────────────────────────────────────────────────────────────────────────────────────────┘
+                                        │
+                                        ▼
+┌──────────────────────────────────────────────────────────────────────────────────────────┐
+│                          INFERENCE LAYER                                                │
+│                                                                                          │
+│  ┌──────────────────────┐  ┌──────────────────────┐  ┌─────────────────────────────┐  │
+│  │  LLM API Gateway     │  │  Managed LLMs        │  │  Local Inference            │  │
+│  │  (LiteLLM proxy)     │  │  (claude-sonnet)     │  │  (vLLM / Ollama)            │  │
+│  │                      │  │  (gpt-4o)            │  │                             │  │
+│  │  • Model routing     │  │  (gpt-4-turbo)       │  │  Self-hosted models:        │  │
+│  │  • Token accounting  │  │  (gpt-4o-mini)       │  │  • Mistral 7B               │  │
+│  │  • Rate limiting     │  │                      │  │  • Llama 2 13B              │  │
+│  │  • Cost tracking     │  │  Per-tenant          │  │  • Custom fine-tunes        │  │
+│  │  • Request replay    │  │  model allowlists    │  │  (with autoscaling)         │  │
+│  │                      │  │  configured via      │  │                             │  │
+│  │  Config:             │  │  Admin Console       │  │  Cost control:              │  │
+│  │  • Anthropic API key │  │                      │  │  • Run on dedicated GPU     │  │
+│  │  • OpenAI API key    │  │  Fallback routing:   │  │  • Cost per inference       │  │
+│  │  • vLLM endpoint     │  │  if primary fails    │  │  • KV cache mgmt            │  │
+│  │  • Max tokens/min    │  │                      │  │                             │  │
+│  └──────────────────────┘  └──────────────────────┘  └─────────────────────────────┘  │
+│                                                                                          │
+└──────────────────────────────────────────────────────────────────────────────────────────┘
+
+════════════════════════════════════════════════════════════════════════════════════════════
+                            DATA FLOW (Example: Agent Invocation)
+════════════════════════════════════════════════════════════════════════════════════════════
+
+ User (Claude Desktop or Agent Studio)
+           │
+           ▼
+ POST /api/v1/agents/<agent_id>/invoke
+ X-Tenant-ID: tenant-123
+ { message: "...", tools: [...] }
+           │
+           ▼
+ API Gateway (8080) ──HMAC validate──> Webhook HMAC Validator
+           │
+           ├─ Rate limit check (Redis)
+           │
+           ├─ Tenant isolation check (X-Tenant-ID)
+           │
+           ▼
+ Temporal Workflow Engine
+           │
+           ├─ Load agent manifest from Agent Registry
+           │
+           ├─ Load recommended skills from Skill Catalog
+           │
+           ├─ Load skill → tool mappings from Tool Registry
+           │
+           ├─ Query KG Service for structural context
+           │    └─ kg-search (semantic search)
+           │    └─ kg-query (relationship traversal)
+           │
+           ▼
+ Agent Worker (Temporal activity)
+           │
+           ├─ Fetch context from Redis (session)
+           │
+           ├─ Call LLM Gateway → LLM (Claude/GPT)
+           │
+           ├─ Parse tool calls
+           │
+           ├─ For each tool:
+           │    │
+           │    ├─ Skill Dispatcher (8082)
+           │    │    │
+           │    │    ├─ Resolve skill → tools
+           │    │    │
+           │    │    ├─ Pre-hooks
+           │    │    │
+           │    │    ├─ Tool Router
+           │    │    │    │
+           │    │    │    ├─ Sandbox (bash, python, node)
+           │    │    │    │
+           │    │    │    └─ Internal RPC (kg-service, etc.)
+           │    │    │
+           │    │    └─ Post-hooks
+           │    │
+           │    └─ Collect results
+           │
+           ├─ For mutating tools:
+           │    │
+           │    ├─ Check HITL approval
+           │    │
+           │    ├─ If needed: suspend + signal Human
+           │    │
+           │    └─ Resume after MFA approval
+           │
+           ├─ Update Redis session with new context
+           │
+           ├─ Track cost_events in TimescaleDB
+           │
+           ├─ Emit traces/metrics to OTel
+           │
+           ▼
+ Response streamed to user
+ { type: "thinking" | "tool_call" | "text" | "done" }
+
+════════════════════════════════════════════════════════════════════════════════════════════
+                        4-TIER CAPABILITY HIERARCHY
+════════════════════════════════════════════════════════════════════════════════════════════
+
+ TIER 1: TOOLS (Primitives, Platform-Governed)
+ ──────────────────────────────────────────
+ Atomic operations: bash, python, web-search, kg-create-graph, invoke_custom_api
+ • Register with Tool Registry
+ • Security review required
+ • Versioned independently
+ • Invoked via Skill Dispatcher
+ • HITL gating per tool
+
+ TIER 2: SKILLS (Bundles of Tools, Reusable Packages)
+ ───────────────────────────────────────────────────
+ Workflows: bash + python + web-search = "diagnostic-skill"
+            kg-query + web-fetch = "research-skill"
+ • Composed in Skill Catalog
+ • Versioned skill manifest (name, tools, defaults, hooks)
+ • Pre/post-hook chains
+ • Instantiated per agent
+ • Reusable across agents
+
+ TIER 3: SUB-AGENTS (Single-Threaded ReAct Loops, Capability Contracts)
+ ──────────────────────────────────────────────────────────────────
+ Specialized agents: {name: "research-agent", skills: ["research-skill"],
+                      model: "claude-sonnet", system_prompt: "..."}
+ • Bound to LLM model (can differ per sub-agent in team)
+ • Bound to specific skill set
+ • Runs single ReAct loop (think + act + observe)
+ • Part of larger team workflows
+ • Independent failure domain (can be retried)
+
+ TIER 4: AGENT TEAMS (Parallel Sub-Agent Orchestration, Temporal Workflows)
+ ──────────────────────────────────────────────────────────────────────
+ Multi-agent workflows: Team = {sub_agents: [research-agent, code-reviewer],
+                                orchestration: parallel}
+ • Durable execution via Temporal
+ • Sub-agents run in parallel (fan-out)
+ • Results aggregated by Team Orchestrator
+ • HITL signals suspend entire team
+ • Failures in one sub-agent don't stop team (independent retry)
+
+════════════════════════════════════════════════════════════════════════════════════════════
+```
+
 - **Control Plane**: The command center for all four tiers. Platform engineers register Tools via the Tool Registry (security review required). Skill Developers compose Tools into Skills in the Skill Catalog. Sub-Agent Developers define capability contracts in the Sub-Agent Registry. No-Code creators wire Sub-Agents into Team Manifests and Agent Manifests. The Lifecycle Manager governs state transitions and deployment strategies across all tiers. The **Manifest Assistant Chat UI** is embedded in the Agent Creation dialog, allowing users to interactively design agent manifests with AI assistance.
-- **Admin Plane (Platform Governance)**: A dedicated governance layer for platform operators. The **Admin Console UI** (Next.js frontend on port 3001) provides graphical administration. The **Admin API Gateway** (Go service on port 8089) enforces bearer-token authentication and aggregates cross-tenant data without tenant filtering. Responsibilities: tenant CRUD (creation, quotas, status), LLM provider configuration (proxy URL, API keys, per-tenant model allowlists), system agent management (lifecycle transitions for Manifest Assistant and other platform agents), cost attribution and billing (per-tenant/agent/skill aggregation from `cost_events`), audit log queries (immutable records of all lifecycle events across resources), and cross-tenant execution visibility (no tenant isolation for admin queries). The Admin Plane integrates with Tenant Store, Cost Store, and OTel Data Plane for governance data.
+
+- **Knowledge Graph Plane**: A dedicated layer for storing and querying structural domain context. The KG Service provides HTTP APIs for CRUD operations on graphs, nodes, and edges with PostgreSQL + pgvector backend. Five system tools (`kg-*`) enable agents to query domain topology. The KG-Architect system agent helps domain architects build knowledge graphs conversationally. Multi-tenant isolation enforced via PostgreSQL RLS policies.
+
+---
+
+## 1.1 Physical Architecture (Deployment Topology)
+
+The Physical Architecture maps logical planes to concrete Kubernetes services, ports, and data stores. It illustrates how all components communicate at runtime.
+
+```mermaid
+graph TB
+    subgraph Frontend["Frontend (Host / CDN)"]
+        AS["Agent Studio (3000)<br/>Next.js"]
+        AC["Admin Console (3001)<br/>Next.js"]
+        CD["Claude Desktop<br/>MCP Client"]
+    end
+
+    subgraph API_Layer["API Layer"]
+        AG["API Gateway (8080)<br/>Go + HMAC Validator"]
+        AA["Admin API (8089)<br/>Go + Bearer Auth"]
+    end
+
+    subgraph Temporal_Engine["Temporal Orchestration"]
+        TW["Temporal Workflow<br/>Engine (7233)"]
+        AW["Agent Workers<br/>Python + PydanticAI"]
+        SAW["System Agent Workers<br/>Python + AsyncOpenAI<br/>platform-system queue"]
+        TO["Team Orchestrator<br/>Orchestration Logic"]
+    end
+
+    subgraph Services["Core Services"]
+        SD["Skill Dispatcher (8085)<br/>Go"]
+        AR["Agent Registry (8088)<br/>Go"]
+        SC["Skill Catalog (8087)<br/>Go"]
+        TR["Tool Registry (8086)<br/>Go"]
+        SR["Sub-Agent Registry (8084)<br/>Go"]
+        KGS["KG Service (8093)<br/>Go + HTTP API"]
+        MCPReg["MCP Registry (8090)<br/>Go"]
+        MCPS["MCP Server (8091)<br/>Go"]
+    end
+
+    subgraph Data_Stores["Data Layer"]
+        PG["PostgreSQL (5433)<br/>Multi-tenant RLS<br/>kg_graphs, kg_nodes, kg_edges,<br/>agents, skills, tools, etc."]
+        Redis["Redis (6379)<br/>Session Cache<br/>Rate Limiting"]
+        VectorDB["pgvector (in PG)<br/>Semantic Memory"]
+        TSDB["TimescaleDB<br/>Cost Attribution"]
+    end
+
+    subgraph External_Integration["External Integration"]
+        ExtMCP["Domain MCP Servers<br/>PagerDuty, Jira, GitHub,<br/>Bloomberg, etc."]
+        LLM["LLM Providers<br/>Anthropic Claude,<br/>OpenAI GPT-4,<br/>Local vLLM"]
+    end
+
+    subgraph Observability["Observability & Security"]
+        Jaeger["Jaeger<br/>Distributed Tracing"]
+        Prometheus["Prometheus<br/>Metrics"]
+        Loki["Loki<br/>Logs"]
+        Istio["Istio Service Mesh<br/>mTLS + Network Policy"]
+    end
+
+    %% Frontend connections
+    AS --> AG
+    AS --> AA
+    AC --> AA
+    CD --> MCPS
+
+    %% API Gateway flow
+    AG --> TW
+    AA --> AR
+    AA --> KGS
+    AA --> SC
+
+    %% Temporal workers
+    TW --> AW
+    TW --> SAW
+    TW --> TO
+    TO --> AW
+
+    %% Worker execution
+    AW --> SD
+    SAW --> SD
+    AW --> Redis
+    SAW --> Redis
+    AW --> VectorDB
+    SAW --> VectorDB
+    AW --> PG
+    SAW --> PG
+    AW --> LLM
+    SAW --> LLM
+
+    %% Service lookups
+    SD --> AR
+    SD --> SC
+    SD --> TR
+    SD --> KGS
+
+    %% KG Service
+    KGS --> PG
+    KGS --> VectorDB
+
+    %% MCP integration
+    MCPReg --> ExtMCP
+    MCPS --> SC
+    MCPS --> TR
+
+    %% Admin operations
+    AA --> PG
+    AA --> TSDB
+
+    %% Observability connections
+    AW -.-> Jaeger
+    SAW -.-> Jaeger
+    AG -.-> Prometheus
+    SD -.-> Prometheus
+    KGS -.-> Loki
+
+    %% Security layer (cross-cutting)
+    Istio -.->|mTLS| AG
+    Istio -.->|mTLS| SD
+    Istio -.->|mTLS| KGS
+
+    classDef frontend fill:#e1f5ff
+    classDef api fill:#fff3e0
+    classDef temporal fill:#f3e5f5
+    classDef services fill:#e8f5e9
+    classDef data fill:#fce4ec
+    classDef external fill:#e0f2f1
+    classDef obs fill:#f1f8e9
+
+    class AS,AC,CD frontend
+    class AG,AA api
+    class TW,AW,SAW,TO temporal
+    class SD,AR,SC,TR,SR,KGS,MCPReg,MCPS services
+    class PG,Redis,VectorDB,TSDB data
+    class ExtMCP,LLM external
+    class Jaeger,Prometheus,Loki,Istio obs
+```
+
+**Key Deployment Characteristics:**
+
+- **Frontend-Only Hosts**: Agent Studio and Admin Console run on developer/user machines or separate CDN, not in Kubernetes
+- **API Gateway (8080)**: Single entry point with HMAC webhook validation; routes to Temporal and registries
+- **Temporal Cluster**: Manages all agent execution via durable workflows; workers are horizontally scalable
+- **System Agent Isolation**: System agents run on isolated `platform-system-agent-queue` with dedicated worker pool
+- **KG Service (8093)**: Dedicated microservice for knowledge graph operations; routes through Skill Dispatcher for agent access
+- **Multi-Tenancy**: PostgreSQL RLS enforces tenant isolation at query time; Redis uses key prefixes; Temporal uses per-tenant task queues
+- **Data Locality**: All services colocate with PostgreSQL for reduced latency; Redis used for session hot cache
+
+---
+
+## 1.2 Component Architecture: Data Flows
+
+This section illustrates key data flows and component interactions for common platform operations.
+
+### 1.2.1 Agent Execution Flow with KG Context
+
+```mermaid
+sequenceDiagram
+    participant User as User/API
+    participant AG as API Gateway<br/>8080
+    participant TW as Temporal<br/>Workflow
+    participant AW as Agent Worker
+    participant SD as Skill Dispatcher<br/>8085
+    participant KGS as KG Service<br/>8093
+    participant LLM as LLM Provider
+    participant Redis as Redis
+    participant PG as PostgreSQL
+
+    User->>AG: POST /agents/invoke<br/>(X-Tenant-ID, message)
+    AG->>TW: StartAgentWorkflow
+    TW->>AW: Execute ReAct Loop
+    
+    AW->>Redis: Load Session Context
+    Redis-->>AW: Session Data
+    
+    AW->>SD: Route Tool: kg-query
+    SD->>KGS: POST /query<br/>(graph_id, start_node, depth)
+    KGS->>PG: SELECT FROM kg_nodes<br/>WHERE tenant_id = ?
+    PG-->>KGS: Nodes, Edges
+    KGS-->>SD: Graph Results
+    SD-->>AW: Tool Results
+    
+    AW->>LLM: Generate Reasoning<br/>(prompt + KG context)
+    LLM-->>AW: Tool Calls
+    
+    AW->>Redis: Update Session
+    AW->>TW: Results
+    TW-->>AG: Response
+    AG-->>User: {type: "done", text: "..."}
+```
+
+### 1.2.2 Knowledge Graph Construction (KG-Architect)
+
+```mermaid
+sequenceDiagram
+    participant Arch as Domain Architect
+    participant KGA as KG-Architect<br/>System Agent
+    participant LLM as LLM Provider
+    participant SD as Skill Dispatcher
+    participant KGS as KG Service
+    participant PG as PostgreSQL
+
+    Arch->>KGA: "Describe our 3-service DevOps architecture..."
+    KGA->>LLM: Parse Requirements
+    LLM-->>KGA: "Will create 3 Service<br/>nodes + edges"
+    
+    KGA->>SD: Route kg-create-graph
+    SD->>KGS: POST /graphs
+    KGS->>PG: INSERT kg_graphs
+    PG-->>KGS: graph_id
+    KGS-->>SD: {id, ...}
+    SD-->>KGA: Graph Created
+    
+    KGA->>SD: Route kg-add-node (x3)
+    loop For each service
+        SD->>KGS: POST /nodes
+        KGS->>PG: INSERT kg_nodes
+        PG-->>KGS: node_id
+        KGS-->>SD: {id, ...}
+    end
+    SD-->>KGA: Nodes Created
+    
+    KGA->>SD: Route kg-add-edge
+    SD->>KGS: POST /edges
+    KGS->>PG: INSERT kg_edges
+    PG-->>KGS: edge_id
+    KGS-->>SD: {id, ...}
+    SD-->>KGA: Edges Created
+    
+    KGA-->>Arch: Graph Complete!<br/>3 nodes, 3 edges
+```
+
+### 1.2.3 Team Workflow with KG + MCP Integration
+
+```mermaid
+sequenceDiagram
+    participant Alert as PagerDuty<br/>Alert
+    participant TO as Team Orchestrator
+    participant DBSub as DB Triage<br/>Sub-Agent
+    participant K8sSub as K8s Inspector<br/>Sub-Agent
+    participant KGS as KG Service
+    participant MCP as MCP Registry
+    participant PG as PostgreSQL
+
+    Alert->>TO: P1 Alert: api-gateway 5xx
+
+    TO->>KGS: kg-query(start=api-gateway, depth=2)
+    KGS->>PG: Traverse graph
+    PG-->>KGS: dependencies
+    KGS-->>TO: [user-service, product-service]
+
+    TO->>DBSub: Dispatch (parallel)
+    TO->>K8sSub: Dispatch (parallel)
+
+    par DB Sub-Agent
+        DBSub->>PG: Query slow queries
+        PG-->>DBSub: Results
+        DBSub-->>TO: {finding: "slow_query"}
+    and K8s Sub-Agent
+        K8sSub->>MCP: Get OOM pods
+        MCP-->>K8sSub: [pod-123]
+        K8sSub-->>TO: {finding: "oom_pods"}
+    end
+
+    TO->>TO: Synthesize<br/>(KG + MCP data)
+    TO-->>Alert: {analysis, recommendations}
+```
+
+### 1.2.4 Multi-Tenant KG Isolation via RLS
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ PostgreSQL Row-Level Security (RLS) on kg_nodes          │
+│                                                          │
+│ SET LOCAL app.tenant_id = 'tenant-a'                     │
+│ SELECT * FROM kg_nodes                                   │
+│ ✓ Returns: 50 rows (tenant-a only)                       │
+│                                                          │
+│ SET LOCAL app.tenant_id = 'tenant-b'                     │
+│ SELECT * FROM kg_nodes                                   │
+│ ✓ Returns: 100 rows (tenant-b only)                      │
+│                                                          │
+│ SET LOCAL app.tenant_id = 'tenant-a'                     │
+│ SELECT * FROM kg_nodes WHERE tenant_id = 'tenant-b'      │
+│ ✗ RLS blocks: returns 0 rows                             │
+│                                                          │
+│  Tenant-A KG              Tenant-B KG                    │
+│  ┌──────────────┐         ┌──────────────┐               │
+│  │ DevOps       │         │ Fintech      │               │
+│  │ • 20 Services│         │ • 50 Assets  │               │
+│  │ • 40 edges   │         │ • 200 edges  │               │
+│  │ • ISOLATED   │         │ • ISOLATED   │               │
+│  └──────────────┘         └──────────────┘               │
+│   Complete Partition via RLS Policy                      │
+└──────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 1.3 Admin Plane Architecture
+
+- **Admin Plane (Platform Governance)**: A dedicated governance layer for platform operators. The **Admin Console UI** (Next.js frontend on port 3001) provides graphical administration. The **Admin API Gateway** (Go service on port 8089) enforces bearer-token authentication and aggregates cross-tenant data without tenant filtering. Responsibilities: tenant CRUD (creation, quotas, status), LLM provider configuration (proxy URL, API keys, per-tenant model allowlists), system agent management (lifecycle transitions for Manifest Assistant and other platform agents), cost attribution and billing (per-tenant/agent/skill aggregation from `cost_events`), audit log queries (immutable records of all lifecycle events across resources), and cross-tenant execution visibility (no tenant isolation for admin queries). The Admin Plane also manages Knowledge Graphs: viewing aggregate KG statistics, inspecting tenant graphs, managing domain ontologies. The Admin Plane integrates with Tenant Store, Cost Store, OTel Data Plane, and KG Service for governance data.
 - **Orchestration Plane (The Brain)**: The Agent API Gateway validates inbound requests (HMAC on webhooks) and routes to the Temporal Workflow Engine. For single agents, the engine dispatches to an Agent Worker. For teams, it dispatches to the Team Orchestrator, which fans out to the Sub-Agent Dispatcher, launching parallel Agent Workers per sub-agent. HITL signals propagate team-wide, suspending all parallel branches. A **System Agent Worker** pool runs on the isolated `platform-system-agent-queue` for platform system agents (e.g., Manifest Assistant), keeping platform automation separate from user workflows.
 - **Execution Plane (The Hands)**: The Skill Dispatcher receives slash-command-style invocations, validates arguments, fires pre/post hooks, and routes tool chains through the Tool Router. The Tool Router dispatches to Ephemeral Sandboxes (arbitrary code) or Internal Go Microservices (typed platform APIs).
 - **Data Plane**: Redis for short-term session context; pgvector (tenant-partitioned) for long-term semantic memory; a Lifecycle State Store for immutable audit trails of all four-tier transitions; a Cost Attribution Store (TimescaleDB) for per-tenant/agent/skill cost metering; OTel collectors for unified observability. The Tenant Settings Store (`tenant_settings` table) is managed by the Admin Plane for storing tenant metadata, quotas, and status.
 - **Security Plane (Cross-Cutting)**: Istio enforces mTLS between all services. The Internal STS issues short-lived (5-min TTL), scoped OIDC tokens for every agent and sub-agent invocation. The Secret Rotation Service manages automated credential rotation and leak detection.
 - **Inference Plane**: A centralized LLM API Gateway (e.g., LiteLLM) proxies all model requests. Model selection is configurable per sub-agent — members of the same team can target different providers without changing the team manifest structure.
 
-## 1.1 Platform System Agents (Manifest Assistant Architecture)
+## 1.4 Platform System Agents (Manifest Assistant & KG-Architect Architecture)
 
 Platform system agents are specialized agents owned and operated by the platform to enhance user experience and operator efficiency. They are distinct from user agents in several ways:
 
@@ -167,11 +778,40 @@ The **Manifest Assistant** is the first platform system agent. It helps no-code 
 - On failure (LLM provider timeout, activity retry exhaustion), the workflow emits a `type: "error"` event; frontend gracefully handles errors and displays fallback UI.
 - Multiple sequential messages from the same user form a **session** (tracked by session ID); memory is preserved across turns.
 
+**KG-Architect System Agent**
+The **KG-Architect** is the second platform system agent, specialized for natural-language knowledge graph construction. It helps domain architects build and refine domain ontologies conversationally:
+
+1. **Conversational KG Building**:
+   - Architect describes domain structure: "We have 12 microservices, 3 deployment environments, shared databases, and incident runbooks."
+   - KG-Architect parses requirements, identifies entity types (Service, Environment, Database, Runbook) and relationship types (deployed_in, depends_on, uses_database, has_runbook).
+   - Agent iteratively calls `kg-*` tools: `kg-create-graph`, `kg-add-node` (for entities), `kg-add-edge` (for relationships).
+
+2. **Tool Integration Pattern**:
+   - Routes through Skill Dispatcher like all system tools
+   - Tools available: `kg-create-graph` (create new graph), `kg-add-node` (add entity), `kg-add-edge` (add relationship), `kg-query` (verify structure), `kg-search` (semantic search)
+   - Runs on `platform-system-agent-queue` with isolated worker pool
+
+3. **Refinement Loop**:
+   - Architect reviews generated graph in Agent Studio
+   - Can ask clarifying questions: "Add that api-gateway depends_on both user-service and product-service"
+   - KG-Architect adds edges and confirms with graph traversal queries
+
+4. **Output**:
+   - Persisted Knowledge Graph ready for agent use via KG system tools
+   - Agents can now call `kg-query` to understand topology without external calls
+   - Complements MCP servers (structural context vs. live operational data)
+
+**Message Format & Execution**:
+- KG-Architect uses same SSE streaming as Manifest Assistant
+- Powered by capable LLM (Claude Sonnet)
+- Follows Anthropic API message format with tool_call blocks
+- Durable via Temporal; failures emit error events to frontend
+
 ---
 
-## 1.2 Admin Plane (Platform Governance Architecture)
+## 1.5 Admin Plane (Platform Governance Architecture)
 
-The **Admin Plane** is a dedicated governance layer that separates platform operations from user-facing agent creation and execution. It provides platform administrators with tenancy management, LLM provider configuration, cost attribution, audit logging, and cross-tenant observability.
+The **Admin Plane** is a dedicated governance layer that separates platform operations from user-facing agent creation and execution. It provides platform administrators with tenancy management, LLM provider configuration, cost attribution, audit logging, cross-tenant observability, and Knowledge Graph management.
 
 ### Admin API Service (`services/admin-api`, port 8089)
 
@@ -210,6 +850,7 @@ A Next.js web application providing graphical administration interfaces. Key arc
    - **`/system-skills`** — Manage platform system skills catalog; versioning, lifecycle states, skill composition
    - **`/system-tools`** — Global tool registry; approval workflows, versioning, security review gates
    - **`/mcp-servers`** — Register and manage global MCP server endpoints; issue/revoke bearer tokens for external MCP client access (e.g., Claude Desktop)
+   - **`/knowledge-graphs`** — Inspect, search, and manage tenant knowledge graphs; view entity types, relationships, graph statistics, export graph data
    - **`/executions`** — Cross-tenant execution visualizer with DAG rendering and live streaming
    - **`/cost`** — Per-tenant cost breakdown by agent, skill, model with CSV export
    - **`/audit`** — Immutable audit log with filtering and export

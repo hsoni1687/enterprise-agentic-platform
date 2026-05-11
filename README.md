@@ -57,9 +57,14 @@ source venv/bin/activate
 pip install -r requirements.txt
 python -m temporal.worker
 
-# 7. Verify health
+# 7. KG Service (Terminal 6)
+cd services/kg-service
+air
+
+# 8. Verify health
 curl http://localhost:8080/health
 curl http://localhost:8089/health
+curl http://localhost:8093/health
 ```
 
 **Note:** Frontends run on host, not Docker, for rapid development iteration. Admin API runs in Docker and is automatically started with `docker-compose up -d`.
@@ -98,6 +103,8 @@ Agent Teams (Orchestration, decomposition, synthesis)
 | Agent Registry | 8088 | Go | Agent manifests |
 | **Admin Plane** | | | |
 | Admin API | 8089 | Go | Platform admin backend; tenant mgmt |
+| **Knowledge Graph** | | | |
+| KG Service | 8093 | Go | Knowledge Graph CRUD, traversal, semantic search |
 | **MCP Integration** | | | |
 | MCP Registry | 8090 | Go | External MCP server hub (client) |
 | MCP Server | 8091 | Go | Platform MCP endpoint (server) |
@@ -106,7 +113,7 @@ Agent Teams (Orchestration, decomposition, synthesis)
 | Admin Console | 3001 | Next.js | Platform administration UI |
 | Dashboard | 8501 | Streamlit | SRE observability |
 | **Data** | | | |
-| PostgreSQL | 5433 | - | Primary state store; pgvector; RLS |
+| PostgreSQL | 5433 | - | Primary state store; KG tables; pgvector; RLS |
 | Redis | 6379 | - | Session cache; rate limiting |
 
 ### Execution Flow
@@ -115,7 +122,7 @@ Agent Teams (Orchestration, decomposition, synthesis)
 ```
 API Gateway → Workflow Initiator → StartAgentWorkflow → Agent Worker (ReAct loop)
   ↓
-1. Fetch context from Redis/pgvector
+1. Fetch context from Redis/pgvector + KG Service (structural domain context)
 2. LLM reasoning via LLM Gateway
 3. Skill dispatch (tool routing)
 4. Tool execution (Sandbox Manager or internal)
@@ -147,6 +154,7 @@ a1-agent-engine/
 │   ├── sub-agent-registry/     # Sub-agent contract definitions
 │   ├── agent-registry/         # Agent manifest storage and versioning
 │   ├── admin-api/              # Platform governance backend (tenants, LLM config, cost)
+│   ├── kg-service/             # Knowledge Graph CRUD, traversal, semantic search
 │   ├── mcp-registry/           # External MCP server integration (client)
 │   ├── mcp-server/             # Platform MCP endpoint for external clients (server)
 │   ├── bash-executor/          # Code execution service for sandboxed operations
@@ -209,19 +217,28 @@ All agent execution backed by Temporal workflows—resumable from last checkpoin
 - **Streamlit Dashboard**: SRE-focused metrics and logs
 - **Structured Logging**: JSON logs with tenant context
 
-### MCP Protocol Support
+### Knowledge Graph Foundation
 
-The platform integrates the **Model Context Protocol** (MCP) bidirectionally:
+The platform includes a **Knowledge Graph (KG)** system for storing and querying structural domain context:
 
-- **MCP Client** (`services/mcp-registry`, port 8090): Agents connect to external MCP servers (GitHub, Filesystem, etc.) at runtime. Tools from external servers are automatically discovered, cached, and available in the agent's tool context without platform redeployment. Tool naming convention: `mcp__{server_name}__{tool_name}` ensures global uniqueness.
+- **KG Service** (`services/kg-service`, port 8093): PostgreSQL-backed graph storage with semantic search via pgvector. Provides HTTP APIs for CRUD operations (graphs, nodes, edges) and traversal queries.
 
-- **MCP Server** (`services/mcp-server`, port 8091): Platform skills are exposed as an MCP endpoint for external clients (Claude Desktop, other MCP-compatible tools) to discover and invoke. Access is token-gated and scoped to tenants.
+- **KG System Tools**: Five platform tools for agent-callable KG operations:
+  - `kg-create-graph` — Create a new domain knowledge graph
+  - `kg-add-node` — Add typed entities to graphs
+  - `kg-add-edge` — Add relationships between entities
+  - `kg-query` — Traverse graph relationships with depth limits
+  - `kg-search` — Semantic search on node properties (pgvector)
+
+- **KG-Architect System Agent**: Platform agent for natural-language knowledge graph construction. Architects describe domain structure conversationally; the agent builds the KG via tool invocations.
+
+- **Multi-Tenant Isolation**: Knowledge graphs are tenant-scoped via PostgreSQL RLS policies (`tenant_id` column). Agents can only access their tenant's KGs.
 
 **Key Benefits:**
-- Agents gain access to any MCP-compatible tool without code changes
-- External platforms can integrate with platform skills via standard MCP protocol
-- Tool discovery is cached to minimize overhead
-- Per-tenant security: MCP servers and clients are isolated by tenant
+- Agents access domain topology without external API calls
+- Semantic search surfaces relevant entities by meaning (e.g., "services that depend on the cache")
+- KG-Architect simplifies ontology design for non-technical users
+- Complements MCP servers (KG = static structural context; MCP = live operational data)
 
 ### AI-Assisted Agent Design (Manifest Assistant)
 
