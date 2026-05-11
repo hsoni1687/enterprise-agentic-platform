@@ -203,7 +203,8 @@ func (d *Dispatcher) handleToolInvoke(w http.ResponseWriter, r *http.Request) {
 
 	// Bypass HITL gate when a prior approval is attached
 	if req.HITLApprovalID != "" {
-		execResult, execErr := d.router.Route(r.Context(), req.Tool, req.Args)
+		ctx := context.WithValue(r.Context(), "tenant_id", tenantID)
+		execResult, execErr := d.router.Route(ctx, req.Tool, req.Args)
 		if execErr != nil {
 			http.Error(w, fmt.Sprintf("tool execution failed: %v", execErr), http.StatusInternalServerError)
 			return
@@ -235,7 +236,9 @@ func (d *Dispatcher) handleToolInvoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	execResult, execErr := d.router.Route(r.Context(), req.Tool, req.Args)
+	// Pass tenant ID through context for tools that need multi-tenant isolation (KG tools)
+	ctx := context.WithValue(r.Context(), "tenant_id", tenantID)
+	execResult, execErr := d.router.Route(ctx, req.Tool, req.Args)
 	if execErr != nil {
 		http.Error(w, fmt.Sprintf("tool execution failed: %v", execErr), http.StatusInternalServerError)
 		return
