@@ -390,4 +390,24 @@ export const adminApi = {
     if (!response.ok) throw new Error("Failed to delete graph");
     return response.json();
   },
+
+  // Cookbook Management
+  async listCookbooks(): Promise<any> {
+    const response = await request("GET", "/api/v1/admin/cookbooks");
+    if (!response.ok) throw new Error("Failed to fetch cookbooks");
+    return response.json();
+  },
+
+  async importCookbook(
+    cookbookId: string,
+    tenantId: string,
+    variables: Record<string, string>
+  ): Promise<any> {
+    const response = await request("POST", `/api/v1/admin/cookbooks/${cookbookId}/import`, {
+      tenant_id: tenantId,
+      variables,
+    });
+    if (!response.ok) throw new Error("Failed to import cookbook");
+    return response.json();
+  },
 };

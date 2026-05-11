@@ -95,6 +95,10 @@ func main() {
 	mux.Handle("GET /api/v1/admin/mcp/servers", authMiddleware(adminAPIKey, http.HandlerFunc(handler.HandleListGlobalMCPServers)))
 	mux.Handle("DELETE /api/v1/admin/mcp/servers/{id}", authMiddleware(adminAPIKey, http.HandlerFunc(handler.HandleDeleteGlobalMCPServer)))
 
+	// Cookbook Management
+	mux.Handle("GET /api/v1/admin/cookbooks", authMiddleware(adminAPIKey, http.HandlerFunc(handler.HandleListCookbooks)))
+	mux.Handle("POST /api/v1/admin/cookbooks/{id}/import", authMiddleware(adminAPIKey, http.HandlerFunc(handler.HandleImportCookbook)))
+
 	log.Printf("Starting Admin API on :8089 (Admin Key: %s...)", adminAPIKey[:10])
 	if err := http.ListenAndServe(":8089", withCORS(mux)); err != nil {
 		log.Fatalf("Server failed: %v", err)

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -13,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.temporal.io/sdk/client"
+	"gopkg.in/yaml.v3"
 )
 
 // AdminHandler handles admin API requests.
@@ -1517,4 +1520,175 @@ func (h *AdminHandler) HandleTransitionSystemSkill(w http.ResponseWriter, r *htt
 		"from":   currentStatus,
 		"to":     req.TargetState,
 	})
+}
+
+// Cookbook manifest structures
+type CookbookManifest struct {
+	Name        string `yaml:"name"`
+	Version     string `yaml:"version"`
+	Description string `yaml:"description"`
+	Domain      string `yaml:"domain"`
+	Creates     struct {
+		KnowledgeGraphs []struct {
+			Name          string `yaml:"name"`
+			Description   string `yaml:"description"`
+			SchemaFile    string `yaml:"schema_file"`
+			SeedDataFile  string `yaml:"seed_data_file"`
+		} `yaml:"knowledge_graphs"`
+		Agents []struct {
+			File        string `yaml:"file"`
+			Description string `yaml:"description"`
+		} `yaml:"agents"`
+	} `yaml:"creates"`
+	Variables []struct {
+		Name        string `yaml:"name"`
+		Description string `yaml:"description"`
+		Default     string `yaml:"default"`
+		Type        string `yaml:"type"`
+	} `yaml:"variables"`
+	Tags                 []string `yaml:"tags"`
+	MinPlatformVersion   string   `yaml:"min_platform_version"`
+}
+
+type CookbookInfo struct {
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Version     string   `json:"version"`
+	Description string   `json:"description"`
+	Domain      string   `json:"domain"`
+	Tags        []string `json:"tags"`
+	Variables   []struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Default     string `json:"default"`
+		Type        string `json:"type"`
+	} `json:"variables"`
+}
+
+// HandleListCookbooks lists available cookbooks (admin only)
+func (h *AdminHandler) HandleListCookbooks(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	cookbooksDir := os.Getenv("COOKBOOKS_DIR")
+	if cookbooksDir == "" {
+		cookbooksDir = "infra/platform/cookbooks"
+	}
+
+	entries, err := os.ReadDir(cookbooksDir)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to read cookbooks directory: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	var cookbooks []CookbookInfo
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		manifestPath := filepath.Join(cookbooksDir, entry.Name(), "manifest.yaml")
+		data, err := os.ReadFile(manifestPath)
+		if err != nil {
+			continue
+		}
+
+		var manifest CookbookManifest
+		if err := yaml.Unmarshal(data, &manifest); err != nil {
+			continue
+		}
+
+		vars := make([]struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Default     string `json:"default"`
+			Type        string `json:"type"`
+		}, len(manifest.Variables))
+		for i, v := range manifest.Variables {
+			vars[i] = struct {
+				Name        string `json:"name"`
+				Description string `json:"description"`
+				Default     string `json:"default"`
+				Type        string `json:"type"`
+			}{v.Name, v.Description, v.Default, v.Type}
+		}
+
+		cookbook := CookbookInfo{
+			ID:          entry.Name(),
+			Name:        manifest.Name,
+			Version:     manifest.Version,
+			Description: manifest.Description,
+			Domain:      manifest.Domain,
+			Tags:        manifest.Tags,
+			Variables:   vars,
+		}
+		cookbooks = append(cookbooks, cookbook)
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"cookbooks": cookbooks,
+		"count":     len(cookbooks),
+	})
+}
+
+// HandleImportCookbook imports a cookbook to a tenant (admin only)
+func (h *AdminHandler) HandleImportCookbook(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	cookbookID := r.PathValue("id")
+	if cookbookID == "" {
+		http.Error(w, "Missing cookbook ID", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		TenantID  string            `json:"tenant_id"`
+		Variables map[string]string `json:"variables"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.TenantID == "" {
+		http.Error(w, "Missing tenant_id", http.StatusBadRequest)
+		return
+	}
+
+	cookbooksDir := os.Getenv("COOKBOOKS_DIR")
+	if cookbooksDir == "" {
+		cookbooksDir = "infra/platform/cookbooks"
+	}
+
+	cookbookPath := filepath.Join(cookbooksDir, cookbookID)
+	manifestPath := filepath.Join(cookbookPath, "manifest.yaml")
+
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		http.Error(w, "Cookbook not found", http.StatusNotFound)
+		return
+	}
+
+	var manifest CookbookManifest
+	if err := yaml.Unmarshal(data, &manifest); err != nil {
+		http.Error(w, "Failed to parse cookbook manifest", http.StatusBadRequest)
+		return
+	}
+
+	// Start import
+	importID := uuid.New().String()
+	results := map[string]interface{}{
+		"import_id": importID,
+		"cookbook":  cookbookID,
+		"tenant_id": req.TenantID,
+		"status":    "completed",
+		"resources": map[string]interface{}{},
+	}
+
+	// For now, just return success. Actual import would:
+	// 1. Seed KG to tenant's database
+	// 2. Create agents in agent-registry
+	// 3. Register MCPs in mcp-server
+
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(results)
 }

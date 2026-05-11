@@ -16,6 +16,7 @@ import {
   Wrench,
   Hammer,
   Network,
+  BookOpen,
 } from "lucide-react";
 
 export default function AdminLayout({ children }: { children: ReactNode }) {
@@ -42,6 +43,7 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
     { label: "System Tools", href: "/system-tools", icon: Hammer },
     { label: "System Skills", href: "/system-skills", icon: Wrench },
     { label: "Knowledge Graphs", href: "/knowledge-graphs", icon: Network },
+    { label: "Cookbooks", href: "/cookbooks", icon: BookOpen },
     { label: "Executions", href: "/executions", icon: BarChart3 },
     { label: "Cost Tracking", href: "/cost", icon: BarChart3 },
     { label: "MCP Servers", href: "/mcp-servers", icon: Server },

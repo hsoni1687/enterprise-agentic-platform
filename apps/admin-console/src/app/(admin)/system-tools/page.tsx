@@ -33,7 +33,15 @@ export default function SystemToolsPage() {
   const updateMutation = useMutation({
     mutationFn: async (data: typeof editForm) => {
       if (!selectedTool) return;
-      return adminApi.updateSystemTool(selectedTool.id, data);
+      try {
+        return adminApi.updateSystemTool(selectedTool.id, {
+          ...data,
+          input_schema: data.input_schema ? JSON.parse(data.input_schema) : undefined,
+          output_schema: data.output_schema ? JSON.parse(data.output_schema) : undefined,
+        });
+      } catch (e) {
+        throw new Error("Invalid JSON in schema fields");
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["system-tools"] });
