@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"time"
 )
 
@@ -18,14 +19,20 @@ type Service struct {
 	db                 *sql.DB
 	skillCatalogURL    string
 	skillDispatcherURL string
+	kgServiceURL       string
 }
 
 // NewService creates a new MCP server service
 func NewService(db *sql.DB, skillCatalogURL, skillDispatcherURL string) *Service {
+	kgServiceURL := os.Getenv("KG_SERVICE_URL")
+	if kgServiceURL == "" {
+		kgServiceURL = "http://localhost:8093"
+	}
 	return &Service{
 		db:                 db,
 		skillCatalogURL:    skillCatalogURL,
 		skillDispatcherURL: skillDispatcherURL,
+		kgServiceURL:       kgServiceURL,
 	}
 }
 
@@ -142,6 +149,162 @@ func (s *Service) invokeSkill(ctx context.Context, tenantID string, skillName st
 	return result.Result, nil
 }
 
+// getKGTools returns built-in KG tools
+func (s *Service) getKGTools() []MCPToolDefinition {
+	return []MCPToolDefinition{
+		{
+			Name:        "kg_search_entities",
+			Description: "Search for entities (nodes) in a knowledge graph by type or label",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"graph_id": map[string]interface{}{
+						"type":        "string",
+						"description": "The ID of the knowledge graph to search",
+					},
+					"node_type": map[string]interface{}{
+						"type":        "string",
+						"description": "Filter nodes by type (e.g., Service, Database, Team)",
+					},
+					"label": map[string]interface{}{
+						"type":        "string",
+						"description": "Optional: search nodes by label (partial match)",
+					},
+					"limit": map[string]interface{}{
+						"type":        "integer",
+						"description": "Maximum number of results (default: 100)",
+					},
+				},
+				"required": []string{"graph_id", "node_type"},
+			},
+		},
+		{
+			Name:        "kg_get_relationships",
+			Description: "Get all relationships (edges) connected to a specific node in a knowledge graph",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"graph_id": map[string]interface{}{
+						"type":        "string",
+						"description": "The ID of the knowledge graph",
+					},
+					"node_id": map[string]interface{}{
+						"type":        "string",
+						"description": "The ID of the node to get relationships for",
+					},
+					"max_depth": map[string]interface{}{
+						"type":        "integer",
+						"description": "Maximum depth to traverse (default: 1)",
+					},
+				},
+				"required": []string{"graph_id", "node_id"},
+			},
+		},
+	}
+}
+
+// invokeKGTool invokes a knowledge graph tool
+func (s *Service) invokeKGTool(ctx context.Context, tenantID string, toolName string, args map[string]interface{}) (string, error) {
+	graphID, ok := args["graph_id"].(string)
+	if !ok {
+		return "", fmt.Errorf("missing graph_id argument")
+	}
+
+	switch toolName {
+	case "kg_search_entities":
+		return s.invokeKGSearch(ctx, tenantID, graphID, args)
+	case "kg_get_relationships":
+		return s.invokeKGRelationships(ctx, tenantID, graphID, args)
+	default:
+		return "", fmt.Errorf("unknown KG tool: %s", toolName)
+	}
+}
+
+// invokeKGSearch searches for nodes in a knowledge graph
+func (s *Service) invokeKGSearch(ctx context.Context, tenantID string, graphID string, args map[string]interface{}) (string, error) {
+	nodeType, ok := args["node_type"].(string)
+	if !ok {
+		return "", fmt.Errorf("missing node_type argument")
+	}
+
+	limit := 100
+	if l, ok := args["limit"].(float64); ok {
+		limit = int(l)
+	}
+
+	url := fmt.Sprintf("%s/search/nodes?graph_id=%s&node_type=%s&limit=%d",
+		s.kgServiceURL, graphID, nodeType, limit)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("X-Tenant-ID", tenantID)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("KG service returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	return string(body), nil
+}
+
+// invokeKGRelationships gets relationships around a node
+func (s *Service) invokeKGRelationships(ctx context.Context, tenantID string, graphID string, args map[string]interface{}) (string, error) {
+	nodeID, ok := args["node_id"].(string)
+	if !ok {
+		return "", fmt.Errorf("missing node_id argument")
+	}
+
+	maxDepth := 1
+	if d, ok := args["max_depth"].(float64); ok {
+		maxDepth = int(d)
+	}
+
+	body, err := json.Marshal(map[string]interface{}{
+		"graph_id":     graphID,
+		"start_node_id": nodeID,
+		"max_depth":    maxDepth,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", s.kgServiceURL+"/query", bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Tenant-ID", tenantID)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("KG service returned %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	return string(respBody), nil
+}
+
 // HandleMCP handles JSON-RPC 2.0 MCP requests
 func (s *Service) HandleMCP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -218,7 +381,7 @@ func (s *Service) handleInitialize(w http.ResponseWriter, id int) {
 	})
 }
 
-// handleListTools lists available skills as MCP tools
+// handleListTools lists available skills as MCP tools plus built-in KG tools
 func (s *Service) handleListTools(w http.ResponseWriter, ctx context.Context, tenantID string, id int) {
 	skills, err := s.getSkills(ctx, tenantID)
 	if err != nil {
@@ -233,13 +396,20 @@ func (s *Service) handleListTools(w http.ResponseWriter, ctx context.Context, te
 		return
 	}
 
-	tools := make([]MCPToolDefinition, len(skills))
+	// Combine skill tools and KG tools
+	kgTools := s.getKGTools()
+	tools := make([]MCPToolDefinition, len(skills)+len(kgTools))
+
 	for i, skill := range skills {
 		tools[i] = MCPToolDefinition{
 			Name:        skill.Name,
 			Description: skill.Description,
 			InputSchema: skill.InputSchema,
 		}
+	}
+
+	for i, kgTool := range kgTools {
+		tools[len(skills)+i] = kgTool
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -251,7 +421,7 @@ func (s *Service) handleListTools(w http.ResponseWriter, ctx context.Context, te
 	})
 }
 
-// handleCallTool invokes a skill
+// handleCallTool invokes a skill or KG tool
 func (s *Service) handleCallTool(w http.ResponseWriter, ctx context.Context, tenantID string, params map[string]interface{}, id int) {
 	name, ok := params["name"].(string)
 	if !ok {
@@ -271,7 +441,17 @@ func (s *Service) handleCallTool(w http.ResponseWriter, ctx context.Context, ten
 		args = make(map[string]interface{})
 	}
 
-	result, err := s.invokeSkill(ctx, tenantID, name, args)
+	var result string
+	var err error
+
+	// Check if it's a KG tool
+	if name == "kg_search_entities" || name == "kg_get_relationships" {
+		result, err = s.invokeKGTool(ctx, tenantID, name, args)
+	} else {
+		// Otherwise, invoke as a skill
+		result, err = s.invokeSkill(ctx, tenantID, name, args)
+	}
+
 	if err != nil {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"jsonrpc": "2.0",
