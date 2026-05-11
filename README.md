@@ -203,6 +203,14 @@ All within their **tenant workspace**:
    - Architect reviews, refines, and approves
    - Result: Production-ready KG in their tenant
 
+**2b. Visualize & Explore KG** (Agent Studio → Knowledge Graphs)
+   - Interactive graph visualization showing nodes and edges
+   - Search entities by type, properties, or relationships
+   - Click nodes to inspect properties and connected relationships
+   - Traverse relationships: "show all services that depend on this one"
+   - View KG statistics (node counts, relationship types, densest nodes)
+   - Export graph as JSON or PNG for documentation
+
 3. **Configure Tenant MCPs** (Agent Studio → Settings → External Integrations)
    - Register PagerDuty, Datadog, GitHub instances for their infrastructure
    - Token-gated access scoped to their tenant
@@ -525,7 +533,7 @@ All agent execution backed by Temporal workflows—resumable from last checkpoin
 
 ### Knowledge Graph Foundation
 
-The platform includes a **Knowledge Graph (KG)** system for storing and querying structural domain context:
+The platform includes a **Knowledge Graph (KG)** system for storing, querying, and visualizing structural domain context:
 
 - **KG Service** (`services/kg-service`, port 8093): PostgreSQL-backed graph storage with semantic search via pgvector. Provides HTTP APIs for CRUD operations (graphs, nodes, edges) and traversal queries.
 
@@ -538,10 +546,19 @@ The platform includes a **Knowledge Graph (KG)** system for storing and querying
 
 - **KG-Architect System Agent**: Platform agent for natural-language knowledge graph construction. Architects describe domain structure conversationally; the agent builds the KG via tool invocations.
 
-- **Multi-Tenant Isolation**: Knowledge graphs are tenant-scoped via PostgreSQL RLS policies (`tenant_id` column). Agents can only access their tenant's KGs.
+- **KG Visualization & Browse Interface** (Agent Studio): Interactive graph visualization allowing architects to:
+  - See nodes and edges rendered as interactive diagrams
+  - Search/filter entities by type, properties, or relationships
+  - Inspect entity properties and relationships
+  - Traverse the graph ("show all services depending on this one")
+  - View statistics (entity counts, relationship types, graph density)
+  - Export as JSON or PNG
+
+- **Multi-Tenant Isolation**: Knowledge graphs are tenant-scoped via PostgreSQL RLS policies (`tenant_id` column). Agents can only access their tenant's KGs; visualization enforces tenant boundaries.
 
 **Key Benefits:**
 - Agents access domain topology without external API calls
+- Architects visualize and understand domain structure before deploying agents
 - Semantic search surfaces relevant entities by meaning (e.g., "services that depend on the cache")
 - KG-Architect simplifies ontology design for non-technical users
 - Complements MCP servers (KG = static structural context; MCP = live operational data)

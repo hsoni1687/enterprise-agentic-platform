@@ -33,6 +33,8 @@ graph TD
         UI --> Simulator[Agent Testing Simulator]
         UI --> LifecycleMgr[Lifecycle and Deployment Manager]
         UI --> ManifestAssistant[Manifest Assistant Chat UI]
+        UI --> KGViz[KG Visualization & Browse]
+        KGViz --> KGService[KG Service - Query/Search]
     end
 
     subgraph Admin_Plane
@@ -492,6 +494,13 @@ A1 Agent Engine deliberately separates platform administration from domain-solut
    - Semantic search on domain entities (pgvector)
    - Iterate and refine in conversational chat
 
+2b. **Visualize & Explore KGs** (Agent Studio → Knowledge Graphs)
+   - Interactive graph canvas showing nodes and edges
+   - Search/filter entities and relationships
+   - Click nodes to inspect properties
+   - Traverse relationships in the graph
+   - View statistics and export as JSON/PNG
+
 3. **Configure Tenant MCP Integrations** (Agent Studio → Settings → External Integrations)
    - Register their PagerDuty instance (token issued per tenant)
    - Integrate their Datadog metrics (API key scoped to tenant)
@@ -881,6 +890,45 @@ The **Manifest Assistant** is the first platform system agent. It helps no-code 
 - System agent workflows follow the same durable execution model as user agents.
 - On failure (LLM provider timeout, activity retry exhaustion), the workflow emits a `type: "error"` event; frontend gracefully handles errors and displays fallback UI.
 - Multiple sequential messages from the same user form a **session** (tracked by session ID); memory is preserved across turns.
+
+**KG Visualization & Browse Interface (Agent Studio)**
+The **KG Visualizer** is an interactive interface within Agent Studio enabling architects to explore and understand their knowledge graphs:
+
+1. **Graph Rendering**:
+   - Interactive canvas rendering nodes and edges (D3.js/Cytoscape)
+   - Node colors by entity type (Service = blue, Deployment = green, etc.)
+   - Edge labels showing relationship types (depends_on, uses_database, etc.)
+   - Pan, zoom, drag-to-reposition node interactions
+
+2. **Search & Filter**:
+   - Search bar for entity names or properties
+   - Filter by entity type (show only Services)
+   - Filter by relationship type (show only depends_on edges)
+   - Highlight search results on canvas
+
+3. **Node Inspection**:
+   - Click node → side panel shows properties (name, type, custom properties)
+   - List connected nodes and edges
+   - "Show connected" button highlights related subgraph
+
+4. **Relationship Traversal**:
+   - "Traverse" button on edges → follow relationship and expand connected nodes
+   - Depth control: show relationships up to N hops away
+   - Visual path highlighting
+
+5. **Statistics & Export**:
+   - Graph stats: total nodes, total edges, entity type breakdown
+   - Relationship type distribution
+   - Densest nodes (most connected)
+   - Export as JSON (for backup/version control)
+   - Export as PNG (for documentation/Slack)
+
+6. **Multi-Tenant Isolation**:
+   - Only shows nodes/edges for architect's tenant
+   - RLS enforced at query layer (KG Service)
+   - No cross-tenant data leakage even if UI accessed by mistake
+
+---
 
 **KG-Architect System Agent**
 The **KG-Architect** is the second platform system agent, specialized for natural-language knowledge graph construction. It helps domain architects build and refine domain ontologies conversationally:
