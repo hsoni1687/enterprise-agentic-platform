@@ -327,10 +327,12 @@ services:
         condition: service_started
     volumes:
       - ./seed_system_tools.sh:/seed.sh:ro
-    entrypoint: ["sh", "/seed.sh"]
+      - ../platform/system-tools.yaml:/system-tools.yaml:ro
     environment:
       - ADMIN_API_URL=http://admin-api:8089
       - ADMIN_API_KEY=dev-admin-key
+      - TOOLS_YAML=/system-tools.yaml
+    entrypoint: ["sh", "/seed.sh"]
     networks:
       - agent-net
 

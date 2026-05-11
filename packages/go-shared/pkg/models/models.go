@@ -234,11 +234,13 @@ type StartSessionRequest struct {
 // AgentEvent is a single observable event emitted by a running agent workflow,
 // streamed to the client via SSE.
 type AgentEvent struct {
-	Type    string `json:"type"`              // "thinking" | "tool_call" | "text" | "done" | "error"
-	Content string `json:"content,omitempty"` // text / thinking / error content
-	Name    string `json:"name,omitempty"`    // tool_call: tool name
-	Args    string `json:"args,omitempty"`    // tool_call: JSON-encoded args
-	Result  string `json:"result,omitempty"`  // tool_call: JSON-encoded result
+	Type      string      `json:"type"`               // "thinking" | "tool_call" | "text" | "done" | "error" | "approval"
+	Content   string      `json:"content,omitempty"`  // text / thinking / error content
+	ToolName  string      `json:"tool_name,omitempty"` // tool_call: tool name
+	ToolArgs  interface{} `json:"tool_args,omitempty"` // tool_call: tool arguments (object, not string)
+	ToolResult interface{} `json:"tool_result,omitempty"` // tool_call: execution result
+	ApprovalID string      `json:"approval_id,omitempty"` // approval: approval request ID
+	Reason    string      `json:"reason,omitempty"` // approval: why approval is needed
 }
 
 // ChatRequest is the body for POST /api/v1/agents/{id}/chat.

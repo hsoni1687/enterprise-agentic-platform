@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -12,11 +13,16 @@ import (
 
 func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		logMsg := fmt.Sprintf("[CORS] Request: method=%s, path=%s, upgrade=%s\n", r.Method, r.URL.Path, r.Header.Get("Upgrade"))
+		os.WriteFile("/tmp/cors.log", []byte(logMsg), 0644)
+		log.Printf("[CORS] Request: method=%s, path=%s, upgrade=%s", r.Method, r.URL.Path, r.Header.Get("Upgrade"))
 		if r.URL.Path == "/api/v1/agents/test-agent-valid/ws" {
 			log.Printf("WebSocket request: method=%s, upgrade=%s, connection=%s", r.Method, r.Header.Get("Upgrade"), r.Header.Get("Connection"))
 		}
 		// Skip CORS handling for WebSocket upgrade requests
 		if r.Header.Get("Upgrade") == "websocket" {
+			log.Printf("[CORS] WebSocket upgrade requested for %s", r.URL.Path)
+			os.WriteFile("/tmp/cors.log", []byte(fmt.Sprintf("[CORS] WebSocket upgrade for %s\n", r.URL.Path)), 0644)
 			next.ServeHTTP(w, r)
 			return
 		}

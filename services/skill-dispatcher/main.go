@@ -24,14 +24,19 @@ func main() {
 		Priority:  10,
 		Handler:   handlers.NewAuditLogHandler(slog.Default()),
 	})
-	// Mutating skills that require HITL approval
+	// Mutating skills/tools that require HITL approval
 	mutatingSkills := map[string]bool{
+		// Skills
 		"diagnostic-agent":       true, // System diagnostics (infrastructure access)
 		"deployment-checker":     true, // Deployment validation
 		"log-analyzer":           false, // Read-only analysis
 		"backup-validator":       false, // Read-only validation
 		"code-review":            false, // Read-only review
 		"test-generation":        false, // Read-only test generation
+		// Tools (when invoked directly)
+		"bash":                   true, // Shell commands (mutating)
+		"http-request":           true, // HTTP requests (can be mutating)
+		"code-executor":          true, // Code execution (can be mutating)
 	}
 
 	engine.Register(hooks.HookRegistration{

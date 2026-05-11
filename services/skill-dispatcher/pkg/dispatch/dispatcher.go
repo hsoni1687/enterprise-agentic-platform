@@ -30,12 +30,13 @@ type InvokeRequest struct {
 
 // ToolInvokeRequest is the payload sent to POST /api/v1/tools/invoke.
 type ToolInvokeRequest struct {
-	Tool     models.ToolRef `json:"tool"`
-	Args     map[string]any `json:"args,omitempty"`
-	AgentID  string         `json:"agent_id"`
-	TenantID string         `json:"tenant_id"`
-	TraceID  string         `json:"trace_id,omitempty"`
-	Mutating bool           `json:"mutating"`
+	Tool               models.ToolRef `json:"tool"`
+	Args               map[string]any `json:"args,omitempty"`
+	AgentID            string         `json:"agent_id"`
+	TenantID           string         `json:"tenant_id"`
+	TraceID            string         `json:"trace_id,omitempty"`
+	Mutating           bool           `json:"mutating"`
+	HITLApprovalID     string         `json:"hitl_approval_id,omitempty"`
 }
 
 // InvokeResponse is returned after skill dispatch completes or is suspended.
@@ -199,11 +200,36 @@ func (d *Dispatcher) handleToolInvoke(w http.ResponseWriter, r *http.Request) {
 	}
 	hctx.Args["__mutating"] = req.Mutating
 
+	// Bypass HITL gate when a prior approval is attached
+	if req.HITLApprovalID != "" {
+		execResult, execErr := d.router.Route(r.Context(), req.Tool, req.Args)
+		if execErr != nil {
+			http.Error(w, fmt.Sprintf("tool execution failed: %v", execErr), http.StatusInternalServerError)
+			return
+		}
+		postCtx := hctx
+		postCtx.Phase = hooks.PhasePost
+		postCtx.Result = map[string]any{"output": execResult}
+		d.engine.Fire(context.Background(), postCtx)
+		writeJSON(w, http.StatusOK, InvokeResponse{Status: StatusCompleted, Result: execResult})
+		return
+	}
+
 	result, _ := d.engine.Fire(r.Context(), hctx)
 	if result.Halt {
+		// Create HITL approval workflow
+		hitlArgs := map[string]any{
+			"tool_name":     req.Tool.Name,
+			"tool_version":  req.Tool.Version,
+			"tool_args":     req.Args,
+			"agent_id":      req.AgentID,
+			"reason":        result.Message,
+		}
+		hitlWorkflowID, _, _ := d.workflows.Start(r.Context(), "hitl-approver", tenantID, hitlArgs)
+
 		writeJSON(w, http.StatusAccepted, InvokeResponse{
 			Status:         StatusAwaitingHITL,
-			HITLWorkflowID: "",
+			HITLWorkflowID: hitlWorkflowID,
 		})
 		return
 	}

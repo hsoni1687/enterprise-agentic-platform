@@ -45,6 +45,7 @@ type TemporalClient interface {
 	ExecuteWorkflow(ctx context.Context, options client.StartWorkflowOptions, workflow interface{}, args ...interface{}) (client.WorkflowRun, error)
 	DescribeWorkflowExecution(ctx context.Context, workflowID, runID string) (*workflowservice.DescribeWorkflowExecutionResponse, error)
 	QueryWorkflow(ctx context.Context, workflowID, runID, queryType string, args ...interface{}) (EncodedQueryValue, error)
+	SignalWorkflow(ctx context.Context, workflowID, runID, signalName string, arg interface{}) error
 }
 
 // realTemporalClient wraps the Temporal SDK client to satisfy TemporalClient.
@@ -60,6 +61,10 @@ func (r *realTemporalClient) DescribeWorkflowExecution(ctx context.Context, work
 
 func (r *realTemporalClient) QueryWorkflow(ctx context.Context, workflowID, runID, queryType string, args ...interface{}) (EncodedQueryValue, error) {
 	return r.c.QueryWorkflow(ctx, workflowID, runID, queryType, args...)
+}
+
+func (r *realTemporalClient) SignalWorkflow(ctx context.Context, workflowID, runID, signalName string, arg interface{}) error {
+	return r.c.SignalWorkflow(ctx, workflowID, runID, signalName, arg)
 }
 
 var temporalClient TemporalClient
@@ -81,6 +86,14 @@ func InitTemporalClient() error {
 
 // SetTemporalClient allows injecting a mock client in tests.
 func SetTemporalClient(c TemporalClient) { temporalClient = c }
+
+// SendWorkflowSignal sends a Temporal signal to the given workflow.
+func SendWorkflowSignal(workflowID, signalName string, payload interface{}) error {
+	if temporalClient == nil {
+		return fmt.Errorf("temporal client not initialized")
+	}
+	return temporalClient.SignalWorkflow(context.Background(), workflowID, "", signalName, payload)
+}
 
 // HandleStartSession dispatches a new AgentWorkflow to Temporal.
 // If the request does not include a manifest, it fetches it from the agent-registry.
@@ -177,6 +190,7 @@ func HandleGetSessionStatus(w http.ResponseWriter, r *http.Request) {
 // returns events starting at the index given by the ?from= query parameter.
 func HandleGetSessionEvents(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	log.Printf("[REST_API] HandleGetSessionEvents called for workflow_id=%s", id)
 	if id == "" {
 		http.Error(w, "workflow id is required", http.StatusBadRequest)
 		return
@@ -208,6 +222,17 @@ func HandleGetSessionEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Debug: log approval events
+	for i, ev := range all {
+		if ev.Type == "approval" {
+			log.Printf("[REST_EVENTS] Event %d: Type=%s, ApprovalID=%s, Reason=%s, ToolName=%s",
+				i, ev.Type, ev.ApprovalID, ev.Reason, ev.ToolName)
+			// Also marshal to see JSON representation
+			data, _ := json.Marshal(ev)
+			log.Printf("[REST_EVENTS] Event %d JSON: %s", i, string(data))
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(all[from:])
 }
@@ -215,6 +240,7 @@ func HandleGetSessionEvents(w http.ResponseWriter, r *http.Request) {
 // HandlePollSession returns both events (from cursor) and workflow status in a single response.
 func HandlePollSession(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	log.Printf("[REST_API] HandlePollSession called for workflow_id=%s", id)
 	if id == "" {
 		http.Error(w, "workflow id is required", http.StatusBadRequest)
 		return
@@ -236,9 +262,27 @@ func HandlePollSession(w http.ResponseWriter, r *http.Request) {
 	events := []models.AgentEvent{}
 	if err == nil {
 		var all []models.AgentEvent
-		if err := val.Get(&all); err == nil && from < len(all) {
-			events = all[from:]
+		if err := val.Get(&all); err == nil {
+			log.Printf("[POLL_DEBUG] Got %d total events, from=%d", len(all), from)
+			if from < len(all) {
+				events = all[from:]
+				log.Printf("[POLL_DEBUG] Returning %d events from index %d", len(events), from)
+				// Log what we're returning
+				for i, ev := range events {
+					log.Printf("[POLL_DEBUG] Event %d: Type=%s, ApprovalID='%s'", i, ev.Type, ev.ApprovalID)
+					if ev.Type == "approval" {
+						log.Printf("[POLL_RETURN] Approval event at index %d: Type=%s, ApprovalID=%s, Reason=%s",
+							from+i, ev.Type, ev.ApprovalID, ev.Reason)
+						data, _ := json.Marshal(ev)
+						log.Printf("[POLL_RETURN] JSON: %s", string(data))
+					}
+				}
+			}
+		} else {
+			log.Printf("[POLL_DEBUG] Error unmarshalling events: %v", err)
 		}
+	} else {
+		log.Printf("[POLL_DEBUG] Query error: %v", err)
 	}
 
 	// Query status
@@ -342,4 +386,32 @@ func mapTemporalStatus(s enumspb.WorkflowExecutionStatus) string {
 	default:
 		return "UNKNOWN"
 	}
+}
+
+// HandleStoreHITLApproval POST /api/v1/approvals - stores a pending HITL approval
+func HandleStoreHITLApproval(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.Header.Get("X-Tenant-ID")
+	if tenantID == "" {
+		http.Error(w, "X-Tenant-ID header required", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		WorkflowID string                 `json:"workflow_id"`
+		AgentID    string                 `json:"agent_id"`
+		ToolName   string                 `json:"tool_name"`
+		ToolArgs   map[string]interface{} `json:"tool_args"`
+		Reason     string                 `json:"reason"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	approvalID := StoreHITLApproval(req.WorkflowID, req.AgentID, tenantID, req.ToolName, req.Reason, req.ToolArgs)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]string{"approval_id": approvalID})
 }

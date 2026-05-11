@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -159,7 +161,9 @@ func (h *GatewayHandler) HandleGetSessionStatus(w http.ResponseWriter, r *http.R
 // its events back to the caller as Server-Sent Events.
 // Supports both GET (query params) and POST (JSON body) for message input.
 func (h *GatewayHandler) HandleChatStream(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[SSE_HANDLER] HandleChatStream called")
 	agentID := r.PathValue("id")
+	log.Printf("[SSE_HANDLER] agentID=%s", agentID)
 	if agentID == "" {
 		http.Error(w, "agent id is required", http.StatusBadRequest)
 		return
@@ -261,12 +265,17 @@ func (h *GatewayHandler) HandleChatStream(w http.ResponseWriter, r *http.Request
 
 		// Fetch events and status in a single poll call.
 		pollURL := fmt.Sprintf("%s/api/v1/sessions/%s/poll?from=%d", h.InitiatorURL, session.WorkflowID, cursor)
+		log.Printf("[SSE_POLL] Polling %s", pollURL)
 		if pollResp, err := poll.Get(pollURL); err == nil {
 			var pr models.PollResponse
 			if json.NewDecoder(pollResp.Body).Decode(&pr) == nil {
 				// Stream any new events.
 				if len(pr.Events) > 0 {
+					log.Printf("[SSE_POLL] Got %d events", len(pr.Events))
 					for _, ev := range pr.Events {
+						if ev.Type == "approval" {
+							log.Printf("[SSE_POLL] Approval event: approval_id=%s, tool_name=%s", ev.ApprovalID, ev.ToolName)
+						}
 						writeEvent(ev)
 						cursor++
 					}
@@ -292,7 +301,9 @@ func (h *GatewayHandler) HandleChatStream(w http.ResponseWriter, r *http.Request
 // HandleChatWS upgrades to WebSocket and streams agent events using the /poll endpoint.
 func (h *GatewayHandler) HandleChatWS(w http.ResponseWriter, r *http.Request) {
 	_ = r
+	os.WriteFile("/tmp/handler_called.log", []byte("HandleChatWS called\n"), 0644)
 	agentID := r.PathValue("id")
+	os.WriteFile("/tmp/handler_called.log", []byte(fmt.Sprintf("HandleChatWS called with agentID=%s\n", agentID)), 0644)
 	if agentID == "" {
 		http.Error(w, "agent id is required", http.StatusBadRequest)
 		return
@@ -385,11 +396,25 @@ func (h *GatewayHandler) HandleChatWS(w http.ResponseWriter, r *http.Request) {
 
 		// Fetch events and status in a single poll call
 		pollURL := fmt.Sprintf("%s/api/v1/sessions/%s/poll?from=%d", h.InitiatorURL, session.WorkflowID, cursor)
+		log.Printf("[WS_POLL] Polling %s", pollURL)
 		if pollResp, err := poll.Get(pollURL); err == nil {
 			var pr models.PollResponse
 			if json.NewDecoder(pollResp.Body).Decode(&pr) == nil {
+				log.Printf("[WS_POLL] Got %d events from poll", len(pr.Events))
+				debugMsg := fmt.Sprintf("Polled %d events\n", len(pr.Events))
 				// Stream any new events
-				for _, ev := range pr.Events {
+				for i, ev := range pr.Events {
+					debugMsg += fmt.Sprintf("Event %d: Type=%s, ApprovalID=%s, ToolName=%s\n",
+						i, ev.Type, ev.ApprovalID, ev.ToolName)
+					// Debug: log event structure to file
+					if ev.Type == "approval" {
+						debugMsg += fmt.Sprintf("  -> Approval BEFORE marshal: Type='%s', ApprovalID='%s', Reason='%s', ToolName='%s'\n",
+							ev.Type, ev.ApprovalID, ev.Reason, ev.ToolName)
+						// Marshal to JSON to see what gets sent
+						data, _ := json.Marshal(ev)
+						debugMsg += fmt.Sprintf("  -> JSON before wsjson.Write: %s\n", string(data))
+						log.Printf("[WS_BEFORE] Type=%s, ApprovalID=%s, Reason=%s", ev.Type, ev.ApprovalID, ev.Reason)
+					}
 					if err := wsjson.Write(r.Context(), conn, ev); err != nil {
 						pollResp.Body.Close()
 						conn.Close(websocket.StatusInternalError, "")
@@ -405,8 +430,10 @@ func (h *GatewayHandler) HandleChatWS(w http.ResponseWriter, r *http.Request) {
 					}
 					pollResp.Body.Close()
 					conn.Close(websocket.StatusNormalClosure, "")
+					os.WriteFile("/tmp/ws_debug.log", []byte(debugMsg), 0644)
 					return
 				}
+				os.WriteFile("/tmp/ws_debug.log", []byte(debugMsg), 0644)
 			}
 			pollResp.Body.Close()
 		}

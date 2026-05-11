@@ -565,22 +565,57 @@ func handleAnthropicInference(w http.ResponseWriter, req openai.ChatCompletionRe
 	url := anthropicURL
 	mu.RUnlock()
 
+	// Use model name as-is (internal proxy handles model routing)
+	modelName := req.Model
+	log.Printf("Using model: %s", modelName)
+
 	antReq := anthropicRequest{
-		Model:     req.Model,
+		Model:     modelName,
 		MaxTokens: req.MaxTokens,
 	}
-	if antReq.MaxTokens == 0 {
-		antReq.MaxTokens = 1024
+	if antReq.MaxTokens <= 0 {
+		antReq.MaxTokens = 4096
 	}
 
-	// Translate Tools
+	// Translate Tools - ensure proper schema format for litellm
 	for _, t := range req.Tools {
 		if t.Type == openai.ToolTypeFunction {
-			antReq.Tools = append(antReq.Tools, anthropicTool{
-				Name:        t.Function.Name,
-				Description: t.Function.Description,
-				InputSchema: t.Function.Parameters,
-			})
+			// Validate and clean up input schema
+			schema := t.Function.Parameters
+			if schema != nil {
+				// Ensure schema is a map for proper JSON encoding
+				if schemaMap, ok := schema.(map[string]interface{}); ok {
+					// Remove any null defaults that might cause litellm issues
+					if properties, hasProps := schemaMap["properties"].(map[string]interface{}); hasProps {
+						for key, prop := range properties {
+							if propMap, isPropMap := prop.(map[string]interface{}); isPropMap {
+								// Remove default: null entries
+								if defaultVal, hasDefault := propMap["default"]; hasDefault && defaultVal == nil {
+									delete(propMap, "default")
+								}
+								properties[key] = propMap
+							}
+						}
+						schemaMap["properties"] = properties
+					}
+					schema = schemaMap
+				}
+			}
+
+			// Only add tool if it has a name
+			if t.Function.Name != "" {
+				tool := anthropicTool{
+					Name:        t.Function.Name,
+					Description: t.Function.Description,
+					InputSchema: schema,
+				}
+				// Ensure description is not empty
+				if tool.Description == "" {
+					tool.Description = fmt.Sprintf("Tool: %s", t.Function.Name)
+				}
+				antReq.Tools = append(antReq.Tools, tool)
+				log.Printf("Added tool: %s (has_schema: %v)", t.Function.Name, schema != nil)
+			}
 		}
 	}
 
@@ -631,17 +666,35 @@ func handleAnthropicInference(w http.ResponseWriter, req openai.ChatCompletionRe
 		})
 	}
 
-	// Execute HTTP Request
-	body, _ := json.Marshal(antReq)
-	httpReq, _ := http.NewRequest("POST", url, bytes.NewBuffer(body))
+	// Execute HTTP Request with better error handling
+	body, err := json.Marshal(antReq)
+	if err != nil {
+		log.Printf("Failed to marshal Anthropic request: %v", err)
+		http.Error(w, fmt.Sprintf("Request marshaling error: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	httpReq, err := http.NewRequest("POST", url, bytes.NewBuffer(body))
+	if err != nil {
+		log.Printf("Failed to create HTTP request: %v", err)
+		http.Error(w, fmt.Sprintf("HTTP request error: %v", err), http.StatusInternalServerError)
+		return
+	}
+
 	httpReq.Header.Set("Content-Type", "application/json")
 	keyToUse := fmt.Sprintf("Bearer %s", key)
-	keyPreview := key[:10] + "..." + key[len(key)-10:]
+	keyPreview := ""
+	if len(key) > 20 {
+		keyPreview = key[:10] + "..." + key[len(key)-10:]
+	}
+
 	log.Printf("=== Anthropic Request ===")
 	log.Printf("URL: %s", url)
 	log.Printf("Model: %s", antReq.Model)
+	log.Printf("MaxTokens: %d", antReq.MaxTokens)
 	log.Printf("Auth Key: %s", keyPreview)
-	log.Printf("Request Body (pretty): %s", string(body))
+	log.Printf("Tool count: %d", len(antReq.Tools))
+	log.Printf("Request Body (first 500 chars): %.500s", string(body))
 	log.Printf("Messages count: %d", len(antReq.Messages))
 	for i, msg := range antReq.Messages {
 		log.Printf("  Message[%d]: role=%s, content_count=%d", i, msg.Role, len(msg.Content))
@@ -649,6 +702,7 @@ func handleAnthropicInference(w http.ResponseWriter, req openai.ChatCompletionRe
 			log.Printf("    Content[%d]: type=%s", j, content.Type)
 		}
 	}
+
 	httpReq.Header.Set("Authorization", keyToUse)
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
 
@@ -667,9 +721,41 @@ func handleAnthropicInference(w http.ResponseWriter, req openai.ChatCompletionRe
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		log.Printf("Error Body: %s", string(respBody))
-		http.Error(w, fmt.Sprintf("Anthropic API error (%d): %s", resp.StatusCode, string(respBody)), resp.StatusCode)
-		return
+		respStr := string(respBody)
+		log.Printf("Error Body: %s", respStr)
+
+		// Workaround: If we get a NoneType comparison error from litellm and have tools, retry without tools
+		if resp.StatusCode == 500 && strings.Contains(respStr, "NoneType") && (strings.Contains(respStr, ">") || strings.Contains(respStr, "not supported between")) && len(antReq.Tools) > 0 {
+			log.Printf("Litellm tool handling error detected. Retrying without tools...")
+			antReq.Tools = []anthropicTool{} // Clear tools and retry
+
+			// Retry the request without tools
+			body, _ = json.Marshal(antReq)
+			httpReq, _ = http.NewRequest("POST", url, bytes.NewBuffer(body))
+			httpReq.Header.Set("Content-Type", "application/json")
+			httpReq.Header.Set("Authorization", keyToUse)
+			httpReq.Header.Set("anthropic-version", "2023-06-01")
+
+			resp, err = client.Do(httpReq)
+			if err != nil {
+				log.Printf("Retry failed: %v", err)
+				http.Error(w, fmt.Sprintf("Anthropic retry error: %v", err), http.StatusInternalServerError)
+				return
+			}
+			defer resp.Body.Close()
+			respBody, _ = io.ReadAll(resp.Body)
+			respStr = string(respBody)
+			log.Printf("Retry Status Code: %d", resp.StatusCode)
+
+			if resp.StatusCode != http.StatusOK {
+				log.Printf("Retry Error Body: %s", respStr)
+				http.Error(w, fmt.Sprintf("Anthropic API error after retry (%d): %s", resp.StatusCode, respStr), resp.StatusCode)
+				return
+			}
+		} else {
+			http.Error(w, fmt.Sprintf("Anthropic API error (%d): %s", resp.StatusCode, respStr), resp.StatusCode)
+			return
+		}
 	}
 
 	var antResp anthropicResponse

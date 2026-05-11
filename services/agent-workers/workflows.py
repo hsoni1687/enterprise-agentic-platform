@@ -1,6 +1,8 @@
+import asyncio
 import json
 import logging
 from datetime import timedelta
+from typing import Optional
 from temporalio import workflow
 from temporalio.common import RetryPolicy
 
@@ -9,6 +11,7 @@ from temporalio.common import RetryPolicy
 class AgentWorkflow:
     def __init__(self):
         self._events: list[dict] = []
+        self._hitl_decision: Optional[str] = None
 
     @workflow.query
     def get_events(self) -> list[dict]:
@@ -16,6 +19,10 @@ class AgentWorkflow:
 
     def _emit(self, event: dict) -> None:
         self._events.append(event)
+
+    @workflow.signal(name="hitl_response")
+    async def hitl_response(self, data: dict) -> None:
+        self._hitl_decision = data.get("decision", "denied")
 
     @workflow.run
     async def run(self, request: dict) -> str:
@@ -167,8 +174,8 @@ class AgentWorkflow:
 
                         self._emit({
                             "type": "tool_call",
-                            "name": tool_name,
-                            "args": json.dumps(tool_args)
+                            "tool_name": tool_name,
+                            "tool_args": tool_args
                         })
 
                         # Execute execute_code tool
@@ -201,6 +208,13 @@ class AgentWorkflow:
                     break
             else:
                 # PydanticAI approach for other agents
+                try:
+                    with open("/tmp/workflow_debug.log", "a") as f:
+                        f.write(f"[WORKFLOW] Entering PydanticAI branch, iteration {i+1}\n")
+                        f.flush()
+                except:
+                    pass
+
                 decision = await workflow.execute_activity(
                     "pydantic_ai_reasoning_step",
                     args=[agent_context, messages, mcp_tool_defs],
@@ -215,6 +229,9 @@ class AgentWorkflow:
                 tool_calls = decision.get("tool_calls")
                 continue_loop = decision.get("continue_loop", False)
 
+                # DEBUG: Log the full decision
+                workflow.logger.info(f"[WORKFLOW] Decision from activity: keys={list(decision.keys())}, hitl_pending={decision.get('hitl_pending')}")
+
                 # Emit decision state
                 if decision.get("reasoning"):
                     self._emit({"type": "thinking", "content": decision["reasoning"]})
@@ -226,14 +243,75 @@ class AgentWorkflow:
                         tool_args = tc.get("arguments", {})
                         self._emit({
                             "type": "tool_call",
-                            "name": tool_name,
-                            "args": json.dumps(tool_args)
+                            "tool_name": tool_name,
+                            "tool_args": tool_args
                         })
 
                     # Note: Tool invocations and result collection happen inside
                     # pydantic_ai_reasoning_step. The messages here are pre-updated.
                     if decision.get("messages_delta"):
                         messages.extend(decision["messages_delta"])
+
+                # Check for HITL approval pending
+                if decision.get("hitl_pending"):
+                    approval_id = decision.get("hitl_approval_id", "")
+                    h_tool_name = decision.get("hitl_tool_name", "")
+                    h_tool_args = decision.get("hitl_tool_args", {})
+
+                    workflow.logger.info(f"[HITL WORKFLOW] approval_id='{approval_id}', tool_name='{h_tool_name}', has_args={bool(h_tool_args)}")
+
+                    # Log to file for debugging
+                    try:
+                        with open("/tmp/hitl_debug.log", "a") as f:
+                            f.write(f"[HITL] Emitting approval event: approval_id={approval_id}, tool={h_tool_name}\n")
+                            f.flush()
+                    except:
+                        pass
+
+                    approval_event = {
+                        "type": "approval",
+                        "approval_id": approval_id,
+                        "tool_name": h_tool_name,
+                        "tool_args": h_tool_args,
+                        "reason": f"Tool '{h_tool_name}' requires human approval before execution",
+                    }
+
+                    workflow.logger.info(f"[HITL] Event dict before emit: {list(approval_event.keys())}, has approval_id key: {'approval_id' in approval_event}, approval_id value: {approval_event.get('approval_id')}")
+
+                    self._emit(approval_event)
+
+                    workflow.logger.info(f"[HITL] Events list after emit: {len(self._events)} events, last event keys: {list(self._events[-1].keys()) if self._events else 'N/A'}")
+
+                    # Log after emit
+                    try:
+                        with open("/tmp/hitl_debug.log", "a") as f:
+                            f.write(f"[HITL] Events list now has {len(self._events)} events\n")
+                            f.write(f"[HITL] Last event: {json.dumps(self._events[-1]) if self._events else 'N/A'}\n")
+                            f.flush()
+                    except:
+                        pass
+
+                    self._hitl_decision = None
+                    try:
+                        await workflow.wait_condition(
+                            lambda: self._hitl_decision is not None,
+                            timeout=timedelta(minutes=5)
+                        )
+                    except asyncio.TimeoutError:
+                        final_answer = f"Approval timeout: '{h_tool_name}' was not reviewed within 5 minutes."
+                        break
+
+                    if self._hitl_decision == "approved":
+                        agent_context["approved_hitl_tools"] = {h_tool_name: approval_id}
+                        messages.append({
+                            "role": "user",
+                            "content": f"Tool '{h_tool_name}' has been approved. Please proceed with executing it.",
+                        })
+                        continue_loop = True
+                        final_answer = None
+                    else:
+                        final_answer = f"Execution of '{h_tool_name}' was denied by the operator."
+                        break
 
                 # Check if we should stop
                 if final_answer or not continue_loop:

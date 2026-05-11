@@ -335,6 +335,10 @@ async def pydantic_ai_reasoning_step(
             "tool_calls": [tc.model_dump() for tc in decision.tool_calls],
             "messages_delta": decision.messages_delta,
             "continue_loop": decision.continue_loop,
+            "hitl_pending": decision.hitl_pending,
+            "hitl_approval_id": decision.hitl_approval_id,
+            "hitl_tool_name": decision.hitl_tool_name,
+            "hitl_tool_args": decision.hitl_tool_args,
         }
 
         # Log what we're actually returning

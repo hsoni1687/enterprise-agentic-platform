@@ -35,6 +35,10 @@ class AgentContext(BaseModel):
         default=None,
         description="Retrieved past memories/findings to inject"
     )
+    approved_hitl_tools: dict[str, str] = Field(
+        default_factory=dict,
+        description="Pre-approved HITL tools: tool_name -> approval_id"
+    )
 
     class Config:
         json_schema_extra = {
@@ -90,6 +94,22 @@ class AgentDecision(BaseModel):
     continue_loop: bool = Field(
         default=True,
         description="Whether to continue reasoning loop"
+    )
+    hitl_pending: bool = Field(
+        default=False,
+        description="Whether a HITL approval is pending"
+    )
+    hitl_approval_id: Optional[str] = Field(
+        default=None,
+        description="Approval ID awaiting human decision"
+    )
+    hitl_tool_name: Optional[str] = Field(
+        default=None,
+        description="Tool name that requires approval"
+    )
+    hitl_tool_args: Optional[dict] = Field(
+        default=None,
+        description="Tool arguments awaiting approval"
     )
 
 

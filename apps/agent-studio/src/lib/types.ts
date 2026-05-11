@@ -106,10 +106,12 @@ export interface TransitionRequest {
 }
 
 export interface ChatEvent {
-  type: "thinking" | "tool_call" | "tool_result" | "text" | "error" | "done";
+  type: "thinking" | "tool_call" | "tool_result" | "text" | "error" | "done" | "approval";
   content?: string;
   tool_name?: string;
   tool_args?: unknown;
   tool_result?: unknown;
   timestamp?: string;
+  approval_id?: string;
+  reason?: string;
 }

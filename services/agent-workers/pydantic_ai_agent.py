@@ -10,11 +10,11 @@ This module:
 The agent runs within a Temporal activity, preserving durability and fault tolerance.
 """
 
+import asyncio
 import json
 import logging
 import os
-from typing import Any, Callable, Optional
-from functools import wraps
+from typing import Any, Callable
 
 import httpx
 from pydantic_ai import Agent, RunContext
@@ -96,15 +96,87 @@ class AgentToolRegistry:
     async def invoke_direct_tool(self, tool_name: str, tool_version: str, args: dict, mutating: bool) -> str:
         """Invoke a direct tool via Skill Dispatcher HTTP."""
         logger.info(f"Invoking direct tool '{tool_name}' for agent {self.context.agent_id}")
-        url = os.getenv("SKILL_DISPATCHER_URL", "http://localhost:8085")
+        url = os.getenv("SKILL_DISPATCHER_URL", "http://skill-dispatcher:8085")
+        workflow_initiator_url = os.getenv("WORKFLOW_INITIATOR_URL", "http://workflow-initiator:8081")
         try:
             async with httpx.AsyncClient() as client:
+                # If this tool was pre-approved by prior HITL, bypass the HITL gate
+                approval_id = self.context.approved_hitl_tools.get(tool_name, "")
+                if approval_id:
+                    logger.info(f"Tool '{tool_name}' is pre-approved (approval_id={approval_id}), bypassing HITL")
+                    resp = await client.post(
+                        f"{url}/api/v1/tools/invoke",
+                        json={"tool": {"name": tool_name, "version": tool_version}, "args": args, "agent_id": self.context.agent_id, "mutating": mutating, "hitl_approval_id": approval_id},
+                        headers={"X-Tenant-ID": self.context.tenant_id},
+                        timeout=30.0,
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                    return json.dumps(data.get("result", data))
+
                 resp = await client.post(
                     f"{url}/api/v1/tools/invoke",
                     json={"tool": {"name": tool_name, "version": tool_version}, "args": args, "agent_id": self.context.agent_id, "mutating": mutating},
                     headers={"X-Tenant-ID": self.context.tenant_id},
                     timeout=30.0,
                 )
+
+                # Handle HITL approval requirement (202 Accepted)
+                if resp.status_code == 202:
+                    data = resp.json()
+                    hitl_workflow_id = data.get("hitl_workflow_id", "")
+                    logger.info(f"Tool '{tool_name}' requires HITL approval. HITL Workflow: {hitl_workflow_id}")
+
+                    # Get the actual agent workflow ID from Temporal activity context
+                    agent_workflow_id = None
+                    try:
+                        from temporalio import activity
+                        info = activity.info()
+                        if info:
+                            agent_workflow_id = info.workflow_id
+                            logger.info(f"Got agent workflow ID from activity context: {agent_workflow_id}")
+                    except Exception as e:
+                        logger.error(f"Failed to get workflow ID from activity context: {e}")
+
+                    if not agent_workflow_id:
+                        agent_workflow_id = hitl_workflow_id
+
+                    try:
+                        # Store the approval request
+                        logger.info(f"[APPROVAL STORE] Starting approval storage at {workflow_initiator_url}/api/v1/approvals")
+                        logger.info(f"[APPROVAL STORE] Workflow ID: {agent_workflow_id}, Agent: {self.context.agent_id}, Tool: {tool_name}")
+
+                        logger.info(f"[APPROVAL STORE] Creating POST request...")
+                        store_resp = await client.post(
+                            f"{workflow_initiator_url}/api/v1/approvals",
+                            json={
+                                "workflow_id": agent_workflow_id,
+                                "agent_id": self.context.agent_id,
+                                "tool_name": tool_name,
+                                "tool_args": args,
+                                "reason": f"Mutating tool '{tool_name}' requires human approval"
+                            },
+                            headers={"X-Tenant-ID": self.context.tenant_id},
+                            timeout=10.0,
+                        )
+                        logger.info(f"[APPROVAL STORE] POST request completed with status: {store_resp.status_code}")
+                        store_resp.raise_for_status()
+                        approval_data = store_resp.json()
+                        approval_id = approval_data.get("approval_id", "")
+                        logger.info(f"Stored HITL approval request: {approval_id} (response: {approval_data})")
+
+                        # Return marker instead of polling — workflow will emit approval event and wait for signal
+                        marker = f"__HITL_PENDING__::{approval_id}::{tool_name}::{json.dumps(args)}"
+                        logger.info(f"Returning HITL marker: {marker[:80]}...")
+                        return marker
+                    except Exception as e:
+                        logger.error(f"Failed to store approval: {type(e).__name__}: {e}", exc_info=True)
+                        # Don't raise - instead return an error string that PydanticAI can handle
+                        # This allows the agent to recover and try again or provide feedback
+                        error_msg = f"HITL approval storage failed: {e}"
+                        logger.error(f"Returning error instead of marker: {error_msg}")
+                        return error_msg
+
                 resp.raise_for_status()
                 data = resp.json()
                 return json.dumps(data.get("result", data))
@@ -159,7 +231,7 @@ class AgentToolRegistry:
                 _skill_name: str = skill_name,
                 _skill_desc: str = skill_description
             ) -> str:
-                f"""{_skill_desc}
+                """Execute the skill.
 
                 Args:
                     args: Skill arguments as dict
@@ -186,8 +258,9 @@ class AgentToolRegistry:
                 _tool_name: str = tool_name,
                 _tool_version: str = tool_version,
                 _is_mutating: bool = is_mutating,
+                _tool_desc: str = tool_description,
             ) -> str:
-                f"""{tool_description}
+                f"""{_tool_desc}
 
                 Args:
                     args: Tool arguments as dict
@@ -215,7 +288,7 @@ class AgentToolRegistry:
                 _qualified_name: str = qualified_name,
                 _desc: str = description
             ) -> str:
-                f"""{_desc}
+                """Execute the tool via MCP.
 
                 Args:
                     args: Tool arguments as dict
@@ -410,6 +483,40 @@ async def convert_response_to_decision(response: Any, mcp_tools: list[MCPToolDef
     tool_calls = await extract_tool_calls_from_response(response)
     logger.info(f"Extracted tool_calls: {len(tool_calls)} calls")
 
+    # Detect HITL pending marker in tool return parts
+    hitl_info = None
+    logger.info("DEBUG: Scanning for HITL markers in response messages")
+    for msg_idx, msg in enumerate(response.all_messages()):
+        logger.info(f"DEBUG: Message {msg_idx}: type={type(msg).__name__}, kind={getattr(msg, 'kind', None)}")
+        parts = getattr(msg, "parts", [])
+        logger.info(f"DEBUG: Message has {len(parts)} parts")
+        for part_idx, part in enumerate(parts):
+            part_kind = getattr(part, "part_kind", None)
+            logger.info(f"DEBUG: Part {part_idx}: part_kind={part_kind}, type={type(part).__name__}")
+            if part_kind == "tool-return":
+                content = getattr(part, "content", "")
+                logger.info(f"DEBUG: Tool-return content (first 200 chars): {repr(content[:200])}")
+                if isinstance(content, str) and content.startswith("__HITL_PENDING__::"):
+                    segments = content.split("::", 3)
+                    if len(segments) >= 4:
+                        try:
+                            hitl_info = {
+                                "approval_id": segments[1],
+                                "tool_name": segments[2],
+                                "tool_args": json.loads(segments[3]) if segments[3] else {},
+                            }
+                            logger.info(f"Detected HITL pending: approval_id={hitl_info['approval_id']}, tool={hitl_info['tool_name']}")
+                            break
+                        except Exception as e:
+                            logger.warning(f"Failed to parse HITL marker: {e}")
+        if hitl_info:
+            break
+
+    # Suppress LLM's "waiting for approval" text when HITL is pending
+    if hitl_info:
+        final_answer = None
+        continue_loop = False
+
     # Build message delta for state persistence
     try:
         for msg in response.all_messages():
@@ -417,15 +524,25 @@ async def convert_response_to_decision(response: Any, mcp_tools: list[MCPToolDef
     except Exception as e:
         logger.warning(f"Failed to build message delta: {e}")
 
-    continue_loop = bool(tool_calls) and not final_answer
-    logger.info(f"Decision: final_answer={bool(final_answer)}, tool_calls={len(tool_calls)}, continue_loop={continue_loop}")
+    continue_loop = bool(tool_calls) and not final_answer if not hitl_info else False
+    logger.info(f"Decision: final_answer={bool(final_answer)}, tool_calls={len(tool_calls)}, continue_loop={continue_loop}, hitl_pending={bool(hitl_info)}")
 
-    return AgentDecision(
+    decision_obj = AgentDecision(
         final_answer=final_answer,
         tool_calls=tool_calls,
         messages_delta=messages_delta,
         continue_loop=continue_loop,
+        hitl_pending=bool(hitl_info),
+        hitl_approval_id=hitl_info["approval_id"] if hitl_info else None,
+        hitl_tool_name=hitl_info["tool_name"] if hitl_info else None,
+        hitl_tool_args=hitl_info["tool_args"] if hitl_info else None,
     )
+
+    logger.info(f"AgentDecision object: hitl_pending={decision_obj.hitl_pending}, hitl_approval_id={decision_obj.hitl_approval_id}")
+    logger.info(f"AgentDecision.dict(): {decision_obj.dict()}")
+    logger.info(f"AgentDecision.model_dump(): {decision_obj.model_dump()}")
+
+    return decision_obj
 
 
 def _message_to_dict(message: Any) -> dict:

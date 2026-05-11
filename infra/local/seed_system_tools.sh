@@ -7,7 +7,7 @@ set -e
 
 ADMIN_API="${ADMIN_API_URL:-http://localhost:8089}"
 ADMIN_KEY="${ADMIN_API_KEY:-dev-admin-key}"
-TOOLS_YAML="${1:-infra/platform/system-tools.yaml}"
+TOOLS_YAML="${TOOLS_YAML:-${1:-infra/platform/system-tools.yaml}}"
 
 echo "=========================================="
 echo "Seeding System Tools for A1 Platform"
@@ -86,9 +86,10 @@ web-fetch:1.0.0:Fetch a web page and return a summarized extract with source cit
 code-executor:1.0.0:Execute code snippets in a sandboxed environment:mutating:true
 http-request:1.0.0:Make HTTP requests to external APIs:mutating:false
 text-processing:1.0.0:Advanced text processing operations:read:false
-data-validation:1.0.0:Validate data against schemas:read:false"
+data-validation:1.0.0:Validate data against schemas:read:false
+bash:1.0.0:Execute bash commands with streaming output and signal handling:mutating:true"
 
-  while IFS= read -r TOOL_DEF; do
+  echo "$TOOLS" | while IFS= read -r TOOL_DEF; do
     [ -z "$TOOL_DEF" ] && continue
 
     NAME=$(echo "$TOOL_DEF" | cut -d: -f1)
@@ -113,7 +114,7 @@ data-validation:1.0.0:Validate data against schemas:read:false"
       echo "  Response: $RESPONSE"
       FAILED=$((FAILED + 1))
     fi
-  done <<< "$TOOLS"
+  done
 else
   # Use Python for full YAML parsing with metadata extraction
   python3 << PYEOF
