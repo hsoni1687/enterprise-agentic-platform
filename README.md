@@ -197,13 +197,15 @@ All within their **tenant workspace**:
    - One-click import into their tenant
    - Platform creates: agent templates, skills, KG schema (tenant-isolated)
 
-2. **Build Domain KG** (Agent Studio → KG-Architect Chat)
+2. **Build Domain KG** (Agent Studio → Knowledge Graphs → KG Builder)
    - Natural language: "We have 12 microservices. api-gateway depends on user-service and product-service. They share a Postgres cluster."
    - KG-Architect system agent iteratively calls kg-* tools to build graph
-   - Architect reviews, refines, and approves
+   - Real-time graph preview on right panel shows structure as you describe
+   - Iteration history shows each step taken
+   - Architect reviews, refines with follow-ups, and approves
    - Result: Production-ready KG in their tenant
 
-**2b. Visualize & Explore KG** (Agent Studio → Knowledge Graphs)
+**2b. Visualize & Explore KG** (Agent Studio → Knowledge Graphs → KG Visualizer)
    - Interactive graph visualization showing nodes and edges
    - Search entities by type, properties, or relationships
    - Click nodes to inspect properties and connected relationships
@@ -353,6 +355,240 @@ All within their **tenant workspace**:
 **All within Agent Studio (no Admin Console required)**
 
 (Without platform: weeks of prompt engineering, tool integration, testing)
+
+## 🧠 Knowledge Graph Workspace (Agent Studio)
+
+### Overview
+
+The **Knowledge Graphs** workspace in Agent Studio is where domain architects design and manage their tenant's knowledge graphs. It's a dedicated section similar to "Agents", "Skills", and "Tool Registry", providing a complete KG development experience with AI-assisted building, interactive visualization, and management tools.
+
+### Workspace Structure
+
+```
+Agent Studio (port 3000)
+┌─────────────────────────────────────────────────────────┐
+│ ☰ Dashboard  |  Agents  |  Skills  |  ◆ Knowledge Graphs│
+└─────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────┐
+│ Knowledge Graphs Workspace                              │
+├─────────────────────────────────────────────────────────┤
+│ [Tabs: KG List | KG Builder | KG Visualizer]           │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Tab 1: KG List (Browse & Manage)
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│ Knowledge Graphs                    [+ Create New KG]        │
+├──────────────────────────────────────────────────────────────┤
+│                                                               │
+│ DevOps-Infra (v1.2.0)                              [Edit]    │
+│ └─ Last updated: 2 hours ago | 15 nodes, 23 edges          │
+│    Description: 3-tier microservices with shared databases  │
+│    Status: ✓ Active                                          │
+│    [View] [Visualize] [Export] [Delete]                     │
+│                                                               │
+│ Fintech-Trading (v1.0.0)                           [Edit]    │
+│ └─ Last updated: 1 day ago | 28 nodes, 54 edges            │
+│    Description: Portfolio assets and risk exposure mapping  │
+│    Status: ✓ Active                                          │
+│    [View] [Visualize] [Export] [Delete]                     │
+│                                                               │
+│ Healthcare-Patients (v0.5.0)                       [Draft]   │
+│ └─ Last updated: 3 days ago | 5 nodes, 2 edges             │
+│    Description: Patient records and care pathways           │
+│    Status: ⊘ Draft (incomplete)                             │
+│    [Continue Building] [Visualize] [Delete]                 │
+│                                                               │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### Tab 2: KG Builder (Design via KG-Architect)
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│ KG Builder: DevOps-Infra                    [Save] [Discard] │
+├──────────────────────────────────────────────────────────────┤
+│                                                               │
+│ ┌─────────────────────────────┐  ┌─────────────────────────┐ │
+│ │  KG-Architect Chat          │  │  Graph Preview          │ │
+│ │                             │  │  ┌─────────────────────┐│ │
+│ │ You: "We have 3 services.   │  │  │     api-gateway    ││ │
+│ │ api-gateway depends on both │  │  │         ╱╲         ││ │
+│ │ user-service and            │  │  │        ╱  ╲        ││ │
+│ │ product-service. They share │  │  │   user-s  product-s││ │
+│ │ a Postgres cluster."        │  │  │       │    │        ││ │
+│ │                             │  │  │       └────┘        ││ │
+│ │ KG-Architect: "I'll create  │  │  │      postgres       ││ │
+│ │ this graph. Starting...     │  │  │                     ││ │
+│ │ • Creating graph: DevOps-   │  │  │  ✓ 3 nodes added   ││ │
+│ │   Infra                     │  │  │  ✓ 2 edges added   ││ │
+│ │ • Adding api-gateway node   │  │  │  ⧖ Updating...     ││ │
+│ │ • Adding user-service node  │  │  └─────────────────────┘│ │
+│ │ • Adding product-service    │  │                         │ │
+│ │   node                      │  │                         │ │
+│ │ • Adding shared postgres    │  │                         │ │
+│ │   node                      │  │                         │ │
+│ │ • Creating dependencies...  │  │  ┌─────────────────────┐│ │
+│ │                             │  │  │ Iteration History   ││ │
+│ │ Done! Graph has 4 nodes and │  │  │ ─────────────────  ││ │
+│ │ 3 edges. Continue refining? │  │  │ 1. kg-create-graph ││ │
+│ │                             │  │  │ 2. kg-add-node ×4  ││ │
+│ │ [Thumbs up] [Continue Chat] │  │  │ 3. kg-add-edge ×3  ││ │
+│ │ [Undo] [Save & Exit]        │  │  │ [Undo] [Redo]     ││ │
+│ │                             │  │  └─────────────────────┘│ │
+│ │ [Type refinement...]        │  │                         │ │
+│ │                             │  │                         │ │
+│ └─────────────────────────────┘  └─────────────────────────┘ │
+│                                                               │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**KG Builder Features:**
+
+- **Left Panel (Chat Interface)**:
+  - Real-time conversation with KG-Architect system agent
+  - Streaming responses via SSE
+  - Architect describes domain; agent suggests KG structure
+  - Follow-ups to refine relationships and properties
+  - Confirmation prompts before operations
+
+- **Right Panel (Graph Preview)**:
+  - Real-time visualization as changes are made
+  - Shows nodes and edges being added
+  - Highlights new additions with animation
+  - Mini-map for navigation in large graphs
+  - Statistics: current node/edge count
+
+- **Bottom Panel (Iteration History)**:
+  - Ordered list of operations performed
+  - Each step shows: tool called, parameters, result
+  - Undo/Redo buttons
+  - Export iteration log for documentation
+
+- **Top Actions**:
+  - Save (persists KG to tenant database)
+  - Discard (abandon session, revert to last saved)
+  - Settings (rename KG, change schema, version)
+
+### Tab 3: KG Visualizer (Browse & Explore)
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│ KG Visualizer: DevOps-Infra            [Search] [Stats] [Exp]│
+├──────────────────────────────────────────────────────────────┤
+│                                                               │
+│ ┌──────────────────────────────────────────────────────────┐ │
+│ │ Search: [Enter entity name or property...] [Filter by]  │ │
+│ │         [Service ▼] [depends_on ▼]                      │ │
+│ │                                                          │ │
+│ │                   Graph Canvas                          │ │
+│ │                                                          │ │
+│ │            ◯ api-gateway (Service)                      │ │
+│ │                 ╱ depends_on ╲                          │ │
+│ │                ╱               ╲                        │ │
+│ │         ◯ user-svc        ◯ product-svc                │ │
+│ │                 ╲                ╱                      │ │
+│ │              uses_database      ╱                       │ │
+│ │                   ╲            ╱                        │ │
+│ │                    ◯ postgres                           │ │
+│ │                                                          │ │
+│ │ [Pan] [Zoom] [Reset View]                               │ │
+│ └──────────────────────────────────────────────────────────┘ │
+│                                                               │
+│ ┌─────────────────────────────┐  ┌──────────────────────────┐│
+│ │ Node Inspector              │  │ Statistics               ││
+│ │ ─────────────────           │  │ ──────────               ││
+│ │ Selected: api-gateway       │  │ Total Nodes: 4           ││
+│ │ Type: Service               │  │ Total Edges: 3           ││
+│ │ Properties:                 │  │ Entity Types:            ││
+│ │  • port: 8080              │  │  - Service: 3            ││
+│ │  • tier: frontend          │  │  - Database: 1           ││
+│ │ Connected To:               │  │ Relationship Types:      ││
+│ │  → user-service            │  │  - depends_on: 2         ││
+│ │     (depends_on)            │  │  - uses_database: 1      ││
+│ │  → product-service          │  │ Densest Node:            ││
+│ │     (depends_on)            │  │  postgres (2 edges)      ││
+│ │ [Traverse] [Show Subgraph]  │  │                          ││
+│ └─────────────────────────────┘  └──────────────────────────┘│
+│                                                               │
+│ [Export as JSON] [Export as PNG] [Download Report]           │
+│                                                               │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**KG Visualizer Features:**
+
+- **Graph Canvas** (Interactive D3.js/Cytoscape):
+  - Pan, zoom, drag nodes
+  - Node colors by entity type
+  - Edge labels showing relationship types
+  - Animations when exploring
+
+- **Search & Filter Panel**:
+  - Search entities by name
+  - Filter by entity type (Service, Database, etc.)
+  - Filter by relationship type (depends_on, uses_database, etc.)
+  - Highlight search results
+
+- **Node Inspector** (Right panel):
+  - Click node → show all properties
+  - List connected nodes with edge types
+  - "Traverse" button → expand connected subgraph
+  - "Show Subgraph" → highlight N hops away
+
+- **Statistics Panel** (Right panel):
+  - Node and edge counts
+  - Entity type distribution
+  - Relationship type breakdown
+  - Densest nodes (most connections)
+
+- **Export Options**:
+  - JSON (for backup, version control, sharing)
+  - PNG (for documentation, Slack, presentations)
+  - Full report (stats + metadata + timestamp)
+
+### Multi-KG Management
+
+Architects can manage multiple KGs for different domains:
+
+```
+KG List showing:
+✓ DevOps-Infra (Active)      — 15 nodes, 23 edges
+✓ Fintech-Trading (Active)   — 28 nodes, 54 edges
+⊘ Healthcare-Patients (Draft) — 5 nodes, 2 edges
+```
+
+Each KG is independent:
+- Separate nodes and edges
+- Separate import source (which cookbook)
+- Separate schema and properties
+- Separate access control (tenant-isolated)
+
+### Workflow: From KG Builder to Agent Creation
+
+```
+1. KG Builder Chat
+   ↓ (Architect describes domain)
+   KG-Architect creates graph
+   ↓ (Architect refines)
+   Graph finalized & saved
+   ↓
+2. KG Visualizer
+   (Architect explores structure)
+   ↓ (Verify correctness)
+   Ready for agent use
+   ↓
+3. Agent Studio → Create Agent
+   (Agent gets access to KG context)
+   [Pre-populated with kg-query, kg-search tools]
+   ↓
+4. Deploy & Operate
+   (Agents query KG during reasoning)
+```
 
 ### Service Topology
 

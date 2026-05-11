@@ -961,6 +961,306 @@ The **KG-Architect** is the second platform system agent, specialized for natura
 
 ---
 
+## 1.7 Knowledge Graph Workspace (Agent Studio - Complete UI Architecture)
+
+The **Knowledge Graphs** workspace is a dedicated section in Agent Studio where domain architects design, build, visualize, and manage knowledge graphs. It mirrors the structure of other Agent Studio sections (Agents, Skills, Tool Registry) but with specialized UI for KG operations.
+
+### Workspace Navigation
+
+```
+Agent Studio Top Nav:
+[Dashboard] [Agents] [Skills] [Tool Registry] [◆ Knowledge Graphs] [Settings]
+
+Within Knowledge Graphs section (Tabs):
+[KG List] | [KG Builder] | [KG Visualizer]
+```
+
+### Tab 1: KG List (Browse & Manage)
+
+**Purpose**: Discover and manage all tenant KGs
+
+**Components**:
+- **KG List Display**:
+  - Table or card view of all tenant graphs
+  - Columns: Name, Version, Status, Node Count, Edge Count, Last Updated, Actions
+  - Sortable and filterable
+
+- **Metadata per KG**:
+  - Name and version (e.g., "DevOps-Infra v1.2.0")
+  - Description/documentation
+  - Creation date, last updated timestamp
+  - Current status: Draft | Active | Archived
+  - Node and edge counts
+  - Schema (entity types, relationship types)
+
+- **Action Buttons**:
+  - [View] → Opens KG Builder (continue refining)
+  - [Visualize] → Opens KG Visualizer
+  - [Export] → Download as JSON or PNG
+  - [Duplicate] → Clone KG (for creating templates)
+  - [Archive] → Move to archived (soft delete)
+  - [Delete] → Permanent removal (with confirmation)
+
+- **Create New KG**:
+  - [+ Create New KG] button
+  - Dialog options:
+    - Start fresh (blank schema)
+    - Import from cookbook template
+    - Import from JSON file
+    - Import from existing KG (clone)
+
+**Database Model**:
+```sql
+kg_graphs table:
+- id (UUID)
+- tenant_id (TEXT, RLS)
+- name (TEXT)
+- version (TEXT)
+- description (TEXT)
+- schema (JSONB) -- entity types, relationship types
+- status (TEXT) -- draft/active/archived
+- created_at, updated_at (TIMESTAMPTZ)
+```
+
+### Tab 2: KG Builder (Design via KG-Architect)
+
+**Purpose**: Natural-language KG design with real-time visualization
+
+**Three-Panel Layout**:
+
+```
+┌───────────────────────────────────────────────────┐
+│  [Save] [Discard] [Undo] [Redo] [Export] [Exp]  │
+├───────────────────────────────────────────────────┤
+│  Left Panel          │  Center Panel  │  Right   │
+│ KG-Architect Chat   │  Graph Preview │  Panels  │
+│                     │                │          │
+│ • Message input    │ • Real-time    │ • Stats  │
+│ • Chat history      │   D3 canvas   │ • Export │
+│ • Streaming resp.  │ • Nodes & edges│ • Help   │
+│                     │ • Mini-map     │          │
+│                     │ • Zoom/Pan    │          │
+│                     │                │          │
+│                     │  Bottom Panel  │          │
+│                     │ Iteration Hist │          │
+│                     │ • Tool calls   │          │
+│                     │ • Undo/Redo   │          │
+└───────────────────────────────────────────────────┘
+```
+
+**Panel 1 - KG-Architect Chat**:
+- Conversational interface with KG-Architect system agent
+- Streaming responses via SSE (show typing indicator)
+- Message input field at bottom
+- Chat history above
+- Architect describes domain; agent builds graph
+- Follow-up refinements and clarifications
+
+**Interaction Flow**:
+```
+Architect: "We have 3 services: api-gateway, user-service, product-service.
+           api-gateway depends on the other two.
+           user-service and product-service both use postgres."
+
+KG-Architect (streaming response):
+"I'll build this graph step by step...
+
+Step 1: Creating graph 'Services'... ✓
+Step 2: Adding service nodes...
+  • api-gateway ✓
+  • user-service ✓
+  • product-service ✓
+Step 3: Adding database node...
+  • postgres ✓
+Step 4: Creating relationships...
+  • api-gateway depends_on user-service ✓
+  • api-gateway depends_on product-service ✓
+  • user-service uses_database postgres ✓
+  • product-service uses_database postgres ✓
+
+Done! Graph has 4 nodes and 4 edges. Ready to refine further? 
+Tell me if you'd like to add more details (e.g., environments, teams, runbooks)."
+
+Architect: "Also add that these run in prod, staging, and dev environments."
+
+KG-Architect:
+"Adding environments...
+  • prod ✓
+  • staging ✓
+  • dev ✓
+Adding deployments...
+  • api-gateway deployed_in prod ✓
+  • api-gateway deployed_in staging ✓
+  ... [and so on]
+
+Graph now has 10 nodes and 12 edges."
+```
+
+**Panel 2 - Graph Preview**:
+- Real-time D3.js/Cytoscape canvas
+- Updates as each tool call completes
+- Shows nodes (colored by type) and edges (labeled with relationship type)
+- Mini-map in corner for navigation in large graphs
+- Zoom/pan controls
+- Statistics: "4 nodes, 4 edges"
+
+**Panel 3 - Iteration History**:
+- Chronological log of all kg-* tool calls
+- Each entry: tool name, parameters, result status
+- Rows: "kg-create-graph: DevOps → graph_id: abc123"
+- Rows: "kg-add-node: Service/api-gateway → node_id: n1"
+- Rows: "kg-add-edge: n1→n2/depends_on → edge_id: e1"
+- [Undo] button (revert last step)
+- [Redo] button (restore undone step)
+- [Copy as JSON] button (audit trail export)
+
+**Top Action Bar**:
+- [Save] → Persist graph to database
+- [Discard] → Abandon changes, revert to last saved
+- [Undo] → Undo last KG-Architect operation
+- [Redo] → Redo undone operation
+- [Export] → Download current state as JSON
+
+### Tab 3: KG Visualizer (Browse & Explore)
+
+**Purpose**: Explore graph structure, understand domain topology
+
+**Five-Panel Layout**:
+
+```
+┌──────────────────────────────────────────────────┐
+│ [Search: ________] [Filter: Entity▼] [Rel.Type▼]│
+├──────────────────────────────────────────────────┤
+│                                                  │
+│  Graph Canvas (D3.js/Cytoscape)  │ Node Inspect │
+│  • Interactive nodes & edges      │ • Properties│
+│  • Pan/zoom/drag                 │ • Connections
+│  • Hover tooltips                │ • Actions   │
+│  • Highlight search results      │             │
+│                                  │             │
+│                                  │ Statistics  │
+│                                  │ • Counts    │
+│                                  │ • Breakdown │
+│                                  │ • Density   │
+│                                  │             │
+│                                  │ Export Opts │
+│                                  │ • JSON      │
+│                                  │ • PNG       │
+│                                  │ • Report    │
+└──────────────────────────────────────────────────┘
+```
+
+**Search & Filter Bar**:
+- Search input: entity name, properties, relationships
+- Filter dropdown 1: Entity Type (Service, Database, Environment, etc.)
+- Filter dropdown 2: Relationship Type (depends_on, uses_database, deployed_in, etc.)
+- Results highlight on canvas (color background, outline, etc.)
+
+**Graph Canvas**:
+- D3.js or Cytoscape.js renderer
+- Node rendering:
+  - Shape: Circle (or varied by type)
+  - Color: By entity type (Service=blue, Database=green, Environment=gray, etc.)
+  - Label: Entity name
+  - Size: By node degree (connectivity)
+- Edge rendering:
+  - Stroke: Line or arrow-head indicating direction
+  - Color: By relationship type
+  - Label: Relationship name (depends_on, uses_database, etc.)
+  - Hover: Show edge metadata
+- Interactions:
+  - Click node → select (highlight)
+  - Drag node → reposition (forces-based layout)
+  - Scroll → zoom in/out
+  - Double-click background → reset view
+  - Right-click node → context menu (inspect, traverse, etc.)
+
+**Node Inspector (Right Panel 1)**:
+- Triggered on node click
+- Display:
+  - Node ID, Type, Name
+  - All JSONB properties (key-value pairs)
+  - Timestamps (created_at, updated_at)
+- Connected Nodes Section:
+  - List of all connected nodes
+  - Edge type for each connection (incoming/outgoing)
+  - Count of connections
+- Action Buttons:
+  - [Traverse] → Expand neighbors on canvas
+  - [Show Subgraph] → Show all nodes within N hops (slider for depth)
+  - [Copy Node ID] → For documentation
+
+**Statistics Panel (Right Panel 2)**:
+- Overall Metrics:
+  - Total Nodes
+  - Total Edges
+  - Graph Density (edges / possible edges)
+- Breakdown by Type:
+  - Nodes: Service (3), Database (1), Environment (3), etc.
+  - Edges: depends_on (2), uses_database (2), deployed_in (6), etc.
+- Connectivity Metrics:
+  - Most connected node (densest)
+  - Least connected nodes
+  - Orphan nodes (if any)
+  - Average degree
+
+**Export Options**:
+- [Export as JSON] → Full graph JSON (nodes + edges + metadata)
+- [Export as PNG] → Screenshot of current canvas
+- [Generate Report] → PDF with stats, schema, entity list, relationship matrix
+- [Copy as Markdown] → For documentation wikis
+
+### Multi-KG Support
+
+Architects manage multiple KGs for different domains:
+
+**Example Scenario**:
+```
+KG List shows:
+1. DevOps-Infra (v1.2.0) — Active
+   └─ 15 nodes, 23 edges
+   └─ Last updated: 2 hours ago
+   └─ [View] [Visualize] [Export] [Delete]
+
+2. Fintech-Trading (v1.0.0) — Active
+   └─ 28 nodes, 54 edges
+   └─ Last updated: 1 day ago
+   └─ [View] [Visualize] [Export] [Delete]
+
+3. Healthcare-Patients (v0.5.0) — Draft
+   └─ 5 nodes, 2 edges
+   └─ Last updated: 3 days ago
+   └─ [Continue Building] [Visualize] [Delete]
+```
+
+Each KG is independently:
+- Stored in `kg_graphs` and related tables
+- Scoped to tenant (RLS isolation)
+- Linked to a specific cookbook (optional)
+- Independently versioned and exported
+
+### Data Persistence & Queries
+
+**KG Builder**:
+- Calls KG Service (port 8093) for all kg-* operations
+- KG Service enforces RLS: `SET LOCAL app.tenant_id = <tenant_id>`
+- All writes go to PostgreSQL: kg_graphs, kg_nodes, kg_edges tables
+- Real-time UI updates via streaming responses (SSE)
+
+**KG Visualizer**:
+- Calls KG Service queries: kg-query, kg-search
+- RLS enforced at database layer
+- Canvas re-renders based on query results
+- Search filters sent to KG Service for filtering
+
+**Multi-Tenant Isolation**:
+- Architect can ONLY see their tenant's KGs
+- X-Tenant-ID header passed from Agent Studio
+- KG Service validates tenant context before any query
+- PostgreSQL RLS policies prevent cross-tenant access
+
+---
+
 ## 1.5 Admin Plane (Platform Governance Architecture)
 
 The **Admin Plane** is a dedicated governance layer that separates platform operations from user-facing agent creation and execution. It provides platform administrators with tenancy management, LLM provider configuration, cost attribution, audit logging, cross-tenant observability, and Knowledge Graph management.
