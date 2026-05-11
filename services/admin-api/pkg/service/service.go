@@ -1737,7 +1737,9 @@ func (h *AdminHandler) HandleImportCookbook(w http.ResponseWriter, r *http.Reque
 			warnings = append(warnings, fmt.Sprintf("Failed to create agent from '%s': %v", agentRef.File, err))
 			continue
 		}
-		createdAgentIDs = append(createdAgentIDs, agentID)
+		if agentID != "" {
+			createdAgentIDs = append(createdAgentIDs, agentID)
+		}
 	}
 
 	// Step 3: MCPs are recommendations only (currently not enforced)
@@ -1816,10 +1818,10 @@ func (h *AdminHandler) createKnowledgeGraph(ctx context.Context, kg struct {
 		return graphID, fmt.Errorf("failed to parse seed data: %w", err)
 	}
 
-	// Create nodes
+	// Create nodes and build ID mapping (seed ID → UUID)
+	nodeIDMap := make(map[string]string)
 	for _, node := range seedKG.Nodes {
 		nodeReq := map[string]interface{}{
-			"id":        node.ID,
 			"graph_id":  graphID,
 			"node_type": node.Type,
 			"label":     node.Label,
@@ -1830,19 +1832,44 @@ func (h *AdminHandler) createKnowledgeGraph(ctx context.Context, kg struct {
 		nodeBody, _ := json.Marshal(nodeReq)
 		resp, err := h.httpPost(h.KGServiceURL+"/nodes/create", tenantID, nodeBody)
 		if err != nil {
+			fmt.Printf("[DEBUG] Failed to POST node %s: %v\n", node.ID, err)
+			continue
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			body, _ := io.ReadAll(resp.Body)
+			fmt.Printf("[DEBUG] Node creation failed with %d: %s\n", resp.StatusCode, string(body))
+			resp.Body.Close()
+			continue
+		}
+
+		var nodeResp map[string]interface{}
+		if err := json.NewDecoder(resp.Body).Decode(&nodeResp); err != nil {
+			fmt.Printf("[DEBUG] Failed to decode node response: %v\n", err)
 			resp.Body.Close()
 			continue
 		}
 		resp.Body.Close()
+
+		if uuid, ok := nodeResp["id"].(string); ok {
+			nodeIDMap[node.ID] = uuid
+			fmt.Printf("[DEBUG] Node %s → UUID %s\n", node.ID, uuid)
+		}
 	}
 
-	// Create edges
+	// Create edges using UUID mapping
 	for _, edge := range seedKG.Edges {
+		fromUUID, fromOK := nodeIDMap[edge.FromNodeID]
+		toUUID, toOK := nodeIDMap[edge.ToNodeID]
+		if !fromOK || !toOK {
+			fmt.Printf("[DEBUG] Skipping edge %s: from_node %s → %v, to_node %s → %v\n",
+				edge.ID, edge.FromNodeID, fromOK, edge.ToNodeID, toOK)
+			continue
+		}
+
 		edgeReq := map[string]interface{}{
-			"id":                edge.ID,
 			"graph_id":          graphID,
-			"from_node_id":      edge.FromNodeID,
-			"to_node_id":        edge.ToNodeID,
+			"from_node_id":      fromUUID,
+			"to_node_id":        toUUID,
 			"relationship_type": edge.RelationshipType,
 		}
 		if edge.Properties != nil {
@@ -1851,8 +1878,12 @@ func (h *AdminHandler) createKnowledgeGraph(ctx context.Context, kg struct {
 		edgeBody, _ := json.Marshal(edgeReq)
 		resp, err := h.httpPost(h.KGServiceURL+"/edges/create", tenantID, edgeBody)
 		if err != nil {
-			resp.Body.Close()
+			fmt.Printf("[DEBUG] Failed to POST edge %s: %v\n", edge.ID, err)
 			continue
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			body, _ := io.ReadAll(resp.Body)
+			fmt.Printf("[DEBUG] Edge creation failed with %d for edge %s: %s\n", resp.StatusCode, edge.ID, string(body))
 		}
 		resp.Body.Close()
 	}
@@ -1909,22 +1940,34 @@ func (h *AdminHandler) createAgentFromYAML(ctx context.Context, yamlPath string,
 	}
 
 	body, _ := json.Marshal(manifest)
+	fmt.Printf("[DEBUG] Creating agent '%s' for tenant '%s' with manifest: %s\n", agent.Name, tenantID, string(body))
 	resp, err := h.httpPost(h.AgentRegistryURL+"/api/v1/agents", tenantID, body)
 	if err != nil {
+		fmt.Printf("[DEBUG] HTTP error creating agent: %v\n", err)
 		return "", fmt.Errorf("failed to create agent: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("agent-registry returned %d: %s", resp.StatusCode, string(body))
+		bodyStr := string(body)
+		fmt.Printf("[DEBUG] Agent creation error %d: %s\n", resp.StatusCode, bodyStr)
+
+		// If agent already exists (duplicate key), skip it instead of failing
+		if resp.StatusCode == 500 && strings.Contains(bodyStr, "duplicate") {
+			fmt.Printf("[DEBUG] Agent '%s' already exists, skipping\n", agent.Name)
+			return "", nil // Return empty string but no error
+		}
+		return "", fmt.Errorf("agent-registry returned %d: %s", resp.StatusCode, bodyStr)
 	}
 
 	var agentResp map[string]interface{}
 	if err := json.NewDecoder(resp.Body).Decode(&agentResp); err != nil {
+		fmt.Printf("[DEBUG] Failed to decode agent response: %v\n", err)
 		return "", fmt.Errorf("failed to decode agent response: %w", err)
 	}
 	agentID, ok := agentResp["id"].(string)
 	if !ok {
+		fmt.Printf("[DEBUG] Invalid agent response, no id field. Response: %+v\n", agentResp)
 		return "", fmt.Errorf("invalid agent response: missing id")
 	}
 
