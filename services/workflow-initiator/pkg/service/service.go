@@ -131,17 +131,33 @@ func HandleStartSession(w http.ResponseWriter, r *http.Request) {
 			req.Manifest.Model, len(req.Manifest.SystemPrompt))
 	}
 
-	taskQueue := "agent-task-queue"
-	if req.TenantID != "" {
-		taskQueue = fmt.Sprintf("%s-agent-queue", req.TenantID)
-	}
+	// Use default task queue for all workflows (agent-workers only listens on default-tenant-agent-queue)
+	taskQueue := "default-tenant-agent-queue"
 
 	workflowOptions := client.StartWorkflowOptions{
 		ID:        fmt.Sprintf("agent-wf-%s-%s", req.AgentID, req.SessionID),
 		TaskQueue: taskQueue,
 	}
 
-	we, err := temporalClient.ExecuteWorkflow(context.Background(), workflowOptions, "AgentWorkflow", req)
+	// Convert request to map for Temporal serialization to ensure manifest passes through properly
+	reqMap := map[string]interface{}{
+		"agent_id":        req.AgentID,
+		"session_id":      req.SessionID,
+		"tenant_id":       req.TenantID,
+		"prompt":          req.Prompt,
+		"idempotency_key": req.IdempotencyKey,
+		"context":         req.Context,
+	}
+	if req.Manifest != nil {
+		// Convert manifest struct to map for proper Temporal serialization
+		manifestBytes, _ := json.Marshal(req.Manifest)
+		var manifestMap map[string]interface{}
+		json.Unmarshal(manifestBytes, &manifestMap)
+		reqMap["manifest"] = manifestMap
+		log.Printf("[INITIATOR] Passing manifest to Temporal: model=%s, keys=%d", req.Manifest.Model, len(manifestMap))
+	}
+
+	we, err := temporalClient.ExecuteWorkflow(context.Background(), workflowOptions, "AgentWorkflow", reqMap)
 	if err != nil {
 		log.Printf("Failed to dispatch workflow: %v", err)
 		http.Error(w, fmt.Sprintf("Failed to dispatch workflow: %v", err), http.StatusInternalServerError)
