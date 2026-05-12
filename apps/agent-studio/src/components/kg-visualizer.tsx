@@ -14,9 +14,12 @@ import {
   Position,
   useReactFlow,
   ReactFlowProvider,
+  EdgeTypes,
+  Handle,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import dagre from "@dagrejs/dagre";
+import { MarkerType } from "@xyflow/react";
 import { kgApi } from "@/lib/api";
 import { KGNode, KGEdge } from "@/lib/types";
 import { Input } from "@/components/ui/input";
@@ -31,23 +34,28 @@ import {
 } from "@/components/ui/select";
 import { KGNodeInspector } from "./kg-node-inspector";
 
-const NODE_COLORS: Record<string, string> = {
-  Service: "#3b82f6",
-  Database: "#22c55e",
-  Environment: "#6b7280",
-  Team: "#a855f7",
-  Deployment: "#f59e0b",
+const NODE_COLORS: Record<string, { bg: string; text: string }> = {
+  Service: { bg: "#3b82f6", text: "#ffffff" },
+  Database: { bg: "#10b981", text: "#ffffff" },
+  Environment: { bg: "#8b5cf6", text: "#ffffff" },
+  Team: { bg: "#ec4899", text: "#ffffff" },
+  Deployment: { bg: "#f97316", text: "#ffffff" },
 };
 
 const KGNodeComponent = ({ data }: { data: { label: string; type: string } }) => {
-  const color = NODE_COLORS[data.type] || "#94a3b8";
+  const color = NODE_COLORS[data.type] || { bg: "#6b7280", text: "#ffffff" };
   return (
-    <div
-      className="w-12 h-12 rounded-full flex items-center justify-center text-white text-xs font-semibold cursor-pointer hover:shadow-lg transition-shadow"
-      style={{ backgroundColor: color }}
-      title={`${data.label} (${data.type})`}
-    >
-      {data.label.substring(0, 2).toUpperCase()}
+    <div className="flex flex-col items-center gap-1">
+      <Handle type="target" position={Position.Top} />
+      <div
+        className="w-10 h-10 rounded-full flex items-center justify-center font-semibold cursor-pointer hover:shadow-lg transition-shadow border-2"
+        style={{ backgroundColor: color.bg, color: color.text, borderColor: color.bg }}
+        title={`${data.label} (${data.type})`}
+      >
+        <span className="text-xs">{data.label.substring(0, 1).toUpperCase()}</span>
+      </div>
+      <Handle type="source" position={Position.Bottom} />
+      <div className="text-xs font-medium text-center max-w-24 truncate">{data.label}</div>
     </div>
   );
 };
@@ -82,6 +90,7 @@ function KGVisualizerInner({
   const { data: kgEdges = [], isLoading: edgesLoading } = useQuery({
     queryKey: ["kg-edges", graphId],
     queryFn: () => kgApi.listEdges(graphId),
+    enabled: !!graphId,
   });
 
   const nodeTypes_ = useMemo(() => {
@@ -123,16 +132,18 @@ function KGVisualizerInner({
       type: "kgNode",
     }));
 
-    const newEdges = kgEdges
-      .filter((e) => nodeTypes_.some((n) => n.id === e.from_node_id && nodeTypes_.some((n2) => n2.id === e.to_node_id)))
-      .map((e) => ({
-        id: e.id,
-        source: e.from_node_id,
-        target: e.to_node_id,
-        label: e.relationship_type,
-        type: "smoothstep",
-        animated: false,
-      }));
+    const filteredEdges = kgEdges.filter((e) => nodeTypes_.some((n) => n.id === e.from_node_id) && nodeTypes_.some((n) => n.id === e.to_node_id));
+
+    const newEdges = filteredEdges.map((e) => ({
+      id: e.id,
+      source: e.from_node_id,
+      target: e.to_node_id,
+      label: e.relationship_type,
+      type: "straight",
+      animated: false,
+      style: { stroke: "#64748b", strokeWidth: 3 },
+      markerEnd: { type: MarkerType.ArrowClosed, color: "#64748b" },
+    }));
 
     setNodes(newNodes as never[]);
     setEdges(newEdges as never[]);
@@ -145,8 +156,7 @@ function KGVisualizerInner({
   }, [layout]);
 
   const handleNodeClick = useCallback(
-    (e: any) => {
-      const node = e.node;
+    (_event: any, node: Node) => {
       const kgNode = kgNodes.find((n) => n.id === node.id);
       if (kgNode) {
         setSelectedNode(kgNode);

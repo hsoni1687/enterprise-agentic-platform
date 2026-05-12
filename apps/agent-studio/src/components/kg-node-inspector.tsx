@@ -11,10 +11,10 @@ import { X, ChevronRight } from "lucide-react";
 
 const NODE_COLORS: Record<string, string> = {
   Service: "#3b82f6",
-  Database: "#22c55e",
-  Environment: "#6b7280",
-  Team: "#a855f7",
-  Deployment: "#f59e0b",
+  Database: "#10b981",
+  Environment: "#8b5cf6",
+  Team: "#ec4899",
+  Deployment: "#f97316",
 };
 
 interface KGNodeInspectorProps {
