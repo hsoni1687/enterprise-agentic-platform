@@ -6,23 +6,43 @@ This document outlines the core functional and non-functional requirements for b
 
 ### Platform Vision
 
-To provide a secure, highly-scalable, and developer-friendly Platform-as-a-Service (PaaS) that transforms how enterprises build and operate AI-driven automation. The platform is structured around a four-tier capability hierarchy — Tools, Skills, Sub-Agents, and Agent Teams — that separates primitive execution from governed composition, and single-agent reasoning from coordinated multi-agent workflows.
+To provide a secure, highly-scalable, and developer-friendly Platform-as-a-Service (PaaS) that transforms how enterprises build and operate AI-driven automation. The platform operates on a **two-layered foundation** for complete domain-driven agentic solutions:
+
+**Layer 1: Agent Infrastructure (Execution & Reasoning)**
+Built on a four-tier capability hierarchy — Tools, Skills, Sub-Agents, and Agent Teams — that separates primitive execution from governed composition, and single-agent reasoning from coordinated multi-agent workflows.
 
 At the base, platform engineers register primitive **Tools** (stateless, schema-typed API operations). Skill Developers compose Tools into reusable **Skills** with embedded SOPs and RBAC guardrails. Agent creators assemble Skills into **Sub-Agents** with defined personas and capability scopes. Finally, **Agent Teams** orchestrate multiple specialist sub-agents in parallel or sequential pipelines to tackle complex, multi-domain tasks — effectively deploying a self-assembling workforce on demand.
 
-This architecture democratizes agent creation for no-code users while giving platform engineers deep, governed control over every primitive in the system. It ensures every AI action is auditable, every capability is versioned, and every cost is attributed — from a single tool call to a coordinated team execution.
+**Layer 2: Data & Context Infrastructure (Knowledge Graphs & Domain Ontologies)**
+Domain-specific **Knowledge Graphs** (KGs) provide persistent, tenant-isolated data context for agents. Architects model domain structure (services, deployments, teams, assets, risks) using natural language via the **KG-Architect** system agent. KGs serve two critical functions:
+- **Context Injection**: Agent reasoning loops automatically incorporate relevant KG subgraphs as structured context, grounding decisions in domain topology and relationships.
+- **Semantic Reasoning**: Agents query KGs to understand blast radius, dependencies, and compliance constraints without external API calls — enabling faster incident response and informed decision-making.
+
+**Domain Solution Templates: Cookbooks**
+**Cookbooks** are pre-built, versioned domain solution templates that bundle agents, skills, KGs, and MCP integrations for specific verticals (DevOps, Fintech, Healthcare, etc.). A cookbook encapsulates:
+- **Agent Manifests** (L1): Pre-configured sub-agents and teams for domain-specific workflows
+- **Knowledge Graph Schema** (L2): Domain ontology (entities, relationships, properties) tailored to the vertical
+- **Skill & Tool Bundles**: Curated, security-reviewed skills and tools for the domain
+- **MCP Integrations**: Recommended MCP servers (e.g., PagerDuty, Stripe, Salesforce)
+- **Configuration Variables**: Domain-specific settings for multi-tenant customization
+
+Cookbooks accelerate time-to-deployment: domain architects select a cookbook, customize variables (API endpoints, credentials, thresholds), and within minutes deploy a fully-functional agentic solution for their business domain.
+
+This two-layer architecture democratizes agent creation for no-code users while giving platform engineers deep, governed control over every primitive in the system. It ensures every AI action is auditable, every capability is versioned, and every cost is attributed — from a single tool call to a coordinated team execution executing within rich domain context.
 
 ### Strategic Goals
 
 1. **Composable Agent Workforce:** Enable domain experts to deploy sophisticated AI workflows — spanning tool invocation, skill composition, and multi-agent collaboration — in hours rather than weeks, without writing code. Platform engineers control the governed primitives; no-code users assemble them.
 
-2. **Enterprise-Grade Resilience:** Guarantee zero-data-loss execution across all tiers. Durable ReAct loops survive pod crashes, API limits, and transient failures. Agent Teams tolerate sub-agent failures gracefully, resuming exactly where execution left off.
+2. **Domain-Driven Agentic Solutions via Cookbooks:** Accelerate vertical-specific deployments through pre-built, versioned cookbooks that bundle agents, knowledge graphs, skills, and MCP integrations. Architects select a cookbook for their domain (DevOps, Fintech, Healthcare), customize variables, and deploy a production-ready agentic system within minutes — shifting time-to-value from weeks of custom development to rapid configuration.
 
-3. **Zero-Trust Security by Design:** Every tool invocation uses a short-lived, scoped machine identity. All inter-service communication runs over mTLS. Inbound webhooks require HMAC signature validation. Secrets rotate automatically. A living threat model governs every new capability added to the platform.
+3. **Enterprise-Grade Resilience:** Guarantee zero-data-loss execution across all tiers. Durable ReAct loops survive pod crashes, API limits, and transient failures. Agent Teams tolerate sub-agent failures gracefully, resuming exactly where execution left off.
 
-4. **Governed Extensibility Without Lock-in:** The four-tier model is provider-agnostic throughout. LLMs, memory stores, and tool backends are pluggable. Any engineer can contribute a new Tool, Skill, or Sub-Agent through a standardized registration and security-review workflow.
+4. **Zero-Trust Security by Design:** Every tool invocation uses a short-lived, scoped machine identity. All inter-service communication runs over mTLS. Inbound webhooks require HMAC signature validation. Secrets rotate automatically. A living threat model governs every new capability added to the platform.
 
-5. **Operational Accountability:** Every platform action is observable, costed, and governed. SLOs are defined at workflow, skill, and tool granularity. Cost is attributed per tenant, per agent, and per skill. Quota enforcement, incident runbooks, and SLO burn-rate alerts ensure the platform operates predictably at enterprise scale.
+5. **Governed Extensibility Without Lock-in:** The four-tier model is provider-agnostic throughout. LLMs, memory stores, and tool backends are pluggable. Any engineer can contribute a new Tool, Skill, Sub-Agent, or Cookbook through a standardized registration and security-review workflow.
+
+6. **Operational Accountability:** Every platform action is observable, costed, and governed. SLOs are defined at workflow, skill, and tool granularity. Cost is attributed per tenant, per agent, and per skill. Quota enforcement, incident runbooks, and SLO burn-rate alerts ensure the platform operates predictably at enterprise scale.
 
 ## 2. Core User Journeys
 
@@ -692,6 +712,138 @@ Tier-1 runbooks are defined for: Temporal worker crash, LLM provider outage, web
 
 **Cost Governance**
 Every platform action is costed and attributed at multiple granularities: per-tenant (monthly billing), per-agent (ROI tracking), and per-skill (value analysis). Cost components include: LLM inference tokens, sandbox container execution time, Vector DB read/write operations, and data transfer. Tenants receive monthly cost reports with a next-month forecast. Budget alerts fire at 80% and 100% of monthly allocation. Quota enforcement operates at tenant, agent, and skill levels: soft limits queue requests (returning a `Retry-After` header); hard limits reject with `429 QuotaExceeded`.
+
+---
+
+### 6.7 Domain Solution Cookbooks: Vertical-Specific Agentic Templates
+
+The platform provides a **Cookbook** abstraction to accelerate deployment of domain-specific agentic solutions. A cookbook is a versioned, reusable bundle that encapsulates all layers of a complete solution for a business vertical.
+
+**Cookbook Anatomy**
+
+Each cookbook bundles:
+
+1. **Agent Manifests (Layer 1 — Execution)**
+   - Pre-configured sub-agent definitions (personas, allowed skills, model preferences, max iterations)
+   - Team orchestrator manifests defining multi-agent coordination for domain workflows
+   - Example: DevOps cookbook includes `K8s Inspector`, `DB Triage`, `Incident Orchestrator` sub-agents
+
+2. **Knowledge Graph Schema (Layer 2 — Context)**
+   - Domain ontology: entity types (Service, Deployment, Environment, Database, etc.), relationships (depends_on, deployed_in, owns), and semantic properties
+   - Seed data generators for common patterns (microservices architectures, asset hierarchies, organizational structures)
+   - Example: Fintech cookbook includes Portfolio, Asset, Risk, Trade entities with correlation and exposure relationships
+
+3. **Skill & Tool Bundles**
+   - Curated, security-reviewed skills pre-approved for the domain
+   - Composition: each skill maps to domain-specific tool sets with guardrails
+   - Example: DevOps cookbook includes "K8s Remediation Skill", "Incident Report Skill", "PagerDuty Alert Skill"
+
+4. **MCP Server Recommendations**
+   - Pre-vetted, optional MCP integrations for the domain
+   - Marked as `required: true` (non-negotiable for workflow completion) or `required: false` (enhance capabilities)
+   - Example: DevOps cookbook recommends PagerDuty MCP, GitHub MCP, Prometheus MCP (optional)
+
+5. **Configuration Variables**
+   - Domain-specific, customer-customizable parameters
+   - Types: `string` (API endpoints, team names), `number` (thresholds, timeouts)
+   - Examples: `pd_api_endpoint`, `gh_org_name`, `incident_severity_threshold`, `max_parallelism`
+
+6. **Deployment Instructions & Runbooks**
+   - Step-by-step guide for operators to customize and deploy the cookbook
+   - Integration checklist (which external systems to wire up, required credentials)
+   - Post-deployment validation (sanity checks, example workflows to run)
+
+**Cookbook Lifecycle & Versioning**
+
+- **Semantic Versioning**: Cookbooks follow semver (major.minor.patch). Breaking changes in agent manifests or KG schema increment the major version.
+- **Backward Compatibility**: Minor version bumps are always backward compatible; existing deployments auto-receive agent/skill improvements without manual intervention.
+- **Security Review**: Before a cookbook reaches `published` status, it undergoes security and compliance review by platform admins (STRIDE threat model, data handling, MCP integrations).
+- **Deprecation Path**: Deprecated cookbooks display automated migration guides; operators see alternative versions and recommended upgrade paths.
+
+**Cookbook Discovery & Deployment**
+
+- **Admin Console Cookbooks Page** (`/cookbooks`): Platform admins browse all available cookbooks by domain, version, and adoption metrics (# deployments, user ratings).
+- **One-Click Import**: Select a cookbook, fill in configuration variables (API keys, thresholds, team names), and click "Import". The platform:
+  - Creates the KG with seeded schema and data
+  - Provisions sub-agents with customized manifests
+  - Registers recommended MCP servers (if credentials provided)
+  - Deploys agents to the target tenant with canary rollout (10% → 100%)
+  - Launches Agent Simulator for user validation
+- **Customization**: After import, users can refine agents, KGs, and skills in Agent Studio without re-deploying the full cookbook. Changes are tracked as tenant-local variants.
+
+**Example: DevOps SRE Cookbook**
+
+A complete domain solution for SRE incident response and infrastructure automation:
+
+```yaml
+id: devops-sre
+name: DevOps SRE Incident Response Toolkit
+version: 1.2.0
+domain: devops
+description: Full-stack incident triage, root cause analysis, and remediation for microservices platforms
+
+variables:
+  - name: pd_api_endpoint
+    type: string
+    description: PagerDuty API endpoint
+    default: https://api.pagerduty.com
+  - name: incident_severity_threshold
+    type: number
+    description: Minimum severity level (1-5) for auto-escalation
+    default: 2
+  - name: max_parallel_investigations
+    type: number
+    description: Max concurrent sub-agents for parallel incident analysis
+    default: 4
+
+agents:
+  - file: agents/db-triage-agent.yaml
+    description: Database query analysis and connection pool diagnostics
+  - file: agents/k8s-inspector-agent.yaml
+    description: Kubernetes event correlation and resource analysis
+  - file: agents/incident-orchestrator-agent.yaml
+    description: Multi-agent orchestration for incident decomposition and synthesis
+
+knowledge_graphs:
+  - name: devops-infra
+    schema_file: kg-schemas/microservices-topology.yaml
+    seed_data_file: kg-seed/sample-architecture.yaml
+    description: Infrastructure topology (services, deployments, environments, teams, dependencies)
+
+skills:
+  - name: k8s-remediation-skill
+    version: 2.1.0
+    description: Pod restart, scale operations with human approval
+  - name: incident-report-skill
+    version: 1.0.0
+    description: Structured incident summary generation and Slack posting
+  - name: pagerduty-alert-skill
+    version: 1.3.0
+    description: Fetch alerts, update incident status, escalate to on-call
+
+mcp_recommendations:
+  - name: pagerduty-mcp
+    description: PagerDuty incident management and on-call routing
+    required: true
+  - name: github-mcp
+    description: Code repository audit and deployment history
+    required: false
+  - name: prometheus-mcp
+    description: Metrics queries and alert correlation
+    required: false
+
+min_platform_version: "1.0.0"
+tags: ["devops", "sre", "incident-response", "automation"]
+```
+
+**Strategic Impact of Cookbooks**
+
+Cookbooks transform the platform from a "do-it-yourself" agentic toolkit into a **plug-and-play vertical solution platform**:
+
+- **Reduced Time-to-Value**: Domain architects deploy production-grade agentic systems in minutes (configuration) rather than weeks (custom development).
+- **Standardization**: Common domain workflows are encoded once, versioned, and shared across organizations — preventing reinvention and ensuring best practices.
+- **Security & Compliance**: Cookbook content undergoes centralized security review; every deployment inherits vetted, compliant skill and tool configurations.
+- **Knowledge Capture**: Cookbooks serve as a living knowledge base — domain experts codify their understanding of incident response, incident triage, asset management, etc., making it accessible to non-experts.
 
 ---
 
