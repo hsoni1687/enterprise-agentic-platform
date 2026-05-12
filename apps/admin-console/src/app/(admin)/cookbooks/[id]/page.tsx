@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import Link from "next/link";
+import { AlertCircle } from "lucide-react";
 import { adminApi } from "@/lib/api";
 
 type Tab = "overview" | "agents" | "knowledge-graphs" | "mcps";
@@ -87,9 +88,9 @@ export default function CookbookDetailPage() {
   if (isError || !cookbook) {
     return (
       <div className="p-6">
-        <div style={{ backgroundColor: "#fee", border: "1px solid #fcc", borderRadius: "4px", padding: "16px" }}>
-          <h2 style={{ fontWeight: "600", color: "#991b1b", marginBottom: "8px" }}>Error</h2>
-          <p style={{ color: "#dc2626", fontSize: "14px" }}>Failed to load cookbook details</p>
+        <div className="flex items-center gap-2 p-4 bg-destructive/10 text-destructive rounded-md">
+          <AlertCircle className="h-4 w-4" />
+          <span>Failed to load cookbook details</span>
         </div>
       </div>
     );
@@ -103,25 +104,25 @@ export default function CookbookDetailPage() {
   ];
 
   return (
-    <div style={{ padding: "24px", maxWidth: "1280px" }}>
-      <Link href="/cookbooks" style={{ color: "#2563eb", textDecoration: "underline", display: "inline-block", marginBottom: "16px" }}>
+    <div className="space-y-6">
+      <Link href="/cookbooks" className="text-primary hover:underline inline-block">
         ← Back to Cookbooks
       </Link>
 
-      <div style={{ marginTop: "24px", marginBottom: "32px" }}>
-        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
-          <div style={{ flex: 1 }}>
-            <h1 style={{ fontSize: "36px", fontWeight: "bold" }}>{cookbook.name}</h1>
-            <p style={{ color: "#4b5563", fontSize: "18px", marginTop: "8px" }}>{cookbook.description}</p>
-            <div style={{ display: "flex", gap: "8px", marginTop: "16px" }}>
-              <span style={{ backgroundColor: "#dbeafe", color: "#1e40af", fontSize: "12px", padding: "4px 12px", borderRadius: "4px" }}>
+      <div className="space-y-4">
+        <div className="flex items-start justify-between">
+          <div className="flex-1">
+            <h1 className="text-3xl font-bold">{cookbook.name}</h1>
+            <p className="text-muted-foreground mt-2">{cookbook.description}</p>
+            <div className="flex gap-2 mt-4 flex-wrap">
+              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary/10 text-primary">
                 {cookbook.domain}
               </span>
-              <span style={{ backgroundColor: "#f3f4f6", color: "#374151", fontSize: "12px", padding: "4px 12px", borderRadius: "4px" }}>
+              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-muted text-muted-foreground">
                 v{cookbook.version}
               </span>
               {cookbook.tags?.map((tag) => (
-                <span key={tag} style={{ backgroundColor: "#dcfce7", color: "#15803d", fontSize: "12px", padding: "4px 12px", borderRadius: "4px" }}>
+                <span key={tag} className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-secondary text-secondary-foreground">
                   {tag}
                 </span>
               ))}
@@ -129,15 +130,7 @@ export default function CookbookDetailPage() {
           </div>
           <button
             onClick={handleImportClick}
-            style={{
-              backgroundColor: "#2563eb",
-              color: "white",
-              padding: "8px 16px",
-              borderRadius: "4px",
-              border: "none",
-              cursor: "pointer",
-              fontWeight: "500",
-            }}
+            className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 font-medium text-sm whitespace-nowrap"
           >
             Import Cookbook
           </button>
@@ -146,27 +139,20 @@ export default function CookbookDetailPage() {
 
       {/* Import Form */}
       {showImportForm && (
-        <div style={{ backgroundColor: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: "8px", padding: "24px", marginBottom: "24px" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
-            <h2 style={{ fontSize: "20px", fontWeight: "600" }}>Import {cookbook.name}</h2>
-            <button onClick={() => setShowImportForm(false)} style={{ backgroundColor: "transparent", border: "none", cursor: "pointer", fontSize: "20px" }}>
+        <div className="bg-card border border-border rounded-lg p-6 space-y-4">
+          <div className="flex justify-between items-center">
+            <h2 className="text-lg font-semibold">Import {cookbook.name}</h2>
+            <button onClick={() => setShowImportForm(false)} className="text-2xl hover:opacity-60">
               ×
             </button>
           </div>
 
-          <div style={{ marginBottom: "16px" }}>
-            <label style={{ display: "block", fontSize: "14px", fontWeight: "500", marginBottom: "8px" }}>Tenant</label>
+          <div className="space-y-2">
+            <label className="block text-sm font-medium">Tenant</label>
             <select
               value={selectedTenant}
               onChange={(e) => setSelectedTenant(e.target.value)}
-              style={{
-                width: "100%",
-                border: "1px solid #d1d5db",
-                borderRadius: "4px",
-                padding: "8px 12px",
-                backgroundColor: "white",
-                color: "#111827",
-              }}
+              className="w-full px-3 py-2 border border-border rounded-md bg-card text-foreground"
             >
               <option value="">Select a tenant...</option>
               {tenants?.tenants?.map((t: any) => (
@@ -178,14 +164,12 @@ export default function CookbookDetailPage() {
           </div>
 
           {Object.keys(importVariables).length > 0 && (
-            <div style={{ marginBottom: "16px" }}>
-              <h3 style={{ fontWeight: "600", marginBottom: "16px" }}>Configuration Variables</h3>
+            <div className="space-y-4">
+              <h3 className="font-semibold text-sm">Configuration Variables</h3>
               {cookbook.variables?.map((variable) => (
-                <div key={variable.name} style={{ marginBottom: "16px" }}>
-                  <label style={{ display: "block", fontSize: "14px", fontWeight: "500", marginBottom: "4px" }}>
-                    {variable.name}
-                  </label>
-                  <p style={{ fontSize: "12px", color: "#6b7280", marginBottom: "8px" }}>{variable.description}</p>
+                <div key={variable.name} className="space-y-1.5">
+                  <label className="block text-sm font-medium">{variable.name}</label>
+                  <p className="text-xs text-muted-foreground">{variable.description}</p>
                   <input
                     type={variable.type === "string" ? "text" : "number"}
                     value={importVariables[variable.name] || ""}
@@ -196,50 +180,24 @@ export default function CookbookDetailPage() {
                       })
                     }
                     placeholder={variable.default}
-                    style={{
-                      width: "100%",
-                      border: "1px solid #d1d5db",
-                      borderRadius: "4px",
-                      padding: "8px 12px",
-                      fontSize: "14px",
-                      backgroundColor: "white",
-                      color: "#111827",
-                    }}
+                    className="w-full px-3 py-2 border border-border rounded-md bg-card text-foreground text-sm"
                   />
                 </div>
               ))}
             </div>
           )}
 
-          <div style={{ display: "flex", gap: "8px" }}>
+          <div className="flex gap-2 pt-2">
             <button
               onClick={() => importMutation.mutate()}
               disabled={importMutation.isPending || !selectedTenant}
-              style={{
-                flex: 1,
-                backgroundColor: selectedTenant ? "#2563eb" : "#d1d5db",
-                color: "white",
-                padding: "8px 16px",
-                borderRadius: "4px",
-                border: "none",
-                cursor: selectedTenant ? "pointer" : "not-allowed",
-                fontWeight: "500",
-              }}
+              className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {importMutation.isPending ? "Importing..." : "Import Cookbook"}
             </button>
             <button
               onClick={() => setShowImportForm(false)}
-              style={{
-                flex: 1,
-                backgroundColor: "white",
-                color: "#111827",
-                padding: "8px 16px",
-                borderRadius: "4px",
-                border: "1px solid #d1d5db",
-                cursor: "pointer",
-                fontWeight: "500",
-              }}
+              className="flex-1 px-4 py-2 border border-border rounded-md hover:bg-muted font-medium text-sm"
             >
               Cancel
             </button>
@@ -248,23 +206,17 @@ export default function CookbookDetailPage() {
       )}
 
       {/* Tabs */}
-      <div style={{ borderBottom: "1px solid #e5e7eb", marginBottom: "24px" }}>
-        <div style={{ display: "flex", gap: "32px" }}>
+      <div className="border-b border-border">
+        <div className="flex gap-8">
           {tabButtons.map((tab) => (
             <button
               key={tab.value}
               onClick={() => setActiveTab(tab.value)}
-              style={{
-                paddingBottom: "12px",
-                fontSize: "14px",
-                fontWeight: "500",
-                border: "none",
-                backgroundColor: "transparent",
-                cursor: "pointer",
-                borderBottom: activeTab === tab.value ? "2px solid #2563eb" : "2px solid transparent",
-                color: activeTab === tab.value ? "#2563eb" : "#4b5563",
-                transition: "all 0.2s",
-              }}
+              className={`pb-3 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === tab.value
+                  ? "border-primary text-primary"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
             >
               {tab.label}
             </button>
@@ -273,54 +225,54 @@ export default function CookbookDetailPage() {
       </div>
 
       {/* Tab Content */}
-      <div>
+      <div className="space-y-6">
         {/* Overview Tab */}
         {activeTab === "overview" && (
-          <div style={{ display: "grid", gap: "24px" }}>
-            <div style={{ backgroundColor: "white", border: "1px solid #e5e7eb", borderRadius: "8px", padding: "24px" }}>
-              <h3 style={{ fontWeight: "600", marginBottom: "16px" }}>Variables</h3>
+          <div className="space-y-6">
+            <div className="bg-card border border-border rounded-lg p-6">
+              <h3 className="font-semibold mb-4">Variables</h3>
               {cookbook.variables?.length > 0 ? (
-                <div style={{ overflowX: "auto" }}>
-                  <table style={{ width: "100%", fontSize: "14px", borderCollapse: "collapse" }}>
-                    <thead style={{ backgroundColor: "#f9fafb" }}>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-muted/50 border-b border-border">
                       <tr>
-                        <th style={{ textAlign: "left", padding: "12px", fontWeight: "600", borderBottom: "1px solid #e5e7eb" }}>Name</th>
-                        <th style={{ textAlign: "left", padding: "12px", fontWeight: "600", borderBottom: "1px solid #e5e7eb" }}>Description</th>
-                        <th style={{ textAlign: "left", padding: "12px", fontWeight: "600", borderBottom: "1px solid #e5e7eb" }}>Default</th>
-                        <th style={{ textAlign: "left", padding: "12px", fontWeight: "600", borderBottom: "1px solid #e5e7eb" }}>Type</th>
+                        <th className="text-left p-3 font-semibold">Name</th>
+                        <th className="text-left p-3 font-semibold">Description</th>
+                        <th className="text-left p-3 font-semibold">Default</th>
+                        <th className="text-left p-3 font-semibold">Type</th>
                       </tr>
                     </thead>
                     <tbody>
                       {cookbook.variables.map((v) => (
-                        <tr key={v.name}>
-                          <td style={{ padding: "12px", borderBottom: "1px solid #e5e7eb", fontFamily: "monospace" }}>{v.name}</td>
-                          <td style={{ padding: "12px", borderBottom: "1px solid #e5e7eb" }}>{v.description}</td>
-                          <td style={{ padding: "12px", borderBottom: "1px solid #e5e7eb" }}>{v.default}</td>
-                          <td style={{ padding: "12px", borderBottom: "1px solid #e5e7eb" }}>{v.type}</td>
+                        <tr key={v.name} className="border-b border-border hover:bg-muted/50">
+                          <td className="p-3 font-mono text-xs">{v.name}</td>
+                          <td className="p-3">{v.description}</td>
+                          <td className="p-3">{v.default}</td>
+                          <td className="p-3">{v.type}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
               ) : (
-                <p style={{ color: "#6b7280" }}>No variables</p>
+                <p className="text-muted-foreground text-sm">No variables</p>
               )}
             </div>
 
-            <div style={{ backgroundColor: "white", border: "1px solid #e5e7eb", borderRadius: "8px", padding: "24px" }}>
-              <h3 style={{ fontWeight: "600", marginBottom: "16px" }}>Artifacts Summary</h3>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "16px" }}>
+            <div className="bg-card border border-border rounded-lg p-6">
+              <h3 className="font-semibold mb-4">Artifacts Summary</h3>
+              <div className="grid grid-cols-3 gap-4">
                 <div>
-                  <div style={{ fontSize: "24px", fontWeight: "bold" }}>{cookbook.agents?.length || 0}</div>
-                  <div style={{ fontSize: "14px", color: "#6b7280" }}>Agents</div>
+                  <div className="text-2xl font-bold">{cookbook.agents?.length || 0}</div>
+                  <div className="text-sm text-muted-foreground">Agents</div>
                 </div>
                 <div>
-                  <div style={{ fontSize: "24px", fontWeight: "bold" }}>{cookbook.knowledge_graphs?.length || 0}</div>
-                  <div style={{ fontSize: "14px", color: "#6b7280" }}>Knowledge Graphs</div>
+                  <div className="text-2xl font-bold">{cookbook.knowledge_graphs?.length || 0}</div>
+                  <div className="text-sm text-muted-foreground">Knowledge Graphs</div>
                 </div>
                 <div>
-                  <div style={{ fontSize: "24px", fontWeight: "bold" }}>{cookbook.mcp_recommendations?.length || 0}</div>
-                  <div style={{ fontSize: "14px", color: "#6b7280" }}>MCP Recommendations</div>
+                  <div className="text-2xl font-bold">{cookbook.mcp_recommendations?.length || 0}</div>
+                  <div className="text-sm text-muted-foreground">MCP Recommendations</div>
                 </div>
               </div>
             </div>
@@ -329,83 +281,47 @@ export default function CookbookDetailPage() {
 
         {/* Agents Tab */}
         {activeTab === "agents" && (
-          <div style={{ display: "grid", gap: "16px" }}>
+          <div className="space-y-4">
             {cookbook.agents?.length > 0 ? (
               cookbook.agents.map((agent) => (
-                <div key={agent.file} style={{ backgroundColor: "white", border: "1px solid #e5e7eb", borderRadius: "8px", padding: "16px" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                    <div style={{ flex: 1 }}>
-                      <h3 style={{ fontWeight: "600", fontFamily: "monospace", fontSize: "14px" }}>{agent.file}</h3>
-                      <p style={{ color: "#6b7280", fontSize: "14px", marginTop: "4px" }}>{agent.description}</p>
+                <div key={agent.file} className="bg-card border border-border rounded-lg p-4 space-y-3">
+                  <div className="flex justify-between items-start gap-4">
+                    <div className="flex-1">
+                      <h3 className="font-semibold font-mono text-sm">{agent.file}</h3>
+                      <p className="text-muted-foreground text-sm mt-1">{agent.description}</p>
                     </div>
                     <button
                       onClick={() => handleStartEdit(agent.file, agent.content)}
-                      style={{
-                        backgroundColor: "white",
-                        color: "#2563eb",
-                        border: "1px solid #2563eb",
-                        padding: "4px 12px",
-                        borderRadius: "4px",
-                        cursor: "pointer",
-                        fontSize: "14px",
-                        fontWeight: "500",
-                      }}
+                      className="px-3 py-1.5 border border-primary text-primary rounded text-sm font-medium hover:bg-primary/5"
                     >
                       Edit YAML
                     </button>
                   </div>
 
                   {editingFilePath === agent.file && (
-                    <div style={{ marginTop: "16px", borderTop: "1px solid #e5e7eb", paddingTop: "16px" }}>
+                    <div className="border-t border-border pt-3 space-y-2">
                       <textarea
                         value={editContent}
                         onChange={(e) => setEditContent(e.target.value)}
-                        style={{
-                          width: "100%",
-                          border: "1px solid #d1d5db",
-                          borderRadius: "4px",
-                          padding: "8px",
-                          fontFamily: "monospace",
-                          fontSize: "12px",
-                          backgroundColor: "#f9fafb",
-                          color: "#111827",
-                          height: "300px",
-                        }}
+                        className="w-full px-3 py-2 border border-border rounded-md bg-muted font-mono text-xs h-64 text-foreground"
                       />
                       {editError && (
-                        <div style={{ backgroundColor: "#fee2e2", border: "1px solid #fecaca", borderRadius: "4px", padding: "12px", marginTop: "8px" }}>
-                          <p style={{ fontSize: "14px", color: "#991b1b" }}>{editError}</p>
+                        <div className="flex items-start gap-2 p-3 bg-destructive/10 text-destructive rounded text-sm">
+                          <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                          <p>{editError}</p>
                         </div>
                       )}
-                      <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
+                      <div className="flex gap-2">
                         <button
                           onClick={handleSaveEdit}
                           disabled={updateFileMutation.isPending}
-                          style={{
-                            flex: 1,
-                            backgroundColor: "#2563eb",
-                            color: "white",
-                            padding: "8px 16px",
-                            borderRadius: "4px",
-                            border: "none",
-                            cursor: "pointer",
-                            fontWeight: "500",
-                          }}
+                          className="flex-1 px-3 py-2 bg-primary text-primary-foreground rounded text-sm font-medium hover:bg-primary/90 disabled:opacity-50"
                         >
                           {updateFileMutation.isPending ? "Saving..." : "Save Changes"}
                         </button>
                         <button
                           onClick={() => setEditingFilePath(null)}
-                          style={{
-                            flex: 1,
-                            backgroundColor: "white",
-                            color: "#111827",
-                            padding: "8px 16px",
-                            borderRadius: "4px",
-                            border: "1px solid #d1d5db",
-                            cursor: "pointer",
-                            fontWeight: "500",
-                          }}
+                          className="flex-1 px-3 py-2 border border-border rounded text-sm font-medium hover:bg-muted"
                         >
                           Cancel
                         </button>
@@ -415,103 +331,60 @@ export default function CookbookDetailPage() {
                 </div>
               ))
             ) : (
-              <p style={{ color: "#6b7280" }}>No agents</p>
+              <p className="text-muted-foreground text-sm">No agents</p>
             )}
           </div>
         )}
 
         {/* Knowledge Graphs Tab */}
         {activeTab === "knowledge-graphs" && (
-          <div style={{ display: "grid", gap: "16px" }}>
+          <div className="space-y-4">
             {cookbook.knowledge_graphs?.length > 0 ? (
               cookbook.knowledge_graphs.map((kg) => (
-                <div key={kg.name} style={{ backgroundColor: "white", border: "1px solid #e5e7eb", borderRadius: "8px", padding: "16px" }}>
-                  <h3 style={{ fontWeight: "600" }}>{kg.name}</h3>
-                  <p style={{ color: "#6b7280", fontSize: "14px", marginTop: "4px" }}>{kg.description}</p>
-                  <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
+                <div key={kg.name} className="bg-card border border-border rounded-lg p-4 space-y-3">
+                  <div>
+                    <h3 className="font-semibold">{kg.name}</h3>
+                    <p className="text-muted-foreground text-sm mt-1">{kg.description}</p>
+                  </div>
+                  <div className="flex gap-2">
                     <button
                       onClick={() => handleStartEdit(kg.schema_file, kg.schema_content)}
-                      style={{
-                        backgroundColor: "white",
-                        color: "#2563eb",
-                        border: "1px solid #2563eb",
-                        padding: "4px 12px",
-                        borderRadius: "4px",
-                        cursor: "pointer",
-                        fontSize: "14px",
-                        fontWeight: "500",
-                      }}
+                      className="px-3 py-1.5 border border-primary text-primary rounded text-sm font-medium hover:bg-primary/5"
                     >
                       Edit Schema
                     </button>
                     <button
                       onClick={() => handleStartEdit(kg.seed_data_file, kg.seed_content)}
-                      style={{
-                        backgroundColor: "white",
-                        color: "#2563eb",
-                        border: "1px solid #2563eb",
-                        padding: "4px 12px",
-                        borderRadius: "4px",
-                        cursor: "pointer",
-                        fontSize: "14px",
-                        fontWeight: "500",
-                      }}
+                      className="px-3 py-1.5 border border-primary text-primary rounded text-sm font-medium hover:bg-primary/5"
                     >
                       Edit Seed Data
                     </button>
                   </div>
 
                   {(editingFilePath === kg.schema_file || editingFilePath === kg.seed_data_file) && (
-                    <div style={{ marginTop: "16px", borderTop: "1px solid #e5e7eb", paddingTop: "16px" }}>
+                    <div className="border-t border-border pt-3 space-y-2">
                       <textarea
                         value={editContent}
                         onChange={(e) => setEditContent(e.target.value)}
-                        style={{
-                          width: "100%",
-                          border: "1px solid #d1d5db",
-                          borderRadius: "4px",
-                          padding: "8px",
-                          fontFamily: "monospace",
-                          fontSize: "12px",
-                          backgroundColor: "#f9fafb",
-                          color: "#111827",
-                          height: "300px",
-                        }}
+                        className="w-full px-3 py-2 border border-border rounded-md bg-muted font-mono text-xs h-64 text-foreground"
                       />
                       {editError && (
-                        <div style={{ backgroundColor: "#fee2e2", border: "1px solid #fecaca", borderRadius: "4px", padding: "12px", marginTop: "8px" }}>
-                          <p style={{ fontSize: "14px", color: "#991b1b" }}>{editError}</p>
+                        <div className="flex items-start gap-2 p-3 bg-destructive/10 text-destructive rounded text-sm">
+                          <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                          <p>{editError}</p>
                         </div>
                       )}
-                      <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
+                      <div className="flex gap-2">
                         <button
                           onClick={handleSaveEdit}
                           disabled={updateFileMutation.isPending}
-                          style={{
-                            flex: 1,
-                            backgroundColor: "#2563eb",
-                            color: "white",
-                            padding: "8px 16px",
-                            borderRadius: "4px",
-                            border: "none",
-                            cursor: "pointer",
-                            fontWeight: "500",
-                          }}
+                          className="flex-1 px-3 py-2 bg-primary text-primary-foreground rounded text-sm font-medium hover:bg-primary/90 disabled:opacity-50"
                         >
                           {updateFileMutation.isPending ? "Saving..." : "Save Changes"}
                         </button>
                         <button
                           onClick={() => setEditingFilePath(null)}
-                          style={{
-                            flex: 1,
-                            backgroundColor: "white",
-                            color: "#111827",
-                            padding: "8px 16px",
-                            borderRadius: "4px",
-                            border: "1px solid #d1d5db",
-                            cursor: "pointer",
-                            fontWeight: "500",
-                          }}
+                          className="flex-1 px-3 py-2 border border-border rounded text-sm font-medium hover:bg-muted"
                         >
                           Cancel
                         </button>
@@ -521,32 +394,30 @@ export default function CookbookDetailPage() {
                 </div>
               ))
             ) : (
-              <p style={{ color: "#6b7280" }}>No knowledge graphs</p>
+              <p className="text-muted-foreground text-sm">No knowledge graphs</p>
             )}
           </div>
         )}
 
         {/* MCPs Tab */}
         {activeTab === "mcps" && (
-          <div style={{ display: "grid", gap: "16px" }}>
+          <div className="space-y-4">
             {cookbook.mcp_recommendations?.length > 0 ? (
               cookbook.mcp_recommendations.map((mcp) => (
-                <div key={mcp.name} style={{ backgroundColor: "white", border: "1px solid #e5e7eb", borderRadius: "8px", padding: "16px" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                    <div>
-                      <h3 style={{ fontWeight: "600" }}>{mcp.name}</h3>
-                      <p style={{ color: "#6b7280", fontSize: "14px", marginTop: "4px" }}>{mcp.description}</p>
-                    </div>
-                    {mcp.required && (
-                      <span style={{ backgroundColor: "#fee2e2", color: "#991b1b", fontSize: "12px", padding: "4px 8px", borderRadius: "4px" }}>
-                        Required
-                      </span>
-                    )}
+                <div key={mcp.name} className="bg-card border border-border rounded-lg p-4 flex items-start justify-between">
+                  <div>
+                    <h3 className="font-semibold">{mcp.name}</h3>
+                    <p className="text-muted-foreground text-sm mt-1">{mcp.description}</p>
                   </div>
+                  {mcp.required && (
+                    <span className="px-2.5 py-0.5 rounded-full text-xs font-medium bg-destructive/10 text-destructive">
+                      Required
+                    </span>
+                  )}
                 </div>
               ))
             ) : (
-              <p style={{ color: "#6b7280" }}>No MCP recommendations</p>
+              <p className="text-muted-foreground text-sm">No MCP recommendations</p>
             )}
           </div>
         )}
