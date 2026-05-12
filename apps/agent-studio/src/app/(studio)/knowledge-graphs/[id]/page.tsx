@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTenant } from "@/contexts/tenant-context";
@@ -15,25 +15,53 @@ import { KGVisualizer } from "@/components/kg-visualizer";
 export default function KnowledgeGraphDetailPage({
   params,
 }: {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const tab = searchParams.get("tab") || "builder";
-  const graphId = params.id;
   const { tenantId } = useTenant();
   const queryClient = useQueryClient();
+
+  // Extract graphId from promise params
+  const [resolvedParams, setResolvedParams] = useState<{ id: string } | null>(null);
+
+  useEffect(() => {
+    if (params instanceof Promise) {
+      params.then(setResolvedParams);
+    } else {
+      setResolvedParams(params as { id: string });
+    }
+  }, [params]);
+
+  const graphId = resolvedParams?.id;
 
   // Update runtime tenant when it changes
   useEffect(() => {
     setRuntimeTenant(tenantId);
-    queryClient.invalidateQueries({ queryKey: ["kg-graph", graphId] });
+    if (graphId) {
+      queryClient.invalidateQueries({ queryKey: ["kg-graph", graphId] });
+    }
   }, [tenantId, graphId, queryClient]);
 
   const { data: graph, isLoading, error: graphError } = useQuery({
     queryKey: ["kg-graph", graphId],
-    queryFn: () => kgApi.getGraph(graphId),
+    queryFn: () => {
+      if (!graphId) throw new Error("Graph ID not loaded");
+      return kgApi.getGraph(graphId);
+    },
+    enabled: !!graphId,
   });
+
+  // Show loading while params are being resolved
+  if (!graphId) {
+    return (
+      <div className="flex items-center justify-center h-screen text-muted-foreground">
+        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+        Loading...
+      </div>
+    );
+  }
 
   if (isLoading) {
     return (
