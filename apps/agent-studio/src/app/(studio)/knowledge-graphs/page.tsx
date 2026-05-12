@@ -31,7 +31,7 @@ export default function KnowledgeGraphsPage() {
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
-  const { data: graphs = [], isLoading } = useQuery({
+  const { data: graphs = [], isLoading, error: graphsError } = useQuery({
     queryKey: ["kg-graphs"],
     queryFn: () => kgApi.listGraphs(),
   });
@@ -98,6 +98,20 @@ export default function KnowledgeGraphsPage() {
     return (
       <div className="flex items-center justify-center h-screen text-muted-foreground">
         Loading knowledge graphs...
+      </div>
+    );
+  }
+
+  if (graphsError) {
+    return (
+      <div className="p-6">
+        <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4">
+          <p className="font-semibold text-destructive">Error loading knowledge graphs</p>
+          <p className="text-sm text-destructive/80 mt-2">
+            {graphsError instanceof Error ? graphsError.message : "Unknown error"}
+          </p>
+          <p className="text-xs text-muted-foreground mt-2">Tenant: {tenantId}</p>
+        </div>
       </div>
     );
   }

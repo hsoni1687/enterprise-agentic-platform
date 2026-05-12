@@ -30,7 +30,7 @@ export default function KnowledgeGraphDetailPage({
     queryClient.invalidateQueries({ queryKey: ["kg-graph", graphId] });
   }, [tenantId, graphId, queryClient]);
 
-  const { data: graph, isLoading } = useQuery({
+  const { data: graph, isLoading, error: graphError } = useQuery({
     queryKey: ["kg-graph", graphId],
     queryFn: () => kgApi.getGraph(graphId),
   });
@@ -44,11 +44,31 @@ export default function KnowledgeGraphDetailPage({
     );
   }
 
+  if (graphError) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <div className="text-center">
+          <p className="text-destructive font-semibold">Error loading graph</p>
+          <p className="text-sm text-muted-foreground mt-2">{graphError instanceof Error ? graphError.message : "Unknown error"}</p>
+          <p className="text-xs text-muted-foreground mt-1">Tenant: {tenantId}</p>
+          <Button
+            variant="outline"
+            className="mt-4"
+            onClick={() => router.push("/knowledge-graphs")}
+          >
+            Back to Graphs
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   if (!graph) {
     return (
       <div className="flex items-center justify-center h-screen">
         <div className="text-center">
           <p className="text-muted-foreground">Graph not found</p>
+          <p className="text-xs text-muted-foreground mt-1">Tenant: {tenantId}</p>
           <Button
             variant="outline"
             className="mt-4"
