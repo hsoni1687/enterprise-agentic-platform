@@ -456,7 +456,11 @@ export const adminApi = {
 
   async getCookbook(cookbookId: string): Promise<CookbookDetail> {
     const url = `${API_BASE_URL}/api/v1/admin/cookbooks/${cookbookId}`;
-    const headers = { ...getAuthHeader(), "Content-Type": "application/json" };
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    const authHeaders = getAuthHeader();
+    if (authHeaders.Authorization) {
+      headers.Authorization = authHeaders.Authorization;
+    }
     const response = await fetch(url, { headers });
     if (!response.ok) throw new Error(`Failed to fetch cookbook: ${response.status}`);
     return response.json();

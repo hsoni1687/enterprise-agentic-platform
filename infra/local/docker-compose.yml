@@ -420,7 +420,7 @@ services:
       - KG_SERVICE_URL=http://kg-service:8093
       - LLM_GATEWAY_URL=http://llm-gateway:8083
     volumes:
-      - ../../infra/platform/cookbooks:/app/infra/platform/cookbooks:ro
+      - ../../infra/platform/cookbooks:/app/infra/platform/cookbooks:rw
     depends_on:
       migrate:
         condition: service_completed_successfully
