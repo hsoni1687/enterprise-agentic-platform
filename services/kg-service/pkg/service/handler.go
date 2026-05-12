@@ -436,17 +436,34 @@ func (h *Handler) QueryGraph(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) SearchNodes(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
+	if r.Method != http.MethodPost && r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	graphID := r.URL.Query().Get("graph_id")
-	nodeType := r.URL.Query().Get("node_type")
-	limit := 100
-	if l := r.URL.Query().Get("limit"); l != "" {
-		if parsed, err := strconv.Atoi(l); err == nil {
-			limit = parsed
+	var graphID, nodeType string
+	var limit = 100
+
+	if r.Method == http.MethodPost {
+		var searchReq struct {
+			GraphID string `json:"graph_id"`
+			Type    string `json:"type"`
+			Limit   int    `json:"limit,omitempty"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&searchReq); err == nil {
+			graphID = searchReq.GraphID
+			nodeType = searchReq.Type
+			if searchReq.Limit > 0 {
+				limit = searchReq.Limit
+			}
+		}
+	} else {
+		graphID = r.URL.Query().Get("graph_id")
+		nodeType = r.URL.Query().Get("node_type")
+		if l := r.URL.Query().Get("limit"); l != "" {
+			if parsed, err := strconv.Atoi(l); err == nil {
+				limit = parsed
+			}
 		}
 	}
 
