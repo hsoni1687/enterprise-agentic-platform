@@ -105,8 +105,12 @@ func (d *Dispatcher) handleInvoke(w http.ResponseWriter, r *http.Request) {
 
 	skill, ok := d.catalog.Get(skillName, tenantID)
 	if !ok {
-		http.Error(w, fmt.Sprintf("skill %q not found", skillName), http.StatusNotFound)
-		return
+		// Fall back to system skills (platform-system tenant)
+		skill, ok = d.catalog.Get(skillName, "platform-system")
+		if !ok {
+			http.Error(w, fmt.Sprintf("skill %q not found", skillName), http.StatusNotFound)
+			return
+		}
 	}
 
 	hctx := hooks.HookContext{
