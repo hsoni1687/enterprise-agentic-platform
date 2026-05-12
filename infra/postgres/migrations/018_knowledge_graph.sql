@@ -64,21 +64,21 @@ ALTER TABLE kg_edges ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS kg_graphs_access ON kg_graphs;
 CREATE POLICY kg_graphs_access ON kg_graphs
     USING (
-        (tenant_id = current_setting('app.tenant_id')::UUID)
+        (tenant_id = current_setting('app.tenant_id'))
         OR (scope = 'global')
-        OR (scope = 'shared' AND current_setting('app.tenant_id')::UUID = ANY(shared_with))
+        OR (scope = 'shared' AND current_setting('app.tenant_id') = ANY(shared_with))
     );
 
 DROP POLICY IF EXISTS kg_nodes_access ON kg_nodes;
 CREATE POLICY kg_nodes_access ON kg_nodes
     USING (
-        tenant_id = current_setting('app.tenant_id')::UUID
+        tenant_id = current_setting('app.tenant_id')
     );
 
 DROP POLICY IF EXISTS kg_edges_access ON kg_edges;
 CREATE POLICY kg_edges_access ON kg_edges
     USING (
-        tenant_id = current_setting('app.tenant_id')::UUID
+        tenant_id = current_setting('app.tenant_id')
     );
 
 -- Track this migration

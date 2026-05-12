@@ -22,9 +22,9 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
+import { useTenant } from "@/contexts/tenant-context";
 
 const API_GATEWAY = process.env.NEXT_PUBLIC_API_GATEWAY_URL ?? "http://localhost:8080";
-const TENANT_ID = process.env.NEXT_PUBLIC_TENANT_ID ?? "default-tenant";
 const WORKFLOW_INITIATOR = "http://localhost:8081";
 
 interface Message {
@@ -35,7 +35,7 @@ interface Message {
   streaming?: boolean;
 }
 
-function ApprovalBlock({ event }: { event: ChatEvent }) {
+function ApprovalBlock({ event, tenantId }: { event: ChatEvent; tenantId: string }) {
   const [status, setStatus] = useState<"pending" | "approved" | "denied">("pending");
   const [denialReason, setDenialReason] = useState("");
   const [busy, setBusy] = useState(false);
@@ -45,7 +45,7 @@ function ApprovalBlock({ event }: { event: ChatEvent }) {
     console.log(`[ApprovalBlock] Event object:`, event);
     console.log(`[ApprovalBlock] Approval ID:`, event.approval_id);
     console.log(`[ApprovalBlock] WORKFLOW_INITIATOR URL:`, WORKFLOW_INITIATOR);
-    console.log(`[ApprovalBlock] TENANT_ID:`, TENANT_ID);
+    console.log(`[ApprovalBlock] TENANT_ID:`, tenantId);
     setBusy(true);
     try {
       if (!event.approval_id) {
@@ -56,7 +56,7 @@ function ApprovalBlock({ event }: { event: ChatEvent }) {
       const body = action === "deny" ? JSON.stringify({ reason: denialReason }) : undefined;
       console.log(`[ApprovalBlock] Request body:`, body);
       console.log(`[ApprovalBlock] Request headers:`, {
-        "X-Tenant-ID": TENANT_ID,
+        "X-Tenant-ID": tenantId,
         "X-User-ID": "current-user",
         "Content-Type": "application/json",
       });
@@ -64,7 +64,7 @@ function ApprovalBlock({ event }: { event: ChatEvent }) {
       const resp = await fetch(url, {
         method: "POST",
         headers: {
-          "X-Tenant-ID": TENANT_ID,
+          "X-Tenant-ID": tenantId,
           "X-User-ID": "current-user",
           "Content-Type": "application/json",
         },
@@ -205,7 +205,7 @@ function ThinkingBlock({ content }: { content: string }) {
   );
 }
 
-function AssistantMessage({ message }: { message: Message }) {
+function AssistantMessage({ message, tenantId }: { message: Message; tenantId: string }) {
   return (
     <div className="group py-4 border-b border-border/20 last:border-0">
       <div className="flex items-start gap-3">
@@ -226,7 +226,7 @@ function AssistantMessage({ message }: { message: Message }) {
               console.log(`[AssistantMessage] Event keys:`, Object.keys(ev));
               console.log(`[AssistantMessage] approval_id field:`, ev.approval_id);
               console.log(`[AssistantMessage] Rendering ApprovalBlock with approval_id: ${ev.approval_id}`);
-              return <ApprovalBlock key={i} event={ev} />;
+              return <ApprovalBlock key={i} event={ev} tenantId={tenantId} />;
             }
             return null;
           })}
@@ -268,6 +268,7 @@ export default function ChatPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
+  const { tenantId } = useTenant();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -307,7 +308,7 @@ export default function ChatPage({
       ws.onopen = () => {
         clearTimeout(timeout);
         console.log("WebSocket connected");
-        ws.send(JSON.stringify({ message: text, tenant_id: TENANT_ID }));
+        ws.send(JSON.stringify({ message: text, tenant_id: tenantId }));
       };
 
       ws.onmessage = (e) => {
@@ -363,7 +364,7 @@ export default function ChatPage({
         onFallback();
       };
     },
-    [id]
+    [id, tenantId]
   );
 
   const useSSEFallback = useCallback(
@@ -376,9 +377,9 @@ export default function ChatPage({
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-Tenant-ID": TENANT_ID,
+          "X-Tenant-ID": tenantId,
         },
-        body: JSON.stringify({ message: text, tenant_id: TENANT_ID }),
+        body: JSON.stringify({ message: text, tenant_id: tenantId }),
       })
         .then((resp) => {
           if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -467,7 +468,7 @@ export default function ChatPage({
           setStreaming(false);
         });
     },
-    [id]
+    [id, tenantId]
   );
 
   const sendMessage = useCallback(() => {
@@ -555,7 +556,7 @@ export default function ChatPage({
             msg.role === "user" ? (
               <UserMessage key={msg.id} message={msg} />
             ) : (
-              <AssistantMessage key={msg.id} message={msg} />
+              <AssistantMessage key={msg.id} message={msg} tenantId={tenantId} />
             )
           )}
         </div>
