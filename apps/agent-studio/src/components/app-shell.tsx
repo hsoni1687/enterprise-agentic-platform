@@ -12,6 +12,7 @@ import {
   ChevronRight,
   CheckCircle,
   Network,
+  BookOpen,
 } from "lucide-react";
 import {
   Sidebar,
@@ -37,6 +38,7 @@ const navItems = [
   { href: "/chat", label: "Chat", icon: MessageSquare },
   { href: "/approvals", label: "Approvals", icon: CheckCircle },
   { href: "/logs", label: "Logs", icon: ScrollText },
+  { href: "/cookbooks", label: "Cookbooks", icon: BookOpen },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 

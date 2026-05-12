@@ -267,6 +267,40 @@ export interface TenantsResponse {
   tenants: Tenant[];
 }
 
+export interface CookbookVariable {
+  name: string;
+  description: string;
+  default: string;
+  type: string;
+}
+
+export interface Cookbook {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  domain: string;
+  tags: string[];
+  variables: CookbookVariable[];
+}
+
+export interface CookbooksResponse {
+  cookbooks: Cookbook[];
+  count: number;
+}
+
+export interface ImportCookbookResult {
+  import_id: string;
+  cookbook: string;
+  tenant_id: string;
+  status: string;
+  resources: {
+    knowledge_graphs: string[];
+    agents: string[];
+  };
+  warnings?: string[];
+}
+
 export const adminApi = {
   listTenants: async (): Promise<TenantsResponse> => {
     const res = await fetch(`${ADMIN_API}/api/v1/admin/tenants`, {
@@ -276,6 +310,39 @@ export const adminApi = {
       throw new Error(`Failed to fetch tenants: ${res.status}`);
     }
     return res.json() as Promise<TenantsResponse>;
+  },
+
+  listCookbooks: async (): Promise<CookbooksResponse> => {
+    const res = await fetch(`${ADMIN_API}/api/v1/admin/cookbooks`, {
+      headers: { Authorization: `Bearer ${ADMIN_KEY}` },
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to fetch cookbooks: ${res.status}`);
+    }
+    return res.json() as Promise<CookbooksResponse>;
+  },
+
+  importCookbook: async (
+    cookbookId: string,
+    tenantId: string,
+    variables: Record<string, string>
+  ): Promise<ImportCookbookResult> => {
+    const res = await fetch(
+      `${ADMIN_API}/api/v1/admin/cookbooks/${cookbookId}/import`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${ADMIN_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ tenant_id: tenantId, variables }),
+      }
+    );
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`Import failed (${res.status}): ${body}`);
+    }
+    return res.json() as Promise<ImportCookbookResult>;
   },
 };
 
