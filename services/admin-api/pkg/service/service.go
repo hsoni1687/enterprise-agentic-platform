@@ -1527,6 +1527,13 @@ func (h *AdminHandler) HandleTransitionSystemSkill(w http.ResponseWriter, r *htt
 }
 
 // Cookbook manifest structures
+type CookbookVariable struct {
+	Name        string `json:"name" yaml:"name"`
+	Description string `json:"description" yaml:"description"`
+	Default     string `json:"default" yaml:"default"`
+	Type        string `json:"type" yaml:"type"`
+}
+
 type CookbookManifest struct {
 	Name        string `yaml:"name"`
 	Version     string `yaml:"version"`
@@ -1544,29 +1551,54 @@ type CookbookManifest struct {
 			Description string `yaml:"description"`
 		} `yaml:"agents"`
 	} `yaml:"creates"`
-	Variables []struct {
-		Name        string `yaml:"name"`
-		Description string `yaml:"description"`
-		Default     string `yaml:"default"`
-		Type        string `yaml:"type"`
-	} `yaml:"variables"`
-	Tags                 []string `yaml:"tags"`
-	MinPlatformVersion   string   `yaml:"min_platform_version"`
+	Variables            []CookbookVariable `yaml:"variables"`
+	Tags                 []string           `yaml:"tags"`
+	MinPlatformVersion   string             `yaml:"min_platform_version"`
 }
 
 type CookbookInfo struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	Version     string   `json:"version"`
-	Description string   `json:"description"`
-	Domain      string   `json:"domain"`
-	Tags        []string `json:"tags"`
-	Variables   []struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		Default     string `json:"default"`
-		Type        string `json:"type"`
-	} `json:"variables"`
+	ID          string              `json:"id"`
+	Name        string              `json:"name"`
+	Version     string              `json:"version"`
+	Description string              `json:"description"`
+	Domain      string              `json:"domain"`
+	Tags        []string            `json:"tags"`
+	Variables   []CookbookVariable  `json:"variables"`
+}
+
+type CookbookAgentDetail struct {
+	File        string `json:"file"`
+	Description string `json:"description"`
+	Content     string `json:"content"`
+}
+
+type CookbookKGDetail struct {
+	Name          string `json:"name"`
+	Description   string `json:"description"`
+	SchemaFile    string `json:"schema_file"`
+	SeedDataFile  string `json:"seed_data_file"`
+	SchemaContent string `json:"schema_content"`
+	SeedContent   string `json:"seed_content"`
+}
+
+type CookbookMCPRecommendation struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Required    bool   `json:"required"`
+}
+
+type CookbookDetail struct {
+	ID                 string                      `json:"id"`
+	Name               string                      `json:"name"`
+	Version            string                      `json:"version"`
+	Description        string                      `json:"description"`
+	Domain             string                      `json:"domain"`
+	Tags               []string                    `json:"tags"`
+	MinPlatformVersion string                      `json:"min_platform_version"`
+	Variables          []CookbookVariable          `json:"variables"`
+	Agents             []CookbookAgentDetail       `json:"agents"`
+	KnowledgeGraphs    []CookbookKGDetail          `json:"knowledge_graphs"`
+	MCPRecommendations []CookbookMCPRecommendation `json:"mcp_recommendations"`
 }
 
 // HandleListCookbooks lists available cookbooks (admin only)
@@ -1601,21 +1633,6 @@ func (h *AdminHandler) HandleListCookbooks(w http.ResponseWriter, r *http.Reques
 			continue
 		}
 
-		vars := make([]struct {
-			Name        string `json:"name"`
-			Description string `json:"description"`
-			Default     string `json:"default"`
-			Type        string `json:"type"`
-		}, len(manifest.Variables))
-		for i, v := range manifest.Variables {
-			vars[i] = struct {
-				Name        string `json:"name"`
-				Description string `json:"description"`
-				Default     string `json:"default"`
-				Type        string `json:"type"`
-			}{v.Name, v.Description, v.Default, v.Type}
-		}
-
 		cookbook := CookbookInfo{
 			ID:          entry.Name(),
 			Name:        manifest.Name,
@@ -1623,7 +1640,7 @@ func (h *AdminHandler) HandleListCookbooks(w http.ResponseWriter, r *http.Reques
 			Description: manifest.Description,
 			Domain:      manifest.Domain,
 			Tags:        manifest.Tags,
-			Variables:   vars,
+			Variables:   manifest.Variables,
 		}
 		cookbooks = append(cookbooks, cookbook)
 	}
@@ -1632,6 +1649,171 @@ func (h *AdminHandler) HandleListCookbooks(w http.ResponseWriter, r *http.Reques
 		"cookbooks": cookbooks,
 		"count":     len(cookbooks),
 	})
+}
+
+// HandleGetCookbook retrieves full cookbook details including artifact content (admin only)
+func (h *AdminHandler) HandleGetCookbook(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	cookbookID := r.PathValue("id")
+	if cookbookID == "" {
+		http.Error(w, "Missing cookbook ID", http.StatusBadRequest)
+		return
+	}
+
+	cookbooksDir := os.Getenv("COOKBOOKS_DIR")
+	if cookbooksDir == "" {
+		cookbooksDir = "infra/platform/cookbooks"
+	}
+
+	cookbookPath := filepath.Join(cookbooksDir, cookbookID)
+
+	// Read manifest
+	manifestPath := filepath.Join(cookbookPath, "manifest.yaml")
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		http.Error(w, "Cookbook not found", http.StatusNotFound)
+		return
+	}
+
+	var manifest CookbookManifest
+	if err := yaml.Unmarshal(data, &manifest); err != nil {
+		http.Error(w, "Failed to parse manifest", http.StatusBadRequest)
+		return
+	}
+
+	detail := CookbookDetail{
+		ID:                 cookbookID,
+		Name:               manifest.Name,
+		Version:            manifest.Version,
+		Description:        manifest.Description,
+		Domain:             manifest.Domain,
+		Tags:               manifest.Tags,
+		MinPlatformVersion: manifest.MinPlatformVersion,
+		Variables:          manifest.Variables,
+		Agents:             []CookbookAgentDetail{},
+		KnowledgeGraphs:    []CookbookKGDetail{},
+		MCPRecommendations: []CookbookMCPRecommendation{},
+	}
+
+	// Read agent files
+	for _, a := range manifest.Creates.Agents {
+		agentPath := filepath.Join(cookbookPath, a.File)
+		content, err := os.ReadFile(agentPath)
+		if err != nil {
+			fmt.Printf("[WARN] Failed to read agent %s: %v\n", a.File, err)
+			content = []byte("")
+		}
+		detail.Agents = append(detail.Agents, CookbookAgentDetail{
+			File:        a.File,
+			Description: a.Description,
+			Content:     string(content),
+		})
+	}
+
+	// Read KG files
+	for _, kg := range manifest.Creates.KnowledgeGraphs {
+		schemaPath := filepath.Join(cookbookPath, kg.SchemaFile)
+		seedPath := filepath.Join(cookbookPath, kg.SeedDataFile)
+
+		schemaContent, err := os.ReadFile(schemaPath)
+		if err != nil {
+			fmt.Printf("[WARN] Failed to read KG schema %s: %v\n", kg.SchemaFile, err)
+			schemaContent = []byte("")
+		}
+
+		seedContent, err := os.ReadFile(seedPath)
+		if err != nil {
+			fmt.Printf("[WARN] Failed to read KG seed %s: %v\n", kg.SeedDataFile, err)
+			seedContent = []byte("")
+		}
+
+		detail.KnowledgeGraphs = append(detail.KnowledgeGraphs, CookbookKGDetail{
+			Name:          kg.Name,
+			Description:   kg.Description,
+			SchemaFile:    kg.SchemaFile,
+			SeedDataFile:  kg.SeedDataFile,
+			SchemaContent: string(schemaContent),
+			SeedContent:   string(seedContent),
+		})
+	}
+
+	// Read MCP recommendations
+	mcpPath := filepath.Join(cookbookPath, "mcp-recommendations.yaml")
+	mcpData, err := os.ReadFile(mcpPath)
+	if err == nil {
+		var mcpFile struct {
+			MCPServers []struct {
+				Name        string `yaml:"name"`
+				Description string `yaml:"description"`
+				Required    bool   `yaml:"required"`
+			} `yaml:"mcp_servers"`
+		}
+		if err := yaml.Unmarshal(mcpData, &mcpFile); err == nil {
+			for _, m := range mcpFile.MCPServers {
+				detail.MCPRecommendations = append(detail.MCPRecommendations, CookbookMCPRecommendation{
+					Name:        m.Name,
+					Description: m.Description,
+					Required:    m.Required,
+				})
+			}
+		}
+	}
+
+	json.NewEncoder(w).Encode(detail)
+}
+
+// HandleUpdateCookbookFile updates a file within a cookbook (admin only)
+func (h *AdminHandler) HandleUpdateCookbookFile(w http.ResponseWriter, r *http.Request) {
+	cookbookID := r.PathValue("id")
+	if cookbookID == "" {
+		http.Error(w, "Missing cookbook ID", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		Path    string `json:"path"`
+		Content string `json:"content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Security: reject paths with ".."
+	if strings.Contains(req.Path, "..") {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+
+	cookbooksDir := os.Getenv("COOKBOOKS_DIR")
+	if cookbooksDir == "" {
+		cookbooksDir = "infra/platform/cookbooks"
+	}
+
+	targetPath := filepath.Join(cookbooksDir, cookbookID, req.Path)
+
+	// Validate YAML before writing
+	var check interface{}
+	if err := yaml.Unmarshal([]byte(req.Content), &check); err != nil {
+		http.Error(w, fmt.Sprintf("Invalid YAML: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	// Ensure directory exists
+	targetDir := filepath.Dir(targetPath)
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create directory: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Write file
+	if err := os.WriteFile(targetPath, []byte(req.Content), 0644); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to write file: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // agentYAML represents an agent template in a cookbook

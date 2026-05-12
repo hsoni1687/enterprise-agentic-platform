@@ -109,7 +109,7 @@ export default function CookbooksPage() {
                 </div>
                 <Link href={`/cookbooks/${cookbook.id}`}>
                   <button className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
-                    Import
+                    View Details
                   </button>
                 </Link>
               </div>

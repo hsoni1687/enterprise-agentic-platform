@@ -115,6 +115,8 @@ func main() {
 
 	// Cookbook Management
 	mux.Handle("GET /api/v1/admin/cookbooks", authMiddleware(adminAPIKey, http.HandlerFunc(handler.HandleListCookbooks)))
+	mux.Handle("GET /api/v1/admin/cookbooks/{id}", authMiddleware(adminAPIKey, http.HandlerFunc(handler.HandleGetCookbook)))
+	mux.Handle("PUT /api/v1/admin/cookbooks/{id}/files", authMiddleware(adminAPIKey, http.HandlerFunc(handler.HandleUpdateCookbookFile)))
 	mux.Handle("POST /api/v1/admin/cookbooks/{id}/import", authMiddleware(adminAPIKey, http.HandlerFunc(handler.HandleImportCookbook)))
 
 	log.Printf("Starting Admin API on :8089 (Admin Key: %s...)", adminAPIKey[:10])

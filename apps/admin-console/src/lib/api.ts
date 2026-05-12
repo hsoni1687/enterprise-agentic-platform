@@ -35,6 +35,49 @@ async function request(
   return response;
 }
 
+// Cookbook types
+export interface CookbookVariable {
+  name: string;
+  description: string;
+  default: string;
+  type: string;
+}
+
+export interface CookbookAgentDetail {
+  file: string;
+  description: string;
+  content: string;
+}
+
+export interface CookbookKGDetail {
+  name: string;
+  description: string;
+  schema_file: string;
+  seed_data_file: string;
+  schema_content: string;
+  seed_content: string;
+}
+
+export interface CookbookMCPRecommendation {
+  name: string;
+  description: string;
+  required: boolean;
+}
+
+export interface CookbookDetail {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  domain: string;
+  tags: string[];
+  min_platform_version: string;
+  variables: CookbookVariable[];
+  agents: CookbookAgentDetail[];
+  knowledge_graphs: CookbookKGDetail[];
+  mcp_recommendations: CookbookMCPRecommendation[];
+}
+
 export const adminApi = {
   async verifyAuth(apiKey: string): Promise<any> {
     const response = await fetch(`${API_BASE_URL}/api/v1/admin/auth/verify`, {
@@ -409,5 +452,24 @@ export const adminApi = {
     });
     if (!response.ok) throw new Error("Failed to import cookbook");
     return response.json();
+  },
+
+  async getCookbook(cookbookId: string): Promise<CookbookDetail> {
+    const url = `${API_BASE_URL}/api/v1/admin/cookbooks/${cookbookId}`;
+    const headers = { ...getAuthHeader(), "Content-Type": "application/json" };
+    const response = await fetch(url, { headers });
+    if (!response.ok) throw new Error(`Failed to fetch cookbook: ${response.status}`);
+    return response.json();
+  },
+
+  async updateCookbookFile(cookbookId: string, path: string, content: string): Promise<void> {
+    const response = await request("PUT", `/api/v1/admin/cookbooks/${cookbookId}/files`, {
+      path,
+      content,
+    });
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`Save failed (${response.status}): ${body}`);
+    }
   },
 };
