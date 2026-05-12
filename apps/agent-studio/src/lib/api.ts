@@ -289,6 +289,41 @@ export interface CookbooksResponse {
   count: number;
 }
 
+export interface CookbookAgentDetail {
+  file: string;
+  description: string;
+  content: string;
+}
+
+export interface CookbookKGDetail {
+  name: string;
+  description: string;
+  schema_file: string;
+  seed_data_file: string;
+  schema_content: string;
+  seed_content: string;
+}
+
+export interface CookbookMCPRecommendation {
+  name: string;
+  description: string;
+  required: boolean;
+}
+
+export interface CookbookDetail {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  domain: string;
+  tags: string[];
+  min_platform_version: string;
+  variables: CookbookVariable[];
+  agents: CookbookAgentDetail[];
+  knowledge_graphs: CookbookKGDetail[];
+  mcp_recommendations: CookbookMCPRecommendation[];
+}
+
 export interface ImportCookbookResult {
   import_id: string;
   cookbook: string;
@@ -320,6 +355,16 @@ export const adminApi = {
       throw new Error(`Failed to fetch cookbooks: ${res.status}`);
     }
     return res.json() as Promise<CookbooksResponse>;
+  },
+
+  getCookbook: async (cookbookId: string): Promise<CookbookDetail> => {
+    const res = await fetch(`${ADMIN_API}/api/v1/admin/cookbooks/${cookbookId}`, {
+      headers: { Authorization: `Bearer ${ADMIN_KEY}` },
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to fetch cookbook: ${res.status}`);
+    }
+    return res.json() as Promise<CookbookDetail>;
   },
 
   importCookbook: async (

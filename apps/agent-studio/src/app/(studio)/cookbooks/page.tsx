@@ -167,15 +167,21 @@ export default function CookbooksPage() {
                 )}
               </div>
 
-              <Sheet open={sheetOpen && selectedCookbook?.id === cookbook.id} onOpenChange={handleSheetOpenChange}>
-                <SheetTrigger asChild>
-                  <Button
-                    className="w-full mt-4"
-                    onClick={() => handleImportClick(cookbook)}
-                  >
-                    Import
+              <div className="flex gap-2 mt-4">
+                <Link href={`/cookbooks/${cookbook.id}`} className="flex-1">
+                  <Button variant="outline" className="w-full">
+                    View Details
                   </Button>
-                </SheetTrigger>
+                </Link>
+                <Sheet open={sheetOpen && selectedCookbook?.id === cookbook.id} onOpenChange={handleSheetOpenChange}>
+                  <SheetTrigger>
+                    <Button
+                      className="flex-1"
+                      onClick={() => handleImportClick(cookbook)}
+                    >
+                      Import
+                    </Button>
+                  </SheetTrigger>
 
                 {selectedCookbook?.id === cookbook.id && (
                   <SheetContent>
@@ -253,7 +259,7 @@ export default function CookbooksPage() {
                           </div>
 
                           {/* Warnings */}
-                          {importResult.warnings?.length > 0 && (
+                          {importResult.warnings && importResult.warnings.length > 0 && (
                             <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-4">
                               <h5 className="text-sm font-semibold text-yellow-900 mb-2">
                                 Warnings
@@ -314,7 +320,8 @@ export default function CookbooksPage() {
                     </div>
                   </SheetContent>
                 )}
-              </Sheet>
+                </Sheet>
+              </div>
             </div>
           ))}
         </div>

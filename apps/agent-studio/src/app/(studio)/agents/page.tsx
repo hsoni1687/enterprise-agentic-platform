@@ -83,7 +83,7 @@ function CreateAgentSheet({ onCreated }: { onCreated: () => void }) {
 
   const { data: approvedTools } = useQuery({
     queryKey: ["tools", "approved"],
-    queryFn: () => toolsApi.list("approved", { include_system: true }),
+    queryFn: () => toolsApi.list("approved"),
   });
 
   const { data: modelsData } = useQuery({
