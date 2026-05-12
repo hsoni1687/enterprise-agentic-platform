@@ -17,7 +17,8 @@ import {
   XCircle,
 } from "lucide-react";
 import { agentsApi } from "@/lib/api";
-import { ChatEvent } from "@/lib/types";
+import { ChatEvent, Message } from "@/lib/types";
+import { getSession, setSession, clearSession } from "@/lib/chat-session-cache";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -27,13 +28,6 @@ import { useTenant } from "@/contexts/tenant-context";
 const API_GATEWAY = process.env.NEXT_PUBLIC_API_GATEWAY_URL ?? "http://localhost:8080";
 const WORKFLOW_INITIATOR = "http://localhost:8081";
 
-interface Message {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-  events?: ChatEvent[];
-  streaming?: boolean;
-}
 
 function ApprovalBlock({ event, tenantId }: { event: ChatEvent; tenantId: string }) {
   const [status, setStatus] = useState<"pending" | "approved" | "denied">("pending");
@@ -269,7 +263,7 @@ export default function ChatPage({
 }) {
   const { id } = use(params);
   const { tenantId } = useTenant();
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<Message[]>(() => getSession(id));
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -290,6 +284,12 @@ export default function ChatPage({
   useEffect(() => {
     scrollToBottom();
   }, [messages, scrollToBottom]);
+
+  useEffect(() => {
+    if (!streaming && messages.length > 0) {
+      setSession(id, messages);
+    }
+  }, [streaming, id]);
 
   const tryWebSocket = useCallback(
     (text: string, assistantId: string, onFallback: () => void) => {
@@ -489,7 +489,11 @@ export default function ChatPage({
       streaming: true,
     };
 
-    setMessages((prev) => [...prev, userMsg, assistantMsg]);
+    setMessages((prev) => {
+      const updated = [...prev, userMsg, assistantMsg];
+      setSession(id, updated);
+      return updated;
+    });
     setInput("");
     setStreaming(true);
 
@@ -517,7 +521,7 @@ export default function ChatPage({
             <ArrowLeft className="h-3.5 w-3.5" />
           </Button>
         </Link>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-1">
           <Bot className="h-4 w-4 text-primary" />
           <span className="text-sm font-semibold">{agent?.name ?? id}</span>
           {agent?.status === "active" && (
@@ -529,6 +533,18 @@ export default function ChatPage({
             {agent.model}
           </span>
         )}
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-7 px-2 text-muted-foreground"
+          onClick={() => {
+            clearSession(id);
+            setMessages([]);
+            wsRef.current?.close();
+          }}
+        >
+          New Chat
+        </Button>
       </div>
 
       {/* Messages */}

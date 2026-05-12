@@ -116,6 +116,14 @@ export interface ChatEvent {
   reason?: string;
 }
 
+export interface Message {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  events?: ChatEvent[];
+  streaming?: boolean;
+}
+
 export interface KGGraph {
   id: string;
   tenant_id: string;

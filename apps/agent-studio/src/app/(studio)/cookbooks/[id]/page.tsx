@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { adminApi } from "@/lib/api";
@@ -39,7 +39,11 @@ export default function CookbookDetailPage() {
   const queryClient = useQueryClient();
   const cookbookId = params.id as string;
 
-  const [activeTab, setActiveTab] = useState<Tab>("overview");
+  const searchParams = useSearchParams();
+  const activeTab = (searchParams.get("tab") ?? "overview") as Tab;
+  const setActiveTab = (tab: Tab) => {
+    router.replace(`/cookbooks/${cookbookId}?tab=${tab}`, { scroll: false });
+  };
   const [showImportForm, setShowImportForm] = useState(false);
   const [selectedTenant, setSelectedTenant] = useState(tenantId);
   const [importVariables, setImportVariables] = useState<Record<string, string>>({});
