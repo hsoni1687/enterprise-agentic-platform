@@ -1920,14 +1920,20 @@ func (h *AdminHandler) createAgentFromYAML(ctx context.Context, yamlPath string,
 		skills = append(skills, map[string]string{"name": skill.Name, "version": skill.Version})
 	}
 
+	// Generate unique agent ID: {tenant}-{agent-name}-{short-uuid}
+	// This ensures per-tenant agents don't conflict while remaining readable
+	shortID := uuid.New().String()[:8]
+	agentID := fmt.Sprintf("%s-%s-%s", tenantID, strings.ToLower(strings.ReplaceAll(agent.Name, " ", "-")), shortID)
+
 	// Create agent manifest for agent-registry
 	manifest := map[string]interface{}{
-		"name":              agent.Name,
-		"version":           agent.Version,
-		"system_prompt":     agent.SystemPrompt,
-		"model":             agent.Model,
-		"max_iterations":    agent.MaxIterations,
-		"memory_budget_mb":  agent.MemoryBudgetMB,
+		"id":                 agentID,
+		"name":               agent.Name,
+		"version":            agent.Version,
+		"system_prompt":      agent.SystemPrompt,
+		"model":              agent.Model,
+		"max_iterations":     agent.MaxIterations,
+		"memory_budget_mb":   agent.MemoryBudgetMB,
 	}
 	if len(tools) > 0 {
 		manifest["tools"] = tools
@@ -1940,7 +1946,7 @@ func (h *AdminHandler) createAgentFromYAML(ctx context.Context, yamlPath string,
 	}
 
 	body, _ := json.Marshal(manifest)
-	fmt.Printf("[DEBUG] Creating agent '%s' for tenant '%s' with manifest: %s\n", agent.Name, tenantID, string(body))
+	fmt.Printf("[DEBUG] Creating agent '%s' (id=%s) for tenant '%s' with manifest: %s\n", agent.Name, agentID, tenantID, string(body))
 	resp, err := h.httpPost(h.AgentRegistryURL+"/api/v1/agents", tenantID, body)
 	if err != nil {
 		fmt.Printf("[DEBUG] HTTP error creating agent: %v\n", err)
