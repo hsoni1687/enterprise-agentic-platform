@@ -26,6 +26,7 @@ type AdminHandler struct {
 	TemporalClient   client.Client
 	AgentRegistryURL string
 	KGServiceURL     string
+	LLMGatewayURL    string
 }
 
 // getPricingModel retrieves the pricing model from platform_config.
@@ -298,7 +299,7 @@ func (h *AdminHandler) HandleUpdateTenantStatus(w http.ResponseWriter, r *http.R
 func (h *AdminHandler) HandleGetLLMConfig(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	resp, err := http.Get("http://llm-gateway:8083/admin/config")
+	resp, err := http.Get(h.LLMGatewayURL + "/admin/config")
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to reach LLM Gateway: %v", err), http.StatusInternalServerError)
 		return
@@ -324,7 +325,7 @@ func (h *AdminHandler) HandlePutLLMConfig(w http.ResponseWriter, r *http.Request
 
 	// Build request body for LLM Gateway
 	reqBody, _ := json.Marshal(req)
-	llmReq, err := http.NewRequest("PUT", "http://llm-gateway:8083/admin/config", strings.NewReader(string(reqBody)))
+	llmReq, err := http.NewRequest("PUT", h.LLMGatewayURL+"/admin/config", strings.NewReader(string(reqBody)))
 	if err != nil {
 		http.Error(w, "Failed to create request", http.StatusInternalServerError)
 		return
