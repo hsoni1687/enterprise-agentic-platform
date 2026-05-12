@@ -1,8 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useTenant } from "@/contexts/tenant-context";
+import { setRuntimeTenant } from "@/lib/api";
 import { kgApi } from "@/lib/api";
 import { KGGraph } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -14,6 +16,13 @@ import { Plus, Trash2, Eye, Pencil, Loader2, X } from "lucide-react";
 export default function KnowledgeGraphsPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
+  const { tenantId } = useTenant();
+
+  // Update runtime tenant when it changes
+  useEffect(() => {
+    setRuntimeTenant(tenantId);
+    queryClient.invalidateQueries({ queryKey: ["kg-graphs"] });
+  }, [tenantId, queryClient]);
   const [createOpen, setCreateOpen] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [createName, setCreateName] = useState("");
