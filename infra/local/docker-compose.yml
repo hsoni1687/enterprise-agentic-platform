@@ -312,7 +312,8 @@ services:
         condition: service_started
     volumes:
       - ./seed_system_agents.sh:/seed.sh:ro
-    entrypoint: ["bash", "/seed.sh"]
+      - ../platform/system-agents:/system-agents:ro
+    entrypoint: ["bash", "/seed.sh", "/system-agents"]
     environment:
       - AGENT_REGISTRY_URL=http://agent-registry:8088
     networks:

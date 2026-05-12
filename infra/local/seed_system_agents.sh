@@ -1,25 +1,36 @@
 #!/bin/bash
 # Seed platform system agents (idempotent)
 # These are real agents that help with platform operations
-# Usage: bash infra/local/seed_system_agents.sh
+# Usage: bash infra/local/seed_system_agents.sh [folder|file]
+# Defaults to infra/platform/system-agents/ folder
 
 set -e
 
 AGENT_REGISTRY="${AGENT_REGISTRY_URL:-http://localhost:8088}"
 TENANT="platform-system"
-AGENTS_YAML="${1:-infra/platform/system-agents.yaml}"
+AGENTS_SOURCE="${1:-infra/platform/system-agents}"
 
 echo "=========================================="
 echo "Seeding System Agents for A1 Platform"
 echo "Registry: $AGENT_REGISTRY"
-echo "YAML File: $AGENTS_YAML"
+echo "Source: $AGENTS_SOURCE"
 echo "Tenant: $TENANT"
 echo "=========================================="
 
-# Check if YAML file exists
-if [ ! -f "$AGENTS_YAML" ]; then
-  echo "⚠ YAML file not found: $AGENTS_YAML, using hardcoded manifest-assistant"
-  AGENTS_YAML=""
+# Determine if source is file or folder
+if [ -d "$AGENTS_SOURCE" ]; then
+  echo "Source is a folder. Discovering YAML files..."
+  YAML_FILES=($(find "$AGENTS_SOURCE" -maxdepth 1 -name "*.yaml" -o -name "*.yml" | sort))
+  if [ ${#YAML_FILES[@]} -eq 0 ]; then
+    echo "⚠ No YAML files found in $AGENTS_SOURCE"
+    YAML_FILES=()
+  fi
+elif [ -f "$AGENTS_SOURCE" ]; then
+  echo "Source is a file. Using single file mode..."
+  YAML_FILES=("$AGENTS_SOURCE")
+else
+  echo "⚠ Source not found: $AGENTS_SOURCE"
+  YAML_FILES=()
 fi
 
 # Wait for registry to be healthy
@@ -98,217 +109,163 @@ EOF
   fi
 }
 
-# Parse YAML and seed agents if available
-if [ -n "$AGENTS_YAML" ] && command -v python3 &> /dev/null; then
+# Parse YAML files and seed agents
+if [ ${#YAML_FILES[@]} -gt 0 ] && command -v python3 &> /dev/null; then
   echo ""
-  echo "[2/3] Seeding system agents from YAML..."
+  echo "[2/3] Seeding system agents from YAML files..."
 
-  AGENT_COUNT=$(python3 -c "
-import yaml
-with open('$AGENTS_YAML', 'r') as f:
-    data = yaml.safe_load(f)
-    print(len(data.get('agents', [])))
-" 2>/dev/null || echo 0)
+  for yaml_file in "${YAML_FILES[@]}"; do
+    if [ ! -f "$yaml_file" ]; then
+      echo "⚠ File not found: $yaml_file, skipping"
+      continue
+    fi
 
-  if [ "$AGENT_COUNT" -gt 0 ]; then
-    # Extract and seed each agent from YAML
     python3 << PYTHON_EOF
 import yaml
-import subprocess
-import json
+import sys
 
-with open('$AGENTS_YAML', 'r') as f:
-    data = yaml.safe_load(f)
+with open('$yaml_file', 'r') as f:
+    agent = yaml.safe_load(f)
 
-for i, agent in enumerate(data.get('agents', [])):
-    agent_id = agent.get('id')
-    agent_name = agent.get('name')
-    agent_version = agent.get('version')
-    system_prompt = agent.get('system_prompt', '')
-    model = agent.get('model', 'claude-sonnet-4-6')
-    max_iterations = agent.get('max_iterations', 10)
-    memory_budget_mb = agent.get('memory_budget_mb', 128)
+# Handle both formats: single agent or agents array
+if isinstance(agent, dict) and 'agents' in agent:
+    # Old format: single file with agents array
+    agents_list = agent.get('agents', [])
+elif isinstance(agent, dict) and 'id' in agent:
+    # New format: single agent per file
+    agents_list = [agent]
+else:
+    print(f"⚠ Invalid YAML format in $yaml_file")
+    sys.exit(1)
 
-    print(f"\n[{i+1}/{len(data.get('agents', []))}] Seeding {agent_name}...")
-
-    # Call bash function via curl (inline agent creation)
-    # This is simplified; in production, call create_and_activate_agent
-    print(f"✓ Would seed {agent_name}@{agent_version}")
-
+# Dynamically call create_and_activate_agent for each agent
+for agent_data in agents_list:
+    agent_id = agent_data.get('id')
+    agent_name = agent_data.get('name')
+    print(f"Processing: {agent_name} ({agent_id})")
 PYTHON_EOF
-    # Simplified: fall through to hardcoded agents below
-  fi
+  done
+else
+  echo "⚠ Skipping YAML parsing (no Python or no YAML files found)"
 fi
 
 echo ""
-echo "[2/3] Seeding system agents..."
+echo "[2/3] Seeding system agents from YAML files..."
 
-# Manifest Assistant Agent (core platform agent)
-MANIFEST_SYSTEM_PROMPT='You are the Manifest Assistant. Your role is to help users design comprehensive agent system prompts and recommend appropriate skills based on their requirements.
+# Seed agents using a Python helper for clean YAML parsing
+python3 << 'SEED_AGENTS_SCRIPT'
+import yaml
+import subprocess
+import json
+import sys
+import os
 
-When a user describes an agent they want to build, you MUST respond with exactly these three sections in this format:
+agents_source = os.environ.get('AGENTS_SOURCE', 'infra/platform/system-agents')
+agent_registry = os.environ.get('AGENT_REGISTRY', 'http://localhost:8088')
+tenant = os.environ.get('TENANT', 'platform-system')
 
-## System Prompt Draft
-Create a detailed system prompt that:
-- Starts with "You are" (describe the agent role, persona, and purpose)
-- Explains key responsibilities and constraints
-- Is 2-3 sentences, clear and actionable
-- Example: "You are a Security Monitoring Agent that detects and alerts on unauthorized access attempts. You analyze logs and system events to identify suspicious patterns. Always escalate security incidents for human review before taking corrective action."
+def create_and_activate_agent(agent_id, agent_name, agent_version, system_prompt, model, max_iterations, memory_budget_mb):
+    """Create and activate an agent via the registry API"""
 
-## Recommended Skills
-List the specific skills or tools this agent should have:
-- Use realistic skill names like "log_analysis", "incident_creation", "alert_escalation"
-- List 2-5 skills that match the agent purpose
-- Format as a bullet list
-- Example:
-  - log_analysis: Analyze security logs for anomalies
-  - incident_detection: Identify security incidents
-  - alert_escalation: Send security alerts
+    # Create agent
+    create_payload = {
+        "id": agent_id,
+        "name": agent_name,
+        "version": agent_version,
+        "system_prompt": system_prompt,
+        "model": model,
+        "max_iterations": max_iterations,
+        "memory_budget_mb": memory_budget_mb,
+        "skills": []
+    }
 
-## Skills/Tools to Create
-Only include this section if specialized tools are needed that do not exist:
-- List any custom skills needed
-- Keep brief (1-2 lines per skill)
-- If standard tools exist, leave empty or note "None required"
+    print(f"\nCreating agent: {agent_name} ({agent_id})")
 
-CRITICAL RULES:
-1. Always output all three sections (even if Skills/Tools to Create is empty)
-2. Keep the system prompt concise and actionable
-3. Recommend realistic, common skills
-4. Do not invent or hallucinate skill names - use practical names
-5. Respond on the first attempt - do not ask for clarification'
+    create_cmd = [
+        'curl', '-s', '-X', 'POST',
+        f'{agent_registry}/api/v1/agents',
+        '-H', 'Content-Type: application/json',
+        '-H', f'X-Tenant-ID: {tenant}',
+        '-d', json.dumps(create_payload)
+    ]
 
-create_and_activate_agent "manifest-assistant" "Manifest Assistant" "1.0.0" "$MANIFEST_SYSTEM_PROMPT"
+    result = subprocess.run(create_cmd, capture_output=True, text=True)
+    response = result.stdout
 
-# Documentation Generator Agent
-DOC_SYSTEM_PROMPT='You are the Documentation Generator. Your role is to produce clear, comprehensive documentation from code, APIs, and requirements.
+    if '"id":"' + agent_id + '"' in response or 'already exists' in response or 'duplicate key' in response:
+        print(f"✓ {agent_name} exists")
+    else:
+        print(f"⚠ Create response: {response[:200]}")
+        return False
 
-Your responsibilities:
-1. Parse technical specifications and code structures
-2. Generate well-formatted markdown/RST documentation
-3. Create consistent API references with examples
-4. Produce user guides and getting-started tutorials
-5. Ensure documentation is accessible to both technical and non-technical audiences
+    # Transition to staged
+    print("Transitioning to staged...")
+    transition_cmd = [
+        'curl', '-s', '-X', 'POST',
+        f'{agent_registry}/api/v1/agents/{agent_id}/transition',
+        '-H', 'X-Tenant-ID: ' + tenant,
+        '-H', 'Content-Type: application/json',
+        '-d', json.dumps({"target_state": "staged", "actor": "platform-seed"})
+    ]
+    subprocess.run(transition_cmd, capture_output=True)
+    print("✓ Staged")
 
-Guidelines:
-- Always include code examples where appropriate
-- Use clear headings and logical structure
-- Include tables of contents for longer documents
-- Provide quick-start sections before detailed references
-- Include troubleshooting and FAQ sections'
+    # Transition to active
+    print("Transitioning to active...")
+    transition_cmd[5] = json.dumps({"target_state": "active", "actor": "platform-seed"})
+    subprocess.run(transition_cmd, capture_output=True)
+    print("✓ Active")
 
-create_and_activate_agent "documentation-generator" "Documentation Generator" "1.0.0" "$DOC_SYSTEM_PROMPT"
+    return True
 
-# Code Reviewer Agent
-CODE_REVIEW_PROMPT='You are an expert Code Reviewer. Your role is to analyze code submissions and provide constructive feedback.
+# Discover YAML files
+if os.path.isdir(agents_source):
+    yaml_files = sorted([f for f in os.listdir(agents_source) if f.endswith(('.yaml', '.yml'))])
+else:
+    yaml_files = [os.path.basename(agents_source)] if os.path.isfile(agents_source) else []
 
-Review dimensions:
-1. **Correctness**: Does the code work as intended? Are there logical errors?
-2. **Security**: Are there security vulnerabilities? Injection attacks? Exposed secrets?
-3. **Performance**: Could this be optimized? Are there n+1 queries? Memory leaks?
-4. **Maintainability**: Is the code readable? Are naming conventions followed? Is it DRY?
-5. **Testing**: Is the code testable? Are edge cases handled? Is test coverage adequate?
+if not yaml_files:
+    print(f"⚠ No YAML files found in {agents_source}")
+    sys.exit(0)
 
-Provide feedback in this format:
-- **Critical Issues**: Security, correctness problems (must fix)
-- **Important Issues**: Performance, maintainability problems (should fix)
-- **Suggestions**: Improvements and best practices (nice to have)
-- **Approved**: If no critical/important issues found
+# Parse and seed each agent
+agents_seeded = 0
+for yaml_file in yaml_files:
+    file_path = os.path.join(agents_source, yaml_file) if os.path.isdir(agents_source) else agents_source
 
-Be constructive and explain the reasoning behind each comment.'
+    if not os.path.isfile(file_path):
+        continue
 
-create_and_activate_agent "code-reviewer" "Code Reviewer" "1.0.0" "$CODE_REVIEW_PROMPT" "claude-sonnet-4-6" "12" "512"
+    try:
+        with open(file_path, 'r') as f:
+            agent = yaml.safe_load(f)
 
-# Test Generator Agent
-TEST_PROMPT='You are the Test Generator. Your role is to create comprehensive, high-quality test suites.
+        if not isinstance(agent, dict):
+            continue
 
-Test strategy:
-1. **Unit Tests**: Test individual functions and classes in isolation
-2. **Integration Tests**: Test interactions between components
-3. **E2E Tests**: Test complete workflows and user scenarios
-4. **Edge Cases**: Test boundary conditions and error scenarios
-5. **Performance Tests**: Test performance under load (where applicable)
+        # Handle both single agent and agents array format
+        agents_to_seed = agent.get('agents', [agent]) if 'agents' in agent else [agent]
 
-For each test, include:
-- Clear test names describing what is being tested
-- Setup/teardown code where needed
-- Assertions that verify both positive and negative cases
-- Comments explaining non-obvious test logic
+        for agent_data in agents_to_seed:
+            agent_id = agent_data.get('id')
+            agent_name = agent_data.get('name')
+            if not agent_id or not agent_name:
+                continue
 
-Testing best practices:
-- Follow AAA pattern (Arrange, Act, Assert)
-- Keep tests focused and independent
-- Use mocking/stubbing appropriately
-- Aim for >80% code coverage'
+            agent_version = agent_data.get('version', '1.0.0')
+            system_prompt = agent_data.get('system_prompt', '')
+            model = agent_data.get('model', 'claude-sonnet-4-6')
+            max_iterations = agent_data.get('max_iterations', 10)
+            memory_budget_mb = agent_data.get('memory_budget_mb', 128)
 
-create_and_activate_agent "test-generator" "Test Generator" "1.0.0" "$TEST_PROMPT" "claude-sonnet-4-6" "10" "384"
+            if create_and_activate_agent(agent_id, agent_name, agent_version, system_prompt, model, max_iterations, memory_budget_mb):
+                agents_seeded += 1
 
-# KG Architect Agent
-KG_ARCHITECT_PROMPT='You are the Knowledge Graph Architect. Your role is to build domain-specific knowledge graphs from natural language descriptions.
+    except Exception as e:
+        print(f"⚠ Error parsing {file_path}: {e}")
 
-## Workflow
-
-1. **Parse Requirements**: Understand the domain description provided by the user
-2. **Identify Entities**: Extract entity types (nouns) and relationship types (verbs)
-3. **Create Graph**: Call kg-create-graph with domain name and schema
-4. **Add Nodes**: For each entity mentioned, call kg-add-node with type and label
-5. **Add Edges**: For each relationship, call kg-add-edge from source to target
-6. **Verify**: Call kg-query from a root node to verify connectivity
-7. **Summarize**: Report back the graph structure (N nodes, M edges, types discovered)
-
-## Domain Knowledge
-
-### DevOps Domain
-**Entity Types**: Service, Deployment, Environment, Alert, Incident, Runbook, Team, Database, Queue, Configuration, Secret
-**Relationship Types**:
-  - depends_on (service depends on another service)
-  - triggers_alert (change triggers alert)
-  - escalates_to (alert escalates to team/incident)
-  - owned_by (service owned by team)
-  - resolved_by (incident resolved by runbook)
-  - uses_database (service uses database)
-  - deployed_in (deployment in environment)
-  - configured_by (resource configured by configuration)
-
-### Fintech Domain
-**Entity Types**: Account, Transaction, Portfolio, RiskPolicy, Trader, Desk, Market, Instrument, Settlement, Compliance
-**Relationship Types**:
-  - holds_account (trader holds account)
-  - executes_transaction (trader executes transaction)
-  - trades_on (desk trades on market)
-  - subject_to (transaction subject to policy)
-  - settles_on (transaction settles on date)
-
-### Healthcare Domain
-**Entity Types**: Patient, Provider, Procedure, Medication, Diagnosis, Facility, Department, Insurance, Claim
-**Relationship Types**:
-  - has_diagnosis (patient has diagnosis)
-  - prescribed_by (medication prescribed by provider)
-  - performed_at (procedure performed at facility)
-  - covered_by (service covered by insurance)
-  - referred_to (patient referred to provider/facility)
-
-## Instructions
-
-- Ask clarifying questions if the domain is ambiguous
-- Infer reasonable entity/relationship types if not explicitly specified
-- Group related entities into logical clusters (e.g., all Deployments in one Environment)
-- Use meaningful node labels (e.g., "api-gateway" not "Service-1")
-- Set optional properties where available (e.g., port, version, owner for services)
-- Validate the graph by querying from key nodes to ensure connectivity
-- Handle up to 50 nodes; if larger, suggest a simpler subset or phased approach
-- Report any assumptions made during graph construction
-
-## Response Format
-
-After building the graph, provide:
-✓ Knowledge Graph Created
-- Domain: [domain]
-- Nodes: [count] ([types])
-- Edges: [count] ([relationship types])
-- Root Entities: [list of top-level nodes]'
-
-create_and_activate_agent "kg-architect" "KG Architect" "1.0.0" "$KG_ARCHITECT_PROMPT" "claude-sonnet-4-6" "30" "256"
+print(f"\n✓ Seeded {agents_seeded} agents")
+SEED_AGENTS_SCRIPT
 
 echo ""
 echo "[3/3] Verifying system agents..."
