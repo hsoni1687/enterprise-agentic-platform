@@ -1,7 +1,10 @@
 "use client";
 
+import { useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
+import { useTenant } from "@/contexts/tenant-context";
+import { setRuntimeTenant } from "@/lib/api";
 import { kgApi } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,6 +21,12 @@ export default function KnowledgeGraphDetailPage({
   const searchParams = useSearchParams();
   const tab = searchParams.get("tab") || "builder";
   const graphId = params.id;
+  const { tenantId } = useTenant();
+
+  // Update runtime tenant when it changes
+  useEffect(() => {
+    setRuntimeTenant(tenantId);
+  }, [tenantId]);
 
   const { data: graph, isLoading } = useQuery({
     queryKey: ["kg-graph", graphId],
