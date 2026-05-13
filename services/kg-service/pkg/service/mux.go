@@ -18,6 +18,7 @@ func BuildMux(h *Handler) *http.ServeMux {
 	mux.HandleFunc("/nodes/get", h.GetNode)
 	mux.HandleFunc("/nodes/list", h.ListNodes)
 	mux.HandleFunc("/nodes/delete", h.DeleteNode)
+	mux.HandleFunc("/nodes/reembed", h.ReembedNodes)
 
 	// Edges
 	mux.HandleFunc("/edges/create", h.CreateEdge)
@@ -27,6 +28,7 @@ func BuildMux(h *Handler) *http.ServeMux {
 	// Query
 	mux.HandleFunc("/query", h.QueryGraph)
 	mux.HandleFunc("/search/nodes", h.SearchNodes)
+	mux.HandleFunc("/search/semantic", h.SemanticSearch)
 
 	// Health
 	mux.HandleFunc("/health", h.Health)

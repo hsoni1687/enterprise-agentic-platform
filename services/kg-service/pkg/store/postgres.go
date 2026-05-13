@@ -174,11 +174,22 @@ func (ps *PostgresStore) GetNode(ctx context.Context, tenantID, nodeID string) (
 }
 
 func (ps *PostgresStore) ListNodes(ctx context.Context, tenantID, graphID string) ([]*Node, error) {
-	rows, err := ps.db.QueryContext(ctx,
-		`SELECT id, graph_id, tenant_id, node_type, label, properties, embedding, created_at, updated_at
-		FROM kg_nodes WHERE graph_id = $1 AND tenant_id = $2 ORDER BY created_at DESC`,
-		graphID, tenantID,
-	)
+	var rows *sql.Rows
+	var err error
+
+	if graphID != "" {
+		rows, err = ps.db.QueryContext(ctx,
+			`SELECT id, graph_id, tenant_id, node_type, label, properties, embedding, created_at, updated_at
+			FROM kg_nodes WHERE graph_id = $1 AND tenant_id = $2 ORDER BY created_at DESC`,
+			graphID, tenantID,
+		)
+	} else {
+		rows, err = ps.db.QueryContext(ctx,
+			`SELECT id, graph_id, tenant_id, node_type, label, properties, embedding, created_at, updated_at
+			FROM kg_nodes WHERE tenant_id = $1 ORDER BY created_at DESC`,
+			tenantID,
+		)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -422,15 +433,29 @@ func (ps *PostgresStore) SearchNodes(ctx context.Context, tenantID, graphID, nod
 	return nodes, rows.Err()
 }
 
-func (ps *PostgresStore) SearchNodesByEmbedding(ctx context.Context, tenantID, graphID string, embedding *pgvector.Vector, limit int) ([]*Node, error) {
-	rows, err := ps.db.QueryContext(ctx,
-		`SELECT id, graph_id, tenant_id, node_type, label, properties, embedding, created_at, updated_at
-		FROM kg_nodes
-		WHERE graph_id = $1 AND tenant_id = $2 AND embedding IS NOT NULL
-		ORDER BY embedding <-> $3
-		LIMIT $4`,
-		graphID, tenantID, embedding, limit,
-	)
+func (ps *PostgresStore) SearchNodesByEmbedding(ctx context.Context, tenantID, graphID string, embedding pgvector.Vector, limit int) ([]*Node, error) {
+	var rows *sql.Rows
+	var err error
+
+	if graphID != "" {
+		rows, err = ps.db.QueryContext(ctx,
+			`SELECT id, graph_id, tenant_id, node_type, label, properties, embedding, created_at, updated_at
+			FROM kg_nodes
+			WHERE graph_id = $1 AND tenant_id = $2 AND embedding IS NOT NULL
+			ORDER BY embedding <=> $3
+			LIMIT $4`,
+			graphID, tenantID, embedding, limit,
+		)
+	} else {
+		rows, err = ps.db.QueryContext(ctx,
+			`SELECT id, graph_id, tenant_id, node_type, label, properties, embedding, created_at, updated_at
+			FROM kg_nodes
+			WHERE tenant_id = $1 AND embedding IS NOT NULL
+			ORDER BY embedding <=> $2
+			LIMIT $3`,
+			tenantID, embedding, limit,
+		)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -447,6 +472,14 @@ func (ps *PostgresStore) SearchNodesByEmbedding(ctx context.Context, tenantID, g
 		nodes = append(nodes, n)
 	}
 	return nodes, rows.Err()
+}
+
+func (ps *PostgresStore) UpdateNodeEmbedding(ctx context.Context, tenantID, nodeID string, embedding pgvector.Vector) error {
+	_, err := ps.db.ExecContext(ctx,
+		`UPDATE kg_nodes SET embedding = $1, updated_at = now() WHERE id = $2 AND tenant_id = $3`,
+		embedding, nodeID, tenantID,
+	)
+	return err
 }
 
 func (ps *PostgresStore) Health(ctx context.Context) error {

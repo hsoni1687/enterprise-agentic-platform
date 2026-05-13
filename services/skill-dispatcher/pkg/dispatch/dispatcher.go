@@ -141,13 +141,16 @@ func (d *Dispatcher) handleInvoke(w http.ResponseWriter, r *http.Request) {
 	var execResult any
 	var execErr error
 
+	// Pass tenant ID through context for tools that need multi-tenant isolation (KG tools)
+	ctx := context.WithValue(r.Context(), "tenant_id", tenantID)
+
 	// Route to agent (if agent_id set) or tools.
 	if skill.AgentID != "" {
-		_, execResult, execErr = d.workflows.Start(r.Context(), skill.AgentID, tenantID, req.Args)
+		_, execResult, execErr = d.workflows.Start(ctx, skill.AgentID, tenantID, req.Args)
 	} else {
 		// Execute all tools in the skill's tool chain sequentially.
 		for _, tool := range skill.Tools {
-			execResult, execErr = d.router.Route(r.Context(), tool, req.Args)
+			execResult, execErr = d.router.Route(ctx, tool, req.Args)
 			if execErr != nil {
 				break
 			}
@@ -473,6 +476,8 @@ func (r *ToolExecutorRouter) executeKG(ctx context.Context, tool models.ToolRef,
 		endpoint = "/query"
 	case "kg-search":
 		endpoint = "/search/nodes"
+	case "kg-semantic-search":
+		endpoint = "/search/semantic"
 	default:
 		return nil, fmt.Errorf("unknown kg tool: %s", tool.Name)
 	}

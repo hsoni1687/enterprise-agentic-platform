@@ -1285,10 +1285,14 @@ func (h *AdminHandler) HandleListSystemSkills(w http.ResponseWriter, r *http.Req
 	for rows.Next() {
 		var sk models.SkillManifest
 		var tools, hooks interface{}
+		var sop *string
 		if err := rows.Scan(&sk.ID, &sk.TenantID, &sk.Name, &sk.Version, &sk.Description, &tools,
-			&sk.SOP, &sk.Mutating, &sk.ApprovalRequired, &hooks, &sk.Status, &sk.PublishedBy, &sk.CreatedAt, &sk.Scope); err != nil {
+			&sop, &sk.Mutating, &sk.ApprovalRequired, &hooks, &sk.Status, &sk.PublishedBy, &sk.CreatedAt, &sk.Scope); err != nil {
 			http.Error(w, fmt.Sprintf("Scan failed: %v", err), http.StatusInternalServerError)
 			return
+		}
+		if sop != nil {
+			sk.SOP = *sop
 		}
 		skills = append(skills, sk)
 	}

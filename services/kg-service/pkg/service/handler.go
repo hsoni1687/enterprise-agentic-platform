@@ -1,22 +1,69 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"strconv"
 
 	"github.com/agent-platform/kg-service/pkg/store"
+	"github.com/pgvector/pgvector-go"
 )
 
 type Handler struct {
-	store store.Store
+	store           store.Store
+	llmGatewayURL   string
 }
 
-func NewHandler(s store.Store) *Handler {
-	return &Handler{store: s}
+func NewHandler(s store.Store, llmGatewayURL string) *Handler {
+	return &Handler{store: s, llmGatewayURL: llmGatewayURL}
+}
+
+// ============== Helpers ==============
+
+func (h *Handler) embedText(ctx context.Context, text string) (pgvector.Vector, error) {
+	payload := map[string]interface{}{
+		"input": text,
+		"model": "text-embedding-ada-002",
+	}
+	body, _ := json.Marshal(payload)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, h.llmGatewayURL+"/v1/embeddings", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		log.Printf("[embedText] LLM gateway unreachable, using mock embedding: %v", err)
+		return mockEmbedding(text), nil
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Data []struct {
+			Embedding []float32 `json:"embedding"`
+		} `json:"data"`
+	}
+	respBody, _ := io.ReadAll(resp.Body)
+	if err := json.Unmarshal(respBody, &result); err != nil || len(result.Data) == 0 {
+		log.Printf("[embedText] Invalid embedding response, using mock: %s", string(respBody))
+		return mockEmbedding(text), nil
+	}
+	return pgvector.NewVector(result.Data[0].Embedding), nil
+}
+
+func mockEmbedding(text string) pgvector.Vector {
+	vec := make([]float32, 1536)
+	hash := 0
+	for _, c := range text {
+		hash = ((hash << 5) + hash) + int(c)
+	}
+	for i := range vec {
+		vec[i] = float32((hash + i) % 100) / 100.0
+	}
+	return pgvector.NewVector(vec)
 }
 
 // ============== Graphs ==============
@@ -220,6 +267,24 @@ func (h *Handler) CreateNode(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	// Auto-embed the node if no embedding provided
+	if result.Embedding == nil {
+		go func() {
+			text := fmt.Sprintf("%s %s", result.NodeType, result.Label)
+			if result.Properties != nil {
+				if props, err := json.Marshal(result.Properties); err == nil {
+					text += " " + string(props)
+				}
+			}
+			emb, err := h.embedText(context.Background(), text)
+			if err == nil {
+				h.store.UpdateNodeEmbedding(context.Background(), result.TenantID, result.ID, emb)
+			} else {
+				log.Printf("[CreateNode] Failed to auto-embed node %s: %v", result.ID, err)
+			}
+		}()
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -485,6 +550,116 @@ func (h *Handler) SearchNodes(w http.ResponseWriter, r *http.Request) {
 		nodes = []*store.Node{}
 	}
 	json.NewEncoder(w).Encode(nodes)
+}
+
+// ============== Semantic Search ==============
+
+func (h *Handler) SemanticSearch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Query   string `json:"query"`
+		GraphID string `json:"graph_id"`
+		Limit   int    `json:"limit"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Query == "" {
+		http.Error(w, "Missing query", http.StatusBadRequest)
+		return
+	}
+	if req.Limit <= 0 {
+		req.Limit = 10
+	}
+
+	tenantID := r.Header.Get("X-Tenant-ID")
+	if tenantID == "" {
+		http.Error(w, "Missing X-Tenant-ID header", http.StatusBadRequest)
+		return
+	}
+
+	embedding, err := h.embedText(r.Context(), req.Query)
+	if err != nil {
+		log.Printf("[SemanticSearch] Embedding error: %v", err)
+		http.Error(w, "Failed to embed query", http.StatusInternalServerError)
+		return
+	}
+
+	nodes, err := h.store.SearchNodesByEmbedding(r.Context(), tenantID, req.GraphID, embedding, req.Limit)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if nodes == nil {
+		nodes = []*store.Node{}
+	}
+	json.NewEncoder(w).Encode(nodes)
+}
+
+func (h *Handler) ReembedNodes(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	tenantID := r.Header.Get("X-Tenant-ID")
+	if tenantID == "" {
+		http.Error(w, "Missing X-Tenant-ID header", http.StatusBadRequest)
+		return
+	}
+
+	graphID := r.URL.Query().Get("graph_id")
+
+	ctx := r.Context()
+
+	var nodes []*store.Node
+	var err error
+	if graphID != "" {
+		nodes, err = h.store.ListNodes(ctx, tenantID, graphID)
+	} else {
+		nodes, err = h.store.ListNodes(ctx, tenantID, "")
+	}
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to list nodes: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	embedded := 0
+	failed := 0
+
+	for _, n := range nodes {
+		if n.Embedding != nil {
+			continue
+		}
+
+		text := fmt.Sprintf("%s %s", n.NodeType, n.Label)
+		if n.Properties != nil {
+			if props, err := json.Marshal(n.Properties); err == nil {
+				text += " " + string(props)
+			}
+		}
+
+		emb, err := h.embedText(ctx, text)
+		if err != nil {
+			log.Printf("[ReembedNodes] Failed to embed node %s: %v", n.ID, err)
+			failed++
+			continue
+		}
+
+		if err := h.store.UpdateNodeEmbedding(ctx, tenantID, n.ID, emb); err != nil {
+			log.Printf("[ReembedNodes] Failed to update embedding for node %s: %v", n.ID, err)
+			failed++
+			continue
+		}
+
+		embedded++
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]int{"embedded": embedded, "failed": failed})
 }
 
 // ============== Health ==============

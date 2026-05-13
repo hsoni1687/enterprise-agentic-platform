@@ -306,12 +306,24 @@ func (ms *InMemoryStore) SearchNodes(ctx context.Context, tenantID, graphID, nod
 	return result, nil
 }
 
-func (ms *InMemoryStore) SearchNodesByEmbedding(ctx context.Context, tenantID, graphID string, embedding *pgvector.Vector, limit int) ([]*Node, error) {
+func (ms *InMemoryStore) SearchNodesByEmbedding(ctx context.Context, tenantID, graphID string, embedding pgvector.Vector, limit int) ([]*Node, error) {
 	ms.mu.RLock()
 	defer ms.mu.RUnlock()
 
 	// In-memory store doesn't support vector search, return empty
 	return []*Node{}, nil
+}
+
+func (ms *InMemoryStore) UpdateNodeEmbedding(ctx context.Context, tenantID, nodeID string, embedding pgvector.Vector) error {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+
+	n, ok := ms.nodes[nodeID]
+	if !ok || n.TenantID != tenantID {
+		return errors.New("node not found")
+	}
+	n.Embedding = &embedding
+	return nil
 }
 
 func (ms *InMemoryStore) Health(ctx context.Context) error {

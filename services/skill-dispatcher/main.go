@@ -44,6 +44,7 @@ func main() {
 		// KG tools (read-only)
 		"kg-query":               false, // Read-only query
 		"kg-search":              false, // Read-only search
+		"kg-semantic-search":     false, // Semantic search (read-only)
 	}
 
 	engine.Register(hooks.HookRegistration{
@@ -94,6 +95,7 @@ func bootstrapSystemSkills(catalog *dispatch.InMemoryCatalog) {
 		{name: "deployment-checker", version: "1.0.0", mutating: true},
 		{name: "log-analyzer", version: "1.0.0", mutating: false},
 		{name: "backup-validator", version: "1.0.0", mutating: false},
+		{name: "kg-semantic-search", version: "1.0.0", mutating: false},
 	}
 
 	// Register system skills for both platform-system and all default tenants (for dev testing)
@@ -101,13 +103,19 @@ func bootstrapSystemSkills(catalog *dispatch.InMemoryCatalog) {
 
 	for i, skill := range systemSkills {
 		for _, tenantID := range tenantIDs {
+			// Determine tool for this skill
+			toolName := "bash"
+			if skill.name == "kg-semantic-search" {
+				toolName = "kg-semantic-search"
+			}
+
 			manifest := &models.SkillManifest{
 				ID:       "system-skill-" + skill.name,
 				TenantID: tenantID,
 				Name:     skill.name,
 				Version:  skill.version,
 				Tools: []models.ToolRef{
-					{Name: "bash", Version: "1.0.0"},
+					{Name: toolName, Version: "1.0.0"},
 				},
 				Mutating:         skill.mutating,
 				ApprovalRequired: skill.mutating,

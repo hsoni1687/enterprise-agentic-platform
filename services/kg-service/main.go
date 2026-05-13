@@ -44,7 +44,12 @@ func main() {
 		log.Println("KG Service: using in-memory store (set DATABASE_URL for production)")
 	}
 
-	h := service.NewHandler(s)
+	llmGatewayURL := os.Getenv("LLM_GATEWAY_URL")
+	if llmGatewayURL == "" {
+		llmGatewayURL = "http://llm-gateway:8083"
+	}
+
+	h := service.NewHandler(s, llmGatewayURL)
 	mux := service.BuildMux(h)
 
 	addr := ":8093"
