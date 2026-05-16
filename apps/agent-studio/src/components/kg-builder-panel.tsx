@@ -131,7 +131,7 @@ export function KGBuilderPanel({ graphId }: KGBuilderPanelProps) {
                       <Badge variant="outline" className="text-xs">
                         Tool Call: {msg.tool_name}
                       </Badge>
-                      {msg.tool_args && (
+                      {!!msg.tool_args && (
                         <pre className="text-xs bg-background p-2 rounded overflow-auto max-h-32 text-foreground whitespace-pre-wrap">
                           {JSON.stringify(msg.tool_args, null, 2)}
                         </pre>

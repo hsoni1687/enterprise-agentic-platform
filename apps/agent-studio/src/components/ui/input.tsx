@@ -3,9 +3,12 @@ import { Input as InputPrimitive } from "@base-ui/react/input"
 
 import { cn } from "@/lib/utils"
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const InputPrimitiveAny = InputPrimitive as React.ComponentType<any>
+
 function Input({ className, type, ...props }: React.ComponentProps<"input">) {
   return (
-    <InputPrimitive
+    <InputPrimitiveAny
       type={type}
       data-slot="input"
       className={cn(

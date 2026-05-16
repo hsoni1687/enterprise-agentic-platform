@@ -26,7 +26,8 @@ type AdminHandler struct {
 	TemporalClient   client.Client
 	AgentRegistryURL string
 	KGServiceURL     string
-	LLMGatewayURL    string
+	LiteLLMURL       string
+	LiteLLMMasterKey string
 }
 
 // getPricingModel retrieves the pricing model from platform_config.
@@ -295,27 +296,48 @@ func (h *AdminHandler) HandleUpdateTenantStatus(w http.ResponseWriter, r *http.R
 	json.NewEncoder(w).Encode(updated)
 }
 
-// HandleGetLLMConfig proxies to LLM Gateway and returns current config.
+// HandleGetLLMConfig reads LLM provider configuration from platform_config DB.
 func (h *AdminHandler) HandleGetLLMConfig(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	resp, err := http.Get(h.LLMGatewayURL + "/admin/config")
+	rows, err := h.DB.Query(r.Context(), `SELECT key, value FROM platform_config WHERE key IN ('anthropic_api_key','anthropic_base_url','openai_api_key')`)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to reach LLM Gateway: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("DB error: %v", err), http.StatusInternalServerError)
 		return
 	}
-	defer resp.Body.Close()
+	defer rows.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		http.Error(w, "LLM Gateway error", resp.StatusCode)
-		return
+	cfg := map[string]string{}
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			continue
+		}
+		cfg[k] = v
 	}
 
-	w.WriteHeader(resp.StatusCode)
-	fmt.Fprintf(w, "%s", readBody(resp.Body))
+	mode := "mock"
+	if cfg["anthropic_api_key"] != "" {
+		baseURL := cfg["anthropic_base_url"]
+		if baseURL != "" && baseURL != "https://api.anthropic.com" && baseURL != "https://api.anthropic.com/v1/messages" {
+			mode = "custom"
+		} else {
+			mode = "anthropic"
+		}
+	} else if cfg["openai_api_key"] != "" {
+		mode = "openai"
+	}
+
+	json.NewEncoder(w).Encode(map[string]any{
+		"mode":               mode,
+		"anthropic_base_url": cfg["anthropic_base_url"],
+		"anthropic_key_set":  cfg["anthropic_api_key"] != "",
+		"openai_key_set":     cfg["openai_api_key"] != "",
+	})
 }
 
-// HandlePutLLMConfig proxies to LLM Gateway and persists config to DB.
+// HandlePutLLMConfig persists LLM provider config to platform_config DB.
+// Keys are picked up by LiteLLM via environment on next restart.
 func (h *AdminHandler) HandlePutLLMConfig(w http.ResponseWriter, r *http.Request) {
 	var req models.LLMConfigRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -323,49 +345,26 @@ func (h *AdminHandler) HandlePutLLMConfig(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Build request body for LLM Gateway
-	reqBody, _ := json.Marshal(req)
-	llmReq, err := http.NewRequest("PUT", h.LLMGatewayURL+"/admin/config", strings.NewReader(string(reqBody)))
-	if err != nil {
-		http.Error(w, "Failed to create request", http.StatusInternalServerError)
-		return
-	}
-	llmReq.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{}
-	llmResp, err := client.Do(llmReq)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to reach LLM Gateway: %v", err), http.StatusInternalServerError)
-		return
-	}
-	defer llmResp.Body.Close()
-
-	// Also persist to platform_config table
-	if req.AnthropicAPIKey != "" {
+	upsert := func(key, value string) {
 		_, _ = h.DB.Exec(r.Context(), `
 			INSERT INTO platform_config (key, value, updated_at)
 			VALUES ($1, $2, NOW())
 			ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()
-		`, "anthropic_api_key", req.AnthropicAPIKey)
+		`, key, value)
+	}
+
+	if req.AnthropicAPIKey != "" {
+		upsert("anthropic_api_key", req.AnthropicAPIKey)
 	}
 	if req.AnthropicBaseURL != "" {
-		_, _ = h.DB.Exec(r.Context(), `
-			INSERT INTO platform_config (key, value, updated_at)
-			VALUES ($1, $2, NOW())
-			ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()
-		`, "anthropic_base_url", req.AnthropicBaseURL)
+		upsert("anthropic_base_url", req.AnthropicBaseURL)
 	}
 	if req.OpenAIAPIKey != "" {
-		_, _ = h.DB.Exec(r.Context(), `
-			INSERT INTO platform_config (key, value, updated_at)
-			VALUES ($1, $2, NOW())
-			ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()
-		`, "openai_api_key", req.OpenAIAPIKey)
+		upsert("openai_api_key", req.OpenAIAPIKey)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(llmResp.StatusCode)
-	fmt.Fprintf(w, "%s", readBody(llmResp.Body))
+	json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
 }
 
 // HandleListSystemAgents lists all platform-system tenant agents.

@@ -9,8 +9,13 @@ ENV NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/zscaler.crt
 WORKDIR /workspace
 
 COPY package.json package-lock.json ./
+# Copy all workspace package.json files so npm can initialize the workspace graph
+# and hoist packages correctly. Missing workspace manifests cause incorrect hoisting
+# which breaks Turbopack's ability to resolve next/package.json at build time.
 COPY apps/agent-studio/package.json ./apps/agent-studio/
-RUN npm ci --ignore-scripts --strict-ssl=false
+COPY apps/admin-console/package.json ./apps/admin-console/
+COPY packages/ui-components/package.json ./packages/ui-components/
+RUN npm ci --workspace apps/agent-studio --include-workspace-root=false --ignore-scripts --strict-ssl=false
 
 # ---- builder stage ----
 FROM node:22-alpine AS builder
@@ -23,6 +28,7 @@ ENV NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/zscaler.crt
 WORKDIR /workspace
 
 COPY --from=deps /workspace/node_modules ./node_modules
+COPY --from=deps /workspace/apps/agent-studio/node_modules ./apps/agent-studio/node_modules
 COPY apps/agent-studio ./apps/agent-studio
 COPY package.json ./
 
@@ -32,17 +38,23 @@ ARG NEXT_PUBLIC_API_GATEWAY_URL=http://localhost:8080
 ARG NEXT_PUBLIC_TOOL_REGISTRY_URL=http://localhost:8086
 ARG NEXT_PUBLIC_SKILL_CATALOG_URL=http://localhost:8087
 ARG NEXT_PUBLIC_AGENT_REGISTRY_URL=http://localhost:8088
+ARG NEXT_PUBLIC_KG_SERVICE_URL=http://localhost:8093
+ARG NEXT_PUBLIC_LLM_GATEWAY_URL=http://localhost:4000
+ARG NEXT_PUBLIC_OLLAMA_URL=http://localhost:11434
 ARG NEXT_PUBLIC_TENANT_ID=default-tenant
 
 ENV NEXT_PUBLIC_API_GATEWAY_URL=$NEXT_PUBLIC_API_GATEWAY_URL
 ENV NEXT_PUBLIC_TOOL_REGISTRY_URL=$NEXT_PUBLIC_TOOL_REGISTRY_URL
 ENV NEXT_PUBLIC_SKILL_CATALOG_URL=$NEXT_PUBLIC_SKILL_CATALOG_URL
 ENV NEXT_PUBLIC_AGENT_REGISTRY_URL=$NEXT_PUBLIC_AGENT_REGISTRY_URL
+ENV NEXT_PUBLIC_KG_SERVICE_URL=$NEXT_PUBLIC_KG_SERVICE_URL
+ENV NEXT_PUBLIC_LLM_GATEWAY_URL=$NEXT_PUBLIC_LLM_GATEWAY_URL
+ENV NEXT_PUBLIC_OLLAMA_URL=$NEXT_PUBLIC_OLLAMA_URL
 ENV NEXT_PUBLIC_TENANT_ID=$NEXT_PUBLIC_TENANT_ID
 ENV NEXT_TELEMETRY_DISABLED=1
 
 WORKDIR /workspace/apps/agent-studio
-RUN npx next build
+RUN npm run build
 
 # ---- runner stage ----
 FROM node:22-alpine AS runner

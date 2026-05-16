@@ -4,12 +4,12 @@
 -- kg_graphs: Represents a domain knowledge graph instance
 CREATE TABLE IF NOT EXISTS kg_graphs (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id   UUID NOT NULL,
+    tenant_id   TEXT NOT NULL,
     name        TEXT NOT NULL,
     domain      TEXT,
     description TEXT,
     scope       TEXT NOT NULL DEFAULT 'private',  -- private, shared, global
-    shared_with UUID[] DEFAULT '{}',              -- tenant IDs with access (for scope='shared')
+    shared_with TEXT[] DEFAULT '{}',              -- tenant IDs with access (for scope='shared')
     schema      JSONB DEFAULT '{}',                -- JSON schema of entity/relationship types
     created_at  TIMESTAMPTZ DEFAULT now(),
     updated_at  TIMESTAMPTZ DEFAULT now(),
@@ -23,7 +23,7 @@ CREATE INDEX IF NOT EXISTS kg_graphs_scope_idx ON kg_graphs(scope);
 CREATE TABLE IF NOT EXISTS kg_nodes (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     graph_id    UUID NOT NULL REFERENCES kg_graphs(id) ON DELETE CASCADE,
-    tenant_id   UUID NOT NULL,
+    tenant_id   TEXT NOT NULL,
     node_type   TEXT NOT NULL,
     label       TEXT NOT NULL,
     properties  JSONB DEFAULT '{}',
@@ -40,7 +40,7 @@ CREATE INDEX IF NOT EXISTS kg_nodes_embedding_idx ON kg_nodes USING hnsw (embedd
 CREATE TABLE IF NOT EXISTS kg_edges (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     graph_id        UUID NOT NULL REFERENCES kg_graphs(id) ON DELETE CASCADE,
-    tenant_id       UUID NOT NULL,
+    tenant_id       TEXT NOT NULL,
     from_node_id    UUID NOT NULL REFERENCES kg_nodes(id) ON DELETE CASCADE,
     to_node_id      UUID NOT NULL REFERENCES kg_nodes(id) ON DELETE CASCADE,
     relationship_type TEXT NOT NULL,

@@ -1,0 +1,81 @@
+model_list:
+  # --- Local Ollama (host-served via http://host.docker.internal:11434) ---
+  #
+  # Named aliases below exist for backward compatibility with existing agent manifests.
+  # You do NOT need to add an entry for every Ollama model — LiteLLM automatically
+  # routes any model prefixed with "ollama/" to the OLLAMA_API_BASE endpoint set in
+  # the environment.  E.g. an agent with model "ollama/llama3.2:latest" will work
+  # without any config change here as long as that model is pulled in Ollama.
+  #
+  - model_name: local-chat
+    litellm_params:
+      model: os.environ/OLLAMA_CHAT_MODEL
+      api_base: os.environ/OLLAMA_API_BASE
+
+  - model_name: local-embedding
+    litellm_params:
+      model: os.environ/OLLAMA_EMBEDDING_MODEL
+      api_base: os.environ/OLLAMA_API_BASE
+
+  # Legacy alias used by tests/manifests during development.
+  - model_name: mock-model
+    litellm_params:
+      model: os.environ/OLLAMA_CHAT_MODEL
+      api_base: os.environ/OLLAMA_API_BASE
+
+  # --- Anthropic / Claude ---
+  - model_name: claude-opus-4-7
+    litellm_params:
+      model: anthropic/claude-opus-4-7
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: claude-sonnet-4-6
+    litellm_params:
+      model: anthropic/claude-sonnet-4-6
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: claude-haiku-4-5-20251001
+    litellm_params:
+      model: anthropic/claude-haiku-4-5-20251001
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  # Legacy short aliases (used in some agent manifests)
+  - model_name: claude-sonnet
+    litellm_params:
+      model: anthropic/claude-sonnet-4-6
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: claude-haiku
+    litellm_params:
+      model: anthropic/claude-haiku-4-5-20251001
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  # --- OpenAI ---
+  - model_name: gpt-4o
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: gpt-4o-mini
+    litellm_params:
+      model: openai/gpt-4o-mini
+      api_key: os.environ/OPENAI_API_KEY
+
+  # --- Embeddings (required by activities_memory.py) ---
+  - model_name: text-embedding-3-small
+    litellm_params:
+      model: openai/text-embedding-3-small
+      api_key: os.environ/OPENAI_API_KEY
+
+litellm_settings:
+  drop_params: true
+  request_timeout: 120
+  # Enables per-request spend tracking in LiteLLM's internal DB
+  success_callback: []
+  failure_callback: []
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  # To enable spend tracking and virtual keys (NFR6), uncomment:
+  # database_url: os.environ/DATABASE_URL
+  # store_model_in_db: true

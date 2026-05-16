@@ -15,12 +15,21 @@ import (
 )
 
 type Handler struct {
-	store           store.Store
-	llmGatewayURL   string
+	store               store.Store
+	llmGatewayURL       string
+	litellmMasterKey    string
+	embeddingModel      string
+	embeddingDimensions int
 }
 
-func NewHandler(s store.Store, llmGatewayURL string) *Handler {
-	return &Handler{store: s, llmGatewayURL: llmGatewayURL}
+func NewHandler(s store.Store, llmGatewayURL, litellmMasterKey, embeddingModel string, embeddingDimensions int) *Handler {
+	return &Handler{
+		store:               s,
+		llmGatewayURL:       llmGatewayURL,
+		litellmMasterKey:    litellmMasterKey,
+		embeddingModel:      embeddingModel,
+		embeddingDimensions: embeddingDimensions,
+	}
 }
 
 // ============== Helpers ==============
@@ -28,16 +37,19 @@ func NewHandler(s store.Store, llmGatewayURL string) *Handler {
 func (h *Handler) embedText(ctx context.Context, text string) (pgvector.Vector, error) {
 	payload := map[string]interface{}{
 		"input": text,
-		"model": "text-embedding-ada-002",
+		"model": h.embeddingModel,
 	}
 	body, _ := json.Marshal(payload)
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, h.llmGatewayURL+"/v1/embeddings", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
+	if h.litellmMasterKey != "" {
+		req.Header.Set("Authorization", "Bearer "+h.litellmMasterKey)
+	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		log.Printf("[embedText] LLM gateway unreachable, using mock embedding: %v", err)
-		return mockEmbedding(text), nil
+		return h.mockEmbedding(text), nil
 	}
 	defer resp.Body.Close()
 
@@ -49,19 +61,28 @@ func (h *Handler) embedText(ctx context.Context, text string) (pgvector.Vector, 
 	respBody, _ := io.ReadAll(resp.Body)
 	if err := json.Unmarshal(respBody, &result); err != nil || len(result.Data) == 0 {
 		log.Printf("[embedText] Invalid embedding response, using mock: %s", string(respBody))
-		return mockEmbedding(text), nil
+		return h.mockEmbedding(text), nil
 	}
-	return pgvector.NewVector(result.Data[0].Embedding), nil
+	return pgvector.NewVector(h.normalizeEmbedding(result.Data[0].Embedding)), nil
 }
 
-func mockEmbedding(text string) pgvector.Vector {
-	vec := make([]float32, 1536)
+func (h *Handler) normalizeEmbedding(embedding []float32) []float32 {
+	if len(embedding) == h.embeddingDimensions {
+		return embedding
+	}
+	normalized := make([]float32, h.embeddingDimensions)
+	copy(normalized, embedding)
+	return normalized
+}
+
+func (h *Handler) mockEmbedding(text string) pgvector.Vector {
+	vec := make([]float32, h.embeddingDimensions)
 	hash := 0
 	for _, c := range text {
 		hash = ((hash << 5) + hash) + int(c)
 	}
 	for i := range vec {
-		vec[i] = float32((hash + i) % 100) / 100.0
+		vec[i] = float32((hash+i)%100) / 100.0
 	}
 	return pgvector.NewVector(vec)
 }

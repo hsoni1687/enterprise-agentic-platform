@@ -27,7 +27,7 @@ export function TenantSelector() {
   return (
     <div className="flex items-center gap-1.5">
       <Building2 className="h-3.5 w-3.5 text-muted-foreground" />
-      <Select value={tenantId} onValueChange={setTenantId}>
+      <Select value={tenantId} onValueChange={(v) => v && setTenantId(v)}>
         <SelectTrigger className="h-7 w-[160px] text-xs border-none shadow-none focus:ring-0 bg-transparent">
           <SelectValue />
         </SelectTrigger>

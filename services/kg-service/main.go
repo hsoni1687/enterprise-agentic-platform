@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 
 	_ "github.com/lib/pq"
 
@@ -46,10 +47,25 @@ func main() {
 
 	llmGatewayURL := os.Getenv("LLM_GATEWAY_URL")
 	if llmGatewayURL == "" {
-		llmGatewayURL = "http://llm-gateway:8083"
+		llmGatewayURL = "http://litellm:4000"
 	}
 
-	h := service.NewHandler(s, llmGatewayURL)
+	litellmMasterKey := os.Getenv("LITELLM_MASTER_KEY")
+	if litellmMasterKey == "" {
+		litellmMasterKey = "sk-litellm-dev"
+	}
+	embeddingModel := os.Getenv("EMBEDDING_MODEL")
+	if embeddingModel == "" {
+		embeddingModel = "local-embedding"
+	}
+	embeddingDimensions := 1536
+	if rawDimensions := os.Getenv("EMBEDDING_DIMENSIONS"); rawDimensions != "" {
+		if parsedDimensions, err := strconv.Atoi(rawDimensions); err == nil && parsedDimensions > 0 {
+			embeddingDimensions = parsedDimensions
+		}
+	}
+
+	h := service.NewHandler(s, llmGatewayURL, litellmMasterKey, embeddingModel, embeddingDimensions)
 	mux := service.BuildMux(h)
 
 	addr := ":8093"

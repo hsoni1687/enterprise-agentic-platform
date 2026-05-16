@@ -7,7 +7,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Plus, Trash2, Loader2, Bot, MessageSquare, X, Sparkles } from "lucide-react";
 import Link from "next/link";
-import { agentsApi, skillsApi, toolsApi, modelsApi } from "@/lib/api";
+import { agentsApi, skillsApi, toolsApi, modelsApi, ModelInfo } from "@/lib/api";
 import { ManifestAssistantPanel, AssistantDraft } from "@/components/manifest-assistant-panel";
 import { AgentRecord } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -44,12 +44,21 @@ const agentSchema = z.object({
 
 type AgentForm = z.infer<typeof agentSchema>;
 
-const FALLBACK_MODELS = [
-  { id: "claude-opus-4-7", name: "Claude Opus 4.7" },
-  { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
-  { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5" },
-  { id: "mock-model", name: "Mock (testing)" },
-];
+function ModelLabel({ model }: { model: ModelInfo }) {
+  const label = model.id.startsWith("ollama/") ? model.id.slice(7) : model.id;
+  return (
+    <span className="flex items-center gap-2">
+      {label}
+      <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
+        model.source === "local"
+          ? "bg-green-500/15 text-green-400"
+          : "bg-blue-500/15 text-blue-400"
+      }`}>
+        {model.source === "local" ? "Local" : "Cloud"}
+      </span>
+    </span>
+  );
+}
 
 const STATUS_COLORS: Record<string, string> = {
   draft: "bg-muted text-muted-foreground",
@@ -65,7 +74,7 @@ function CreateAgentSheet({ onCreated }: { onCreated: () => void }) {
   const { register, handleSubmit, reset, control, setValue, formState: { errors } } = useForm<AgentForm>({
     resolver: zodResolver(agentSchema),
     defaultValues: {
-      model: "claude-opus-4-7",
+      model: "local-chat",
       max_iterations: 20,
       memory_budget_mb: 256,
       version: "1.0.0",
@@ -91,13 +100,7 @@ function CreateAgentSheet({ onCreated }: { onCreated: () => void }) {
     queryFn: () => modelsApi.list(),
   });
 
-  // Merge API models with fallback models, avoiding duplicates
-  const availableModels = useMemo(() => {
-    const apiModels = modelsData?.models ?? [];
-    const apiIds = new Set(apiModels.map(m => m.id));
-    const fallbackModels = FALLBACK_MODELS.filter(m => !apiIds.has(m.id));
-    return [...apiModels, ...fallbackModels];
-  }, [modelsData?.models]);
+  const availableModels = modelsData?.models ?? [];
 
   const mutation = useMutation({
     mutationFn: (data: AgentForm) => agentsApi.create(data),
@@ -179,8 +182,15 @@ function CreateAgentSheet({ onCreated }: { onCreated: () => void }) {
                       <SelectValue placeholder="Select a model" />
                     </SelectTrigger>
                     <SelectContent>
+                      {availableModels.length === 0 && (
+                        <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                          Loading models…
+                        </div>
+                      )}
                       {availableModels.map((m) => (
-                        <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>
+                        <SelectItem key={m.id} value={m.id}>
+                          <ModelLabel model={m} />
+                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>

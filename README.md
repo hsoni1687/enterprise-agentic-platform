@@ -71,10 +71,52 @@ A1 Agent Engine transforms how enterprises build and operate AI-driven automatio
 ## 🚀 Quick Start
 
 ### Prerequisites
+
 - Docker & Docker Compose
 - Go 1.22+
 - Python 3.9+ with venv
 - Node.js 18+ with npm
+- Ollama for local model serving
+
+### Local Ollama Models
+
+The local stack routes all model traffic through LiteLLM on `http://localhost:4000`. For host-served Ollama, keep Ollama running on the host and Docker services will reach it through `http://host.docker.internal:11434`.
+
+```bash
+# Terminal 1: start Ollama if it is not already running
+ollama serve
+
+# Terminal 2: pull the default local models used by infra/local/litellm.config.yaml
+ollama pull llama3.1:8b
+ollama pull nomic-embed-text
+
+# Start LiteLLM and the platform services
+cd infra/local
+docker compose up -d
+```
+
+Verify chat completion through LiteLLM:
+
+```bash
+curl http://localhost:4000/v1/chat/completions \
+  -H "Authorization: Bearer sk-litellm-dev" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "local-chat",
+    "messages": [{ "role": "user", "content": "Say hello from Ollama." }]
+  }'
+```
+
+Verify embeddings through LiteLLM:
+
+```bash
+curl http://localhost:4000/v1/embeddings \
+  -H "Authorization: Bearer sk-litellm-dev" \
+  -H "Content-Type: application/json" \
+  -d '{ "model": "local-embedding", "input": "knowledge graph search" }'
+```
+
+Local chat and embedding aliases are configured in `infra/local/litellm.config.yaml`. Override them from `infra/local/.env` with `OLLAMA_CHAT_MODEL`, `OLLAMA_EMBEDDING_MODEL`, and `OLLAMA_API_BASE`. The memory and KG services store `VECTOR(1536)` values; local embeddings are padded or truncated to that dimension before pgvector operations.
 
 ### Setup (5 minutes)
 
@@ -600,7 +642,8 @@ Each KG is independent:
 | API Gateway | 8080 | Go | Entry point; HMAC validation |
 | Workflow Initiator | 8081 | Go | Temporal workflow dispatcher |
 | Agent Workers | - | Python | Temporal workers; ReAct loop |
-| LLM Gateway | 8083 | Go | LLM provider proxy (LiteLLM) |
+| LLM Gateway | 8083 | Go | Current custom LLM provider proxy |
+| LiteLLM Proxy | 4000 | Python | Experimental provider proxy for future migration |
 | Sandbox Manager | 8082 | Go | Ephemeral container lifecycle |
 | **Control Plane** | | | |
 | Tool Registry | 8086 | Go | Tool CRUD & versioning |

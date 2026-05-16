@@ -113,10 +113,10 @@ func handleWebSearch() http.HandlerFunc {
 		}
 
 		var ddgResp struct {
-			AbstractText   string `json:"AbstractText"`
-			AbstractURL    string `json:"AbstractURL"`
-			Heading        string `json:"Heading"`
-			RelatedTopics  []struct {
+			AbstractText  string `json:"AbstractText"`
+			AbstractURL   string `json:"AbstractURL"`
+			Heading       string `json:"Heading"`
+			RelatedTopics []struct {
 				FirstURL string `json:"FirstURL"`
 				Text     string `json:"Text"`
 			} `json:"RelatedTopics"`
@@ -244,8 +244,12 @@ func handleWebFetch() http.HandlerFunc {
 		summary := textContent
 		llmGatewayURL := os.Getenv("LLM_GATEWAY_URL")
 		if llmGatewayURL != "" && req.Args.Query != "" {
+			summaryModel := os.Getenv("LLM_SUMMARY_MODEL")
+			if summaryModel == "" {
+				summaryModel = "local-chat"
+			}
 			summaryReq := map[string]interface{}{
-				"model": "claude-haiku-4-5-20251001",
+				"model": summaryModel,
 				"messages": []map[string]string{
 					{
 						"role": "user",
@@ -259,6 +263,11 @@ func handleWebFetch() http.HandlerFunc {
 			summaryBody, _ := json.Marshal(summaryReq)
 			summaryHTTPReq, _ := http.NewRequestWithContext(ctx, "POST", llmGatewayURL+"/chat/completions", bytes.NewReader(summaryBody))
 			summaryHTTPReq.Header.Set("Content-Type", "application/json")
+			litellmMasterKey := os.Getenv("LITELLM_MASTER_KEY")
+			if litellmMasterKey == "" {
+				litellmMasterKey = "sk-litellm-dev"
+			}
+			summaryHTTPReq.Header.Set("Authorization", "Bearer "+litellmMasterKey)
 
 			if summaryResp, err := client.Do(summaryHTTPReq); err == nil && summaryResp.StatusCode == http.StatusOK {
 				defer summaryResp.Body.Close()

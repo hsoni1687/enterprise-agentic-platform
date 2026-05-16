@@ -52,6 +52,10 @@ func (m *MockTemporalClient) QueryWorkflow(ctx context.Context, workflowID, runI
 	return nil, callArgs.Error(1)
 }
 
+func (m *MockTemporalClient) SignalWorkflow(ctx context.Context, workflowID, runID, signalName string, arg interface{}) error {
+	return m.Called(ctx, workflowID, runID, signalName, arg).Error(0)
+}
+
 // MockWorkflowRun mocks the result of ExecuteWorkflow.
 type MockWorkflowRun struct {
 	mock.Mock
@@ -98,7 +102,7 @@ func TestStartSession(t *testing.T) {
 	mockClient.AssertExpectations(t)
 }
 
-func TestStartSession_UsesTenantTaskQueue(t *testing.T) {
+func TestStartSession_UsesDefaultTaskQueue(t *testing.T) {
 	mockClient := new(MockTemporalClient)
 	mockRun := new(MockWorkflowRun)
 
@@ -121,7 +125,7 @@ func TestStartSession_UsesTenantTaskQueue(t *testing.T) {
 	http.HandlerFunc(HandleStartSession).ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusCreated, rr.Code)
-	assert.Equal(t, "tenant-abc-agent-queue", capturedOptions.TaskQueue)
+	assert.Equal(t, "default-tenant-agent-queue", capturedOptions.TaskQueue)
 }
 
 func TestGetSessionStatus_Running(t *testing.T) {

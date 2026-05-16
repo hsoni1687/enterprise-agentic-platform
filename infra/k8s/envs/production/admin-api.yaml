@@ -11,7 +11,7 @@ config:
   SKILL_CATALOG_URL: "http://skill-catalog:8087"
   TOOL_REGISTRY_URL: "http://tool-registry:8086"
   SUB_AGENT_REGISTRY_URL: "http://sub-agent-registry:8084"
-  LLM_GATEWAY_URL: "http://llm-gateway:8083"
+  LITELLM_URL: "http://litellm:4000"
 
 secretRefs:
   - envVarName: DATABASE_URL

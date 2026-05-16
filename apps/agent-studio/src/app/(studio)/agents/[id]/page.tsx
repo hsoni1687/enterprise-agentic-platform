@@ -8,7 +8,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import Link from "next/link";
 import { Bot, MessageSquare, ArrowLeft, Loader2, Zap, Edit2, Trash2, Plus, Sparkles } from "lucide-react";
-import { agentsApi, skillsApi, toolsApi, modelsApi, mcpApi } from "@/lib/api";
+import { agentsApi, skillsApi, toolsApi, modelsApi, mcpApi, ModelInfo } from "@/lib/api";
 import { ManifestAssistantPanel, AssistantDraft } from "@/components/manifest-assistant-panel";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -31,12 +31,21 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 
-const FALLBACK_MODELS = [
-  { id: "claude-opus-4-7", name: "Claude Opus 4.7" },
-  { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
-  { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5" },
-  { id: "mock-model", name: "Mock (testing)" },
-];
+function ModelLabel({ model }: { model: ModelInfo }) {
+  const label = model.id.startsWith("ollama/") ? model.id.slice(7) : model.id;
+  return (
+    <span className="flex items-center gap-2">
+      {label}
+      <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
+        model.source === "local"
+          ? "bg-green-500/15 text-green-400"
+          : "bg-blue-500/15 text-blue-400"
+      }`}>
+        {model.source === "local" ? "Local" : "Cloud"}
+      </span>
+    </span>
+  );
+}
 
 const agentSchema = z.object({
   name: z.string().min(1),
@@ -98,7 +107,7 @@ function EditAgentSheet({ agent, onUpdated }: { agent: any; onUpdated: () => voi
     queryFn: () => mcpApi.listServers(),
   });
 
-  const availableModels = modelsData?.models ?? FALLBACK_MODELS;
+  const availableModels = modelsData?.models ?? [];
   const availableMcpServers = mcpServersData?.servers ?? [];
 
   const handleApplyAssistantDraft = (draft: AssistantDraft) => {
@@ -166,8 +175,15 @@ function EditAgentSheet({ agent, onUpdated }: { agent: any; onUpdated: () => voi
                       <SelectValue placeholder="Select a model" />
                     </SelectTrigger>
                     <SelectContent>
+                      {availableModels.length === 0 && (
+                        <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                          Loading models…
+                        </div>
+                      )}
                       {availableModels.map((m) => (
-                        <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>
+                        <SelectItem key={m.id} value={m.id}>
+                          <ModelLabel model={m} />
+                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>

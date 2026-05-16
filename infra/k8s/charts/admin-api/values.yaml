@@ -19,7 +19,7 @@ config:
   SKILL_CATALOG_URL: "http://skill-catalog:8087"
   TOOL_REGISTRY_URL: "http://tool-registry:8086"
   SUB_AGENT_REGISTRY_URL: "http://sub-agent-registry:8084"
-  LLM_GATEWAY_URL: "http://llm-gateway:8083"
+  LITELLM_URL: "http://litellm:4000"
 
 # Database and API key secrets (reference external secrets)
 secretRefs:
@@ -29,6 +29,9 @@ secretRefs:
   - envVarName: ADMIN_API_KEY
     secretName: admin-api-auth-secret
     secretKey: api-key
+  - envVarName: LITELLM_MASTER_KEY
+    secretName: litellm-secrets
+    secretKey: master-key
 
 resources:
   requests:

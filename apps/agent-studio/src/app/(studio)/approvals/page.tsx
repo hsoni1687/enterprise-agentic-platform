@@ -1,12 +1,16 @@
 "use client";
 
+import { Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { ApprovalsPanel } from "@/components/approvals-panel";
 
-export default function ApprovalsPage() {
+function ApprovalsContent() {
   const searchParams = useSearchParams();
   const tenantId = searchParams.get("tenant") || "default-tenant";
+  return <ApprovalsPanel tenantId={tenantId} />;
+}
 
+export default function ApprovalsPage() {
   return (
     <div className="container max-w-4xl mx-auto py-8 px-4">
       <div className="space-y-6">
@@ -17,7 +21,9 @@ export default function ApprovalsPage() {
           </p>
         </div>
 
-        <ApprovalsPanel tenantId={tenantId} />
+        <Suspense fallback={null}>
+          <ApprovalsContent />
+        </Suspense>
       </div>
     </div>
   );

@@ -50,9 +50,14 @@ func main() {
 		kgServiceURL = "http://localhost:8093"
 	}
 
-	llmGatewayURL := os.Getenv("LLM_GATEWAY_URL")
-	if llmGatewayURL == "" {
-		llmGatewayURL = "http://localhost:8083"
+	liteLLMURL := os.Getenv("LITELLM_URL")
+	if liteLLMURL == "" {
+		liteLLMURL = "http://localhost:4000"
+	}
+
+	liteLLMMasterKey := os.Getenv("LITELLM_MASTER_KEY")
+	if liteLLMMasterKey == "" {
+		liteLLMMasterKey = "sk-litellm-dev"
 	}
 
 	handler := &service.AdminHandler{
@@ -61,7 +66,8 @@ func main() {
 		TemporalClient:   temporalClient,
 		AgentRegistryURL: agentRegistryURL,
 		KGServiceURL:     kgServiceURL,
-		LLMGatewayURL:    llmGatewayURL,
+		LiteLLMURL:       liteLLMURL,
+		LiteLLMMasterKey: liteLLMMasterKey,
 	}
 
 	mux := http.NewServeMux()

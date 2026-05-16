@@ -21,7 +21,7 @@ async def test_agent_reasoning_loop():
     async with await WorkflowEnvironment.start_local() as env:
         with respx.mock:
             # Mock LLM Gateway: first call returns a tool call, second returns a final answer.
-            respx.post("http://localhost:8083/v1/chat/completions").mock(
+            respx.post("http://localhost:4000/v1/chat/completions").mock(
                 side_effect=[
                     httpx.Response(200, json={
                         "id": "mock-1",
@@ -64,7 +64,7 @@ async def test_agent_reasoning_loop():
             )
 
             # Mock embedding calls (recall_memories + store_memory both call this)
-            respx.post("http://localhost:8083/v1/embeddings").mock(
+            respx.post("http://localhost:4000/v1/embeddings").mock(
                 return_value=httpx.Response(200, json={
                     "object": "list",
                     "data": [{"object": "embedding", "index": 0, "embedding": [0.1] * 1536}],
@@ -113,7 +113,7 @@ async def test_agent_no_tool_calls():
     """Workflow completes in one iteration when LLM returns a direct answer."""
     async with await WorkflowEnvironment.start_local() as env:
         with respx.mock:
-            respx.post("http://localhost:8083/v1/chat/completions").mock(
+            respx.post("http://localhost:4000/v1/chat/completions").mock(
                 return_value=httpx.Response(200, json={
                     "id": "mock-direct",
                     "object": "chat.completion",
@@ -126,7 +126,7 @@ async def test_agent_no_tool_calls():
                     }]
                 })
             )
-            respx.post("http://localhost:8083/v1/embeddings").mock(
+            respx.post("http://localhost:4000/v1/embeddings").mock(
                 return_value=httpx.Response(200, json={
                     "object": "list",
                     "data": [{"object": "embedding", "index": 0, "embedding": [0.0] * 1536}],
@@ -207,7 +207,7 @@ async def test_agent_mcp_tool_call():
             )
 
             # Mock LLM Gateway: first call returns MCP tool call, second returns final answer
-            respx.post("http://localhost:8083/v1/chat/completions").mock(
+            respx.post("http://localhost:4000/v1/chat/completions").mock(
                 side_effect=[
                     httpx.Response(200, json={
                         "id": "mock-mcp-1",
@@ -257,7 +257,7 @@ async def test_agent_mcp_tool_call():
             )
 
             # Mock embeddings
-            respx.post("http://localhost:8083/v1/embeddings").mock(
+            respx.post("http://localhost:4000/v1/embeddings").mock(
                 return_value=httpx.Response(200, json={
                     "object": "list",
                     "data": [{"object": "embedding", "index": 0, "embedding": [0.1] * 1536}],

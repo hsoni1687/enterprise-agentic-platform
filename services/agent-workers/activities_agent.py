@@ -185,8 +185,9 @@ async def reasoning_step(messages: list[dict], model: str, tool_defs: Optional[l
     logging.info(f"[REASONING_STEP] Called with model={model}")
     logging.info(f"[REASONING_STEP] LLM_GATEWAY_URL={os.getenv('LLM_GATEWAY_URL')}")
 
-    gateway_url = os.getenv("LLM_GATEWAY_URL", "http://localhost:8083/v1")
-    client = AsyncOpenAI(base_url=gateway_url, api_key="sk-mock-key")
+    gateway_url = os.getenv("LLM_GATEWAY_URL", "http://localhost:4000/v1")
+    api_key = os.getenv("OPENAI_API_KEY") or os.getenv("LITELLM_MASTER_KEY", "sk-litellm-dev")
+    client = AsyncOpenAI(base_url=gateway_url, api_key=api_key)
 
     tools = tool_defs if tool_defs is not None else [_default_execute_code_tool()]
 

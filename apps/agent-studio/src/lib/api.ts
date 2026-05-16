@@ -18,7 +18,9 @@ const AGENT_REGISTRY =
 const API_GATEWAY =
   process.env.NEXT_PUBLIC_API_GATEWAY_URL ?? "http://localhost:8080";
 const LLM_GATEWAY =
-  process.env.NEXT_PUBLIC_LLM_GATEWAY_URL ?? "http://localhost:8083";
+  process.env.NEXT_PUBLIC_LLM_GATEWAY_URL ?? "http://localhost:4000";
+const OLLAMA_URL =
+  process.env.NEXT_PUBLIC_OLLAMA_URL ?? "http://localhost:11434";
 const MCP_REGISTRY =
   process.env.NEXT_PUBLIC_MCP_REGISTRY_URL ?? "http://localhost:8090";
 const ADMIN_API =
@@ -187,12 +189,55 @@ export const agentsApi = {
 };
 
 // Models
+export interface ModelInfo {
+  id: string;
+  name: string;
+  source: "local" | "cloud";
+}
+
 export const modelsApi = {
-  list: () =>
-    req<{ models: Array<{ id: string; name: string }> }>(
-      LLM_GATEWAY,
-      "/v1/models"
-    ),
+  // Returns all models: configured ones from LiteLLM + every model installed in Ollama.
+  // LiteLLM returns OpenAI-format { data: [{id, ...}] }, not { models: [...] }.
+  list: async (): Promise<{ models: ModelInfo[] }> => {
+    const models: ModelInfo[] = [];
+    const seen = new Set<string>();
+
+    // Cloud + named-alias models from LiteLLM
+    try {
+      const resp = await req<{ data?: Array<{ id: string }> }>(LLM_GATEWAY, "/v1/models");
+      for (const m of resp.data ?? []) {
+        if (seen.has(m.id)) continue;
+        seen.add(m.id);
+        const isLocal =
+          m.id.startsWith("local-") ||
+          m.id.startsWith("mock-") ||
+          m.id.startsWith("ollama/");
+        models.push({ id: m.id, name: m.id, source: isLocal ? "local" : "cloud" });
+      }
+    } catch {
+      // LiteLLM unreachable — continue to Ollama discovery
+    }
+
+    // All models actually installed in the local Ollama instance
+    try {
+      const resp = await fetch(`${OLLAMA_URL}/api/tags`, {
+        signal: AbortSignal.timeout(2000),
+      });
+      if (resp.ok) {
+        const body = await resp.json() as { models?: Array<{ name: string }> };
+        for (const m of body.models ?? []) {
+          const id = `ollama/${m.name}`;
+          if (seen.has(id)) continue;
+          seen.add(id);
+          models.push({ id, name: m.name, source: "local" });
+        }
+      }
+    } catch {
+      // Ollama not running — just skip local models
+    }
+
+    return { models };
+  },
 };
 
 // LLM Gateway Configuration
@@ -209,10 +254,11 @@ export interface LLMConfigUpdate {
 }
 
 export const llmConfigApi = {
-  get: () => req<LLMConfig>(LLM_GATEWAY, "/admin/config"),
+  get: () => req<LLMConfig>(ADMIN_API, "/api/v1/admin/llm/config", { headers: { Authorization: `Bearer ${ADMIN_KEY}` } }),
   update: (body: LLMConfigUpdate) =>
-    req<LLMConfig>(LLM_GATEWAY, "/admin/config", {
+    req<LLMConfig>(ADMIN_API, "/api/v1/admin/llm/config", {
       method: "PUT",
+      headers: { Authorization: `Bearer ${ADMIN_KEY}` },
       body: JSON.stringify(body),
     }),
 };

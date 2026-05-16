@@ -332,8 +332,10 @@ async def build_agent_with_tools(
 
     # Set environment variables for LLM Gateway configuration
     # PydanticAI uses OPENAI_BASE_URL and OPENAI_API_KEY automatically
-    os.environ.setdefault("OPENAI_BASE_URL", os.getenv("LLM_GATEWAY_URL", "http://localhost:8083/v1"))
-    os.environ.setdefault("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY", "sk-mock-key"))
+    if not os.getenv("OPENAI_BASE_URL"):
+        os.environ["OPENAI_BASE_URL"] = os.getenv("LLM_GATEWAY_URL", "http://localhost:4000/v1")
+    if not os.getenv("OPENAI_API_KEY"):
+        os.environ["OPENAI_API_KEY"] = os.getenv("LITELLM_MASTER_KEY", "sk-litellm-dev")
 
     # Let PydanticAI infer and configure the model from environment
     logger.info(f"[build_agent] Inferring model: openai:{context.model}")
