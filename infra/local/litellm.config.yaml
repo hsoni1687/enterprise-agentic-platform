@@ -23,6 +23,39 @@ model_list:
       model: os.environ/OLLAMA_CHAT_MODEL
       api_base: os.environ/OLLAMA_API_BASE
 
+  # --- Explicit Ollama model entries ---
+  # With master_key set, LiteLLM validates all model names against this list.
+  # Add every Ollama model that agents should be allowed to use.
+  - model_name: ollama/gemma4:latest
+    litellm_params:
+      model: ollama/gemma4:latest
+      api_base: os.environ/OLLAMA_API_BASE
+
+  - model_name: ollama/gemma4-e2b:latest
+    litellm_params:
+      model: ollama/gemma4-e2b:latest
+      api_base: os.environ/OLLAMA_API_BASE
+
+  - model_name: ollama/qwen3:latest
+    litellm_params:
+      model: ollama/qwen3:latest
+      api_base: os.environ/OLLAMA_API_BASE
+
+  - model_name: ollama/qwen3-8b:latest
+    litellm_params:
+      model: ollama/qwen3-8b:latest
+      api_base: os.environ/OLLAMA_API_BASE
+
+  - model_name: ollama/qwen2.5-q6k:latest
+    litellm_params:
+      model: ollama/qwen2.5-q6k:latest
+      api_base: os.environ/OLLAMA_API_BASE
+
+  - model_name: mock-gpt-4o
+    litellm_params:
+      model: os.environ/OLLAMA_CHAT_MODEL
+      api_base: os.environ/OLLAMA_API_BASE
+
   # --- Anthropic / Claude ---
   - model_name: claude-opus-4-7
     litellm_params:

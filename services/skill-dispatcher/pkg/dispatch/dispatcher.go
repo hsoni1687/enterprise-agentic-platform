@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/agent-platform/go-shared/pkg/models"
@@ -23,6 +24,7 @@ const (
 
 // InvokeRequest is the payload sent to POST /api/v1/skills/{name}/invoke.
 type InvokeRequest struct {
+	SkillID  string         `json:"skill_id,omitempty"`
 	Version  string         `json:"version"`
 	Args     map[string]any `json:"args,omitempty"`
 	AgentID  string         `json:"agent_id"`
@@ -32,13 +34,13 @@ type InvokeRequest struct {
 
 // ToolInvokeRequest is the payload sent to POST /api/v1/tools/invoke.
 type ToolInvokeRequest struct {
-	Tool               models.ToolRef `json:"tool"`
-	Args               map[string]any `json:"args,omitempty"`
-	AgentID            string         `json:"agent_id"`
-	TenantID           string         `json:"tenant_id"`
-	TraceID            string         `json:"trace_id,omitempty"`
-	Mutating           bool           `json:"mutating"`
-	HITLApprovalID     string         `json:"hitl_approval_id,omitempty"`
+	Tool           models.ToolRef `json:"tool"`
+	Args           map[string]any `json:"args,omitempty"`
+	AgentID        string         `json:"agent_id"`
+	TenantID       string         `json:"tenant_id"`
+	TraceID        string         `json:"trace_id,omitempty"`
+	Mutating       bool           `json:"mutating"`
+	HITLApprovalID string         `json:"hitl_approval_id,omitempty"`
 }
 
 // InvokeResponse is returned after skill dispatch completes or is suspended.
@@ -51,6 +53,7 @@ type InvokeResponse struct {
 
 // SkillCatalog resolves skill manifests by name and tenant.
 type SkillCatalog interface {
+	GetByID(id, tenantID string) (*models.SkillManifest, bool)
 	Get(name, tenantID string) (*models.SkillManifest, bool)
 }
 
@@ -66,9 +69,9 @@ type WorkflowStarter interface {
 
 // Dispatcher orchestrates skill invocation: catalog lookup → pre-hooks → agent/tool routing → post-hooks.
 type Dispatcher struct {
-	catalog  SkillCatalog
-	engine   *hooks.Engine
-	router   ToolRouter
+	catalog   SkillCatalog
+	engine    *hooks.Engine
+	router    ToolRouter
 	workflows WorkflowStarter
 }
 
@@ -103,7 +106,14 @@ func (d *Dispatcher) handleInvoke(w http.ResponseWriter, r *http.Request) {
 	}
 	req.TenantID = tenantID
 
-	skill, ok := d.catalog.Get(skillName, tenantID)
+	var skill *models.SkillManifest
+	var ok bool
+	if req.SkillID != "" {
+		skill, ok = d.catalog.GetByID(req.SkillID, tenantID)
+	}
+	if !ok {
+		skill, ok = d.catalog.Get(skillName, tenantID)
+	}
 	if !ok {
 		// Fall back to system skills (platform-system tenant)
 		skill, ok = d.catalog.Get(skillName, "platform-system")
@@ -128,6 +138,8 @@ func (d *Dispatcher) handleInvoke(w http.ResponseWriter, r *http.Request) {
 		hctx.Args = map[string]any{}
 	}
 	hctx.Args["__mutating"] = skill.Mutating
+	hctx.Args["__skill_id"] = skill.ID
+	hctx.Args["__skill_hooks"] = skill.Hooks
 
 	result, _ := d.engine.Fire(r.Context(), hctx)
 	if result.Halt {
@@ -229,11 +241,11 @@ func (d *Dispatcher) handleToolInvoke(w http.ResponseWriter, r *http.Request) {
 	if result.Halt {
 		// Create HITL approval workflow
 		hitlArgs := map[string]any{
-			"tool_name":     req.Tool.Name,
-			"tool_version":  req.Tool.Version,
-			"tool_args":     req.Args,
-			"agent_id":      req.AgentID,
-			"reason":        result.Message,
+			"tool_name":    req.Tool.Name,
+			"tool_version": req.Tool.Version,
+			"tool_args":    req.Args,
+			"agent_id":     req.AgentID,
+			"reason":       result.Message,
 		}
 		hitlWorkflowID, _, _ := d.workflows.Start(r.Context(), "hitl-approver", tenantID, hitlArgs)
 
@@ -274,14 +286,27 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 // InMemoryCatalog is a map-backed SkillCatalog for tests and local dev.
 type InMemoryCatalog struct {
 	skills map[string]*models.SkillManifest
+	byID   map[string]*models.SkillManifest
 }
 
 func NewInMemoryCatalog() *InMemoryCatalog {
-	return &InMemoryCatalog{skills: make(map[string]*models.SkillManifest)}
+	return &InMemoryCatalog{skills: make(map[string]*models.SkillManifest), byID: make(map[string]*models.SkillManifest)}
 }
 
 func (c *InMemoryCatalog) Register(s *models.SkillManifest) {
 	c.skills[catalogKey(s.Name, s.TenantID)] = s
+	c.byID[s.ID] = s
+}
+
+func (c *InMemoryCatalog) GetByID(id, tenantID string) (*models.SkillManifest, bool) {
+	s, ok := c.byID[id]
+	if !ok {
+		return nil, false
+	}
+	if s.TenantID == tenantID || s.Scope == "system" || s.Visibility == "public" {
+		return s, true
+	}
+	return nil, false
 }
 
 func (c *InMemoryCatalog) Get(name, tenantID string) (*models.SkillManifest, bool) {
@@ -291,6 +316,67 @@ func (c *InMemoryCatalog) Get(name, tenantID string) (*models.SkillManifest, boo
 
 func catalogKey(name, tenantID string) string {
 	return tenantID + "/" + name
+}
+
+// HTTPCatalog resolves skill manifests through the skill-catalog service, which is
+// the DB-backed source of truth in production.
+type HTTPCatalog struct {
+	baseURL string
+	client  *http.Client
+}
+
+func NewHTTPCatalog(baseURL string) *HTTPCatalog {
+	return &HTTPCatalog{
+		baseURL: strings.TrimRight(baseURL, "/"),
+		client:  &http.Client{Timeout: 10 * time.Second},
+	}
+}
+
+func (c *HTTPCatalog) GetByID(id, tenantID string) (*models.SkillManifest, bool) {
+	req, err := http.NewRequest(http.MethodGet, c.baseURL+"/api/v1/skills/"+id, nil)
+	if err != nil {
+		return nil, false
+	}
+	req.Header.Set("X-Tenant-ID", tenantID)
+	resp, err := c.client.Do(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		if resp != nil {
+			resp.Body.Close()
+		}
+		return nil, false
+	}
+	defer resp.Body.Close()
+	var skill models.SkillManifest
+	if err := json.NewDecoder(resp.Body).Decode(&skill); err != nil {
+		return nil, false
+	}
+	return &skill, true
+}
+
+func (c *HTTPCatalog) Get(name, tenantID string) (*models.SkillManifest, bool) {
+	req, err := http.NewRequest(http.MethodGet, c.baseURL+"/api/v1/skills?available=true&include_system=true&include_public=true&status=active", nil)
+	if err != nil {
+		return nil, false
+	}
+	req.Header.Set("X-Tenant-ID", tenantID)
+	resp, err := c.client.Do(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		if resp != nil {
+			resp.Body.Close()
+		}
+		return nil, false
+	}
+	defer resp.Body.Close()
+	var skills []models.SkillManifest
+	if err := json.NewDecoder(resp.Body).Decode(&skills); err != nil {
+		return nil, false
+	}
+	for i := range skills {
+		if skills[i].Name == name {
+			return &skills[i], true
+		}
+	}
+	return nil, false
 }
 
 // --- MockToolRouter ---
@@ -349,8 +435,8 @@ func NewToolExecutorRouter() *ToolExecutorRouter {
 	return &ToolExecutorRouter{
 		client: &http.Client{Timeout: 5 * time.Minute},
 		routes: map[string]string{
-			"bash":  bashExecutorURL,
-			"kg":    kgServiceURL,
+			"bash": bashExecutorURL,
+			"kg":   kgServiceURL,
 		},
 		defaultURL: sandboxManagerURL,
 	}
@@ -387,11 +473,11 @@ func (r *ToolExecutorRouter) executeBash(ctx context.Context, tool models.ToolRe
 	url := r.routes["bash"]
 
 	payload := map[string]any{
-		"script":       args["script"],
+		"script":          args["script"],
 		"timeout_seconds": args["timeout_seconds"],
-		"environment":  args["environment"],
-		"working_dir":  args["working_dir"],
-		"execution_id": fmt.Sprintf("exec-%d", time.Now().UnixNano()),
+		"environment":     args["environment"],
+		"working_dir":     args["working_dir"],
+		"execution_id":    fmt.Sprintf("exec-%d", time.Now().UnixNano()),
 	}
 	body, _ := json.Marshal(payload)
 

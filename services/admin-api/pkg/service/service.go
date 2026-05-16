@@ -35,8 +35,8 @@ type AdminHandler struct {
 func (h *AdminHandler) getPricingModel(ctx context.Context) map[string]float64 {
 	defaultPricing := map[string]float64{
 		"claude-3-5-sonnet-20241022": 3.0,
-		"claude-opus-4-20250514":      15.0,
-		"claude-opus-4":                15.0,
+		"claude-opus-4-20250514":     15.0,
+		"claude-opus-4":              15.0,
 	}
 
 	var value string
@@ -188,12 +188,12 @@ func (h *AdminHandler) HandleGetTenant(w http.ResponseWriter, r *http.Request) {
 	// TODO: Query cost_events for this tenant
 
 	stats := models.TenantStats{
-		TenantID:      tenantID,
-		AgentCount:    0,
-		SkillCount:    0,
-		ToolCount:     0,
-		MonthlyCost:   0.0,
-		Settings:      &settings,
+		TenantID:    tenantID,
+		AgentCount:  0,
+		SkillCount:  0,
+		ToolCount:   0,
+		MonthlyCost: 0.0,
+		Settings:    &settings,
 	}
 
 	json.NewEncoder(w).Encode(stats)
@@ -519,14 +519,14 @@ func (h *AdminHandler) HandleListExecutions(w http.ResponseWriter, r *http.Reque
 	statusFilter := r.URL.Query().Get("status")
 
 	type ExecutionRow struct {
-		SessionID  string    `json:"session_id"`
-		TenantID   string    `json:"tenant_id"`
-		AgentID    string    `json:"agent_id"`
-		Status     string    `json:"status"`
-		StartTime  time.Time `json:"start_time"`
+		SessionID  string     `json:"session_id"`
+		TenantID   string     `json:"tenant_id"`
+		AgentID    string     `json:"agent_id"`
+		Status     string     `json:"status"`
+		StartTime  time.Time  `json:"start_time"`
 		EndTime    *time.Time `json:"end_time,omitempty"`
-		DurationMS int64     `json:"duration_ms"`
-		EventCount int       `json:"event_count"`
+		DurationMS int64      `json:"duration_ms"`
+		EventCount int        `json:"event_count"`
 	}
 
 	// Build query for workflow_executions table
@@ -729,9 +729,9 @@ func (h *AdminHandler) HandleGetCostSummary(w http.ResponseWriter, r *http.Reque
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"costs":   costs,
-		"period":  period,
-		"count":   len(costs),
+		"costs":  costs,
+		"period": period,
+		"count":  len(costs),
 	})
 }
 
@@ -1055,14 +1055,14 @@ func (h *AdminHandler) HandleCreateSystemTool(w http.ResponseWriter, r *http.Req
 	w.Header().Set("Content-Type", "application/json")
 
 	var req struct {
-		Name              string          `json:"name"`
-		Version           string          `json:"version"`
-		Description       string          `json:"description"`
-		AuthLevel         string          `json:"auth_level"`
-		SandboxRequired   bool            `json:"sandbox_required"`
-		InputSchema       json.RawMessage `json:"input_schema,omitempty"`
-		OutputSchema      json.RawMessage `json:"output_schema,omitempty"`
-		RegisteredBy      string          `json:"registered_by"`
+		Name            string          `json:"name"`
+		Version         string          `json:"version"`
+		Description     string          `json:"description"`
+		AuthLevel       string          `json:"auth_level"`
+		SandboxRequired bool            `json:"sandbox_required"`
+		InputSchema     json.RawMessage `json:"input_schema,omitempty"`
+		OutputSchema    json.RawMessage `json:"output_schema,omitempty"`
+		RegisteredBy    string          `json:"registered_by"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -1095,19 +1095,19 @@ func (h *AdminHandler) HandleCreateSystemTool(w http.ResponseWriter, r *http.Req
 
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"id":                id,
-		"tenant_id":         "platform-system",
-		"name":              req.Name,
-		"version":           req.Version,
-		"description":       req.Description,
-		"auth_level":        req.AuthLevel,
-		"sandbox_required":  req.SandboxRequired,
-		"input_schema":      req.InputSchema,
-		"output_schema":     req.OutputSchema,
-		"status":            "approved",
-		"registered_by":     registeredBy,
-		"scope":             "system",
-		"created_at":        now,
+		"id":               id,
+		"tenant_id":        "platform-system",
+		"name":             req.Name,
+		"version":          req.Version,
+		"description":      req.Description,
+		"auth_level":       req.AuthLevel,
+		"sandbox_required": req.SandboxRequired,
+		"input_schema":     req.InputSchema,
+		"output_schema":    req.OutputSchema,
+		"status":           "approved",
+		"registered_by":    registeredBy,
+		"scope":            "system",
+		"created_at":       now,
 	})
 }
 
@@ -1307,15 +1307,15 @@ func (h *AdminHandler) HandleCreateSystemSkill(w http.ResponseWriter, r *http.Re
 	w.Header().Set("Content-Type", "application/json")
 
 	var req struct {
-		Name             string          `json:"name"`
-		Version          string          `json:"version"`
-		Description      string          `json:"description"`
-		Tools            []interface{}   `json:"tools,omitempty"`
-		SOP              string          `json:"sop"`
-		Mutating         bool            `json:"mutating"`
-		ApprovalRequired bool            `json:"approval_required"`
-		Hooks            []interface{}   `json:"hooks,omitempty"`
-		PublishedBy      string          `json:"published_by"`
+		Name             string        `json:"name"`
+		Version          string        `json:"version"`
+		Description      string        `json:"description"`
+		Tools            []interface{} `json:"tools,omitempty"`
+		SOP              string        `json:"sop"`
+		Mutating         bool          `json:"mutating"`
+		ApprovalRequired bool          `json:"approval_required"`
+		Hooks            []interface{} `json:"hooks,omitempty"`
+		PublishedBy      string        `json:"published_by"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
@@ -1324,6 +1324,23 @@ func (h *AdminHandler) HandleCreateSystemSkill(w http.ResponseWriter, r *http.Re
 
 	if req.Name == "" || req.Version == "" {
 		http.Error(w, "Missing required fields: name, version", http.StatusBadRequest)
+		return
+	}
+
+	var duplicateExists bool
+	err := h.DB.QueryRow(r.Context(), `
+		SELECT EXISTS (
+			SELECT 1 FROM skills
+			WHERE lower(name) = lower($1)
+			  AND version = $2
+		)
+	`, req.Name, req.Version).Scan(&duplicateExists)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Duplicate check failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if duplicateExists {
+		http.Error(w, "skill name and version already exist", http.StatusConflict)
 		return
 	}
 
@@ -1337,7 +1354,7 @@ func (h *AdminHandler) HandleCreateSystemSkill(w http.ResponseWriter, r *http.Re
 	tools, _ := json.Marshal(req.Tools)
 	hooks, _ := json.Marshal(req.Hooks)
 
-	_, err := h.DB.Exec(r.Context(), `
+	_, err = h.DB.Exec(r.Context(), `
 		INSERT INTO skills (id, tenant_id, name, version, description, tools, sop, mutating,
 		                    approval_required, hooks, status, published_by, created_at, scope)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
@@ -1351,20 +1368,20 @@ func (h *AdminHandler) HandleCreateSystemSkill(w http.ResponseWriter, r *http.Re
 
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"id":                  id,
-		"tenant_id":           "platform-system",
-		"name":                req.Name,
-		"version":             req.Version,
-		"description":         req.Description,
-		"tools":               req.Tools,
-		"sop":                 req.SOP,
-		"mutating":            req.Mutating,
-		"approval_required":   req.ApprovalRequired,
-		"hooks":               req.Hooks,
-		"status":              "active",
-		"published_by":        publishedBy,
-		"scope":               "system",
-		"created_at":          now,
+		"id":                id,
+		"tenant_id":         "platform-system",
+		"name":              req.Name,
+		"version":           req.Version,
+		"description":       req.Description,
+		"tools":             req.Tools,
+		"sop":               req.SOP,
+		"mutating":          req.Mutating,
+		"approval_required": req.ApprovalRequired,
+		"hooks":             req.Hooks,
+		"status":            "active",
+		"published_by":      publishedBy,
+		"scope":             "system",
+		"created_at":        now,
 	})
 }
 
@@ -1544,29 +1561,29 @@ type CookbookManifest struct {
 	Domain      string `yaml:"domain"`
 	Creates     struct {
 		KnowledgeGraphs []struct {
-			Name          string `yaml:"name"`
-			Description   string `yaml:"description"`
-			SchemaFile    string `yaml:"schema_file"`
-			SeedDataFile  string `yaml:"seed_data_file"`
+			Name         string `yaml:"name"`
+			Description  string `yaml:"description"`
+			SchemaFile   string `yaml:"schema_file"`
+			SeedDataFile string `yaml:"seed_data_file"`
 		} `yaml:"knowledge_graphs"`
 		Agents []struct {
 			File        string `yaml:"file"`
 			Description string `yaml:"description"`
 		} `yaml:"agents"`
 	} `yaml:"creates"`
-	Variables            []CookbookVariable `yaml:"variables"`
-	Tags                 []string           `yaml:"tags"`
-	MinPlatformVersion   string             `yaml:"min_platform_version"`
+	Variables          []CookbookVariable `yaml:"variables"`
+	Tags               []string           `yaml:"tags"`
+	MinPlatformVersion string             `yaml:"min_platform_version"`
 }
 
 type CookbookInfo struct {
-	ID          string              `json:"id"`
-	Name        string              `json:"name"`
-	Version     string              `json:"version"`
-	Description string              `json:"description"`
-	Domain      string              `json:"domain"`
-	Tags        []string            `json:"tags"`
-	Variables   []CookbookVariable  `json:"variables"`
+	ID          string             `json:"id"`
+	Name        string             `json:"name"`
+	Version     string             `json:"version"`
+	Description string             `json:"description"`
+	Domain      string             `json:"domain"`
+	Tags        []string           `json:"tags"`
+	Variables   []CookbookVariable `json:"variables"`
 }
 
 type CookbookAgentDetail struct {
@@ -1827,7 +1844,7 @@ type agentYAML struct {
 	Model          string `yaml:"model"`
 	MaxIterations  int    `yaml:"max_iterations"`
 	MemoryBudgetMB int    `yaml:"memory_budget_mb"`
-	Tools []struct {
+	Tools          []struct {
 		Name    string `yaml:"name"`
 		Version string `yaml:"version"`
 	} `yaml:"tools"`
@@ -1950,10 +1967,10 @@ func (h *AdminHandler) HandleImportCookbook(w http.ResponseWriter, r *http.Reque
 
 // createKnowledgeGraph creates a KG graph and seeds its nodes/edges
 func (h *AdminHandler) createKnowledgeGraph(ctx context.Context, kg struct {
-	Name          string `yaml:"name"`
-	Description   string `yaml:"description"`
-	SchemaFile    string `yaml:"schema_file"`
-	SeedDataFile  string `yaml:"seed_data_file"`
+	Name         string `yaml:"name"`
+	Description  string `yaml:"description"`
+	SchemaFile   string `yaml:"schema_file"`
+	SeedDataFile string `yaml:"seed_data_file"`
 }, cookbookPath string, tenantID string) (string, error) {
 	// Parse schema
 	schemaPath := filepath.Join(cookbookPath, kg.SchemaFile)
@@ -2113,13 +2130,13 @@ func (h *AdminHandler) createAgentFromYAML(ctx context.Context, yamlPath string,
 
 	// Create agent manifest for agent-registry
 	manifest := map[string]interface{}{
-		"id":                 agentID,
-		"name":               agent.Name,
-		"version":            agent.Version,
-		"system_prompt":      agent.SystemPrompt,
-		"model":              agent.Model,
-		"max_iterations":     agent.MaxIterations,
-		"memory_budget_mb":   agent.MemoryBudgetMB,
+		"id":               agentID,
+		"name":             agent.Name,
+		"version":          agent.Version,
+		"system_prompt":    agent.SystemPrompt,
+		"model":            agent.Model,
+		"max_iterations":   agent.MaxIterations,
+		"memory_budget_mb": agent.MemoryBudgetMB,
 	}
 	if len(tools) > 0 {
 		manifest["tools"] = tools

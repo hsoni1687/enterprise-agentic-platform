@@ -23,7 +23,7 @@ async def execute_code(code: str) -> str:
 
 
 @activity.defn
-async def invoke_skill(skill_name: str, args: dict, tenant_id: str, agent_id: str) -> str:
+async def invoke_skill(skill_name: str, args: dict, tenant_id: str, agent_id: str, skill_id: str = "") -> str:
     """Invokes a named skill via the skill-dispatcher (runs pre/post hooks)."""
     url = os.getenv("SKILL_DISPATCHER_URL", "http://localhost:8085")
     logging.info(f"Invoking skill '{skill_name}' for agent {agent_id}")
@@ -31,7 +31,7 @@ async def invoke_skill(skill_name: str, args: dict, tenant_id: str, agent_id: st
         async with httpx.AsyncClient() as client:
             resp = await client.post(
                 f"{url}/api/v1/skills/{skill_name}/invoke",
-                json={"args": args, "agent_id": agent_id},
+                json={"args": args, "agent_id": agent_id, "skill_id": skill_id},
                 headers={"X-Tenant-ID": tenant_id},
                 timeout=30.0,
             )
@@ -129,6 +129,63 @@ async def fetch_system_tools(tenant_id: str) -> list[dict]:
     except Exception as e:
         logging.error(f"Failed to fetch system tools: {e}")
         return []
+
+
+@activity.defn
+async def resolve_skill_context(tenant_id: str, skill_refs: list[dict]) -> dict:
+    """Fetches selected skills and renders DB-backed skill instructions."""
+    skill_catalog_url = os.getenv("SKILL_CATALOG_URL", "http://skill-catalog:8087")
+    resolved: list[dict] = []
+    markdown_blocks: list[str] = []
+    logging.info(f"Resolving {len(skill_refs or [])} skills for tenant {tenant_id}")
+
+    try:
+        async with httpx.AsyncClient() as client:
+            available_resp = await client.get(
+                f"{skill_catalog_url}/api/v1/skills?available=true&include_system=true&include_public=true&status=active",
+                headers={"X-Tenant-ID": tenant_id},
+                timeout=15.0,
+            )
+            available_resp.raise_for_status()
+            available = available_resp.json()
+            skills = available if isinstance(available, list) else available.get("skills", [])
+
+            for ref in skill_refs or []:
+                skill = None
+                ref_id = ref.get("id")
+                if ref_id:
+                    skill = next((s for s in skills if s.get("id") == ref_id), None)
+                if skill is None:
+                    skill = next(
+                        (
+                            s for s in skills
+                            if s.get("name") == ref.get("name")
+                            and (not ref.get("version") or s.get("version") == ref.get("version"))
+                        ),
+                        None,
+                    )
+                if skill is None:
+                    logging.warning(f"Skill ref could not be resolved: {ref}")
+                    continue
+
+                render_resp = await client.get(
+                    f"{skill_catalog_url}/api/v1/skills/{skill['id']}/render",
+                    headers={"X-Tenant-ID": tenant_id},
+                    timeout=15.0,
+                )
+                render_resp.raise_for_status()
+                rendered = render_resp.json().get("markdown", "")
+
+                skill["rendered_markdown"] = rendered
+                skill["description"] = rendered or skill.get("description", "")
+                resolved.append(skill)
+                if rendered:
+                    markdown_blocks.append(rendered)
+    except Exception as e:
+        logging.error(f"Failed to resolve skill context: {e}")
+        return {"skills": skill_refs or [], "markdown": ""}
+
+    return {"skills": resolved, "markdown": "\n\n---\n\n".join(markdown_blocks)}
 
 
 @activity.defn

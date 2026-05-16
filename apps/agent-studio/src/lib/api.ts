@@ -1,5 +1,7 @@
 const DEFAULT_TENANT_ID = process.env.NEXT_PUBLIC_TENANT_ID ?? "default-tenant";
+const DEFAULT_TEAM_ID = process.env.NEXT_PUBLIC_TEAM_ID ?? "default-team";
 let _tenantId = DEFAULT_TENANT_ID;
+let _teamId = DEFAULT_TEAM_ID;
 
 export function setRuntimeTenant(id: string) {
   _tenantId = id;
@@ -7,6 +9,14 @@ export function setRuntimeTenant(id: string) {
 
 export function getRuntimeTenant(): string {
   return _tenantId;
+}
+
+export function setRuntimeTeam(id: string) {
+  _teamId = id;
+}
+
+export function getRuntimeTeam(): string {
+  return _teamId;
 }
 
 const TOOL_REGISTRY =
@@ -19,6 +29,8 @@ const API_GATEWAY =
   process.env.NEXT_PUBLIC_API_GATEWAY_URL ?? "http://localhost:8080";
 const LLM_GATEWAY =
   process.env.NEXT_PUBLIC_LLM_GATEWAY_URL ?? "http://localhost:4000";
+const LLM_GATEWAY_KEY =
+  process.env.NEXT_PUBLIC_LLM_GATEWAY_KEY ?? "sk-litellm-dev";
 const OLLAMA_URL =
   process.env.NEXT_PUBLIC_OLLAMA_URL ?? "http://localhost:11434";
 const MCP_REGISTRY =
@@ -38,6 +50,7 @@ async function req<T>(base: string, path: string, init?: RequestInit): Promise<T
       headers: {
         "Content-Type": "application/json",
         "X-Tenant-ID": _tenantId,
+        // X-Team-ID omitted: Go services only allow X-Tenant-ID in CORS preflight
         ...init?.headers,
       },
     });
@@ -92,10 +105,17 @@ export const skillsApi = {
   listWithSystem: (status?: string) =>
     req<import("./types").SkillManifest[]>(
       SKILL_CATALOG,
-      `/api/v1/skills?include_system=true${status ? `&status=${status}` : ""}`
+      `/api/v1/skills?include_system=true&include_public=true${status ? `&status=${status}` : ""}`
+    ),
+  available: (status?: string) =>
+    req<import("./types").SkillManifest[]>(
+      SKILL_CATALOG,
+      `/api/v1/skills?available=true&include_system=true&include_public=true${status ? `&status=${status}` : ""}`
     ),
   get: (id: string) =>
     req<import("./types").SkillManifest>(SKILL_CATALOG, `/api/v1/skills/${id}`),
+  render: (id: string) =>
+    req<{ id: string; markdown: string }>(SKILL_CATALOG, `/api/v1/skills/${id}/render`),
   create: (body: Partial<import("./types").SkillManifest>) =>
     req<import("./types").SkillManifest>(SKILL_CATALOG, "/api/v1/skills", {
       method: "POST",
@@ -204,7 +224,9 @@ export const modelsApi = {
 
     // Cloud + named-alias models from LiteLLM
     try {
-      const resp = await req<{ data?: Array<{ id: string }> }>(LLM_GATEWAY, "/v1/models");
+      const resp = await req<{ data?: Array<{ id: string }> }>(LLM_GATEWAY, "/v1/models", {
+        headers: { Authorization: `Bearer ${LLM_GATEWAY_KEY}` },
+      });
       for (const m of resp.data ?? []) {
         if (seen.has(m.id)) continue;
         seen.add(m.id);
@@ -444,6 +466,37 @@ export const mcpApi = {
       servers: import("./types").MCPServer[];
       count: number;
     }>(MCP_REGISTRY, "/api/v1/mcp/servers"),
+
+  getServer: (id: string) =>
+    req<import("./types").MCPServer>(MCP_REGISTRY, `/api/v1/mcp/servers/${id}`),
+
+  listTools: (serverId: string) =>
+    req<{ tools: Array<{ name: string; description: string; input_schema: unknown }> }>(
+      MCP_REGISTRY,
+      `/api/v1/mcp/servers/${serverId}/tools`
+    ),
+
+  executeTool: (serverId: string, toolName: string, input: Record<string, unknown>) =>
+    req<{ result: unknown; duration_ms: number; error?: string }>(
+      MCP_REGISTRY,
+      `/api/v1/mcp/servers/${serverId}/execute`,
+      {
+        method: "POST",
+        body: JSON.stringify({ tool: toolName, input }),
+      }
+    ),
+
+  createServer: (body: Partial<import("./types").MCPServer>) =>
+    req<import("./types").MCPServer>(MCP_REGISTRY, "/api/v1/mcp/servers", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  toggleServer: (id: string, enabled: boolean) =>
+    req<import("./types").MCPServer>(MCP_REGISTRY, `/api/v1/mcp/servers/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ enabled }),
+    }),
 };
 
 // Knowledge Graph API

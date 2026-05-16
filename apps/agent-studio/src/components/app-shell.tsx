@@ -13,6 +13,9 @@ import {
   CheckCircle,
   Network,
   BookOpen,
+  Shield,
+  Webhook,
+  Cable,
 } from "lucide-react";
 import {
   Sidebar,
@@ -30,16 +33,44 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { TenantSelector } from "@/components/tenant-selector";
 
-const navItems = [
-  { href: "/tools", label: "Tools", icon: Wrench },
-  { href: "/skills", label: "Skills", icon: Zap },
-  { href: "/agents", label: "Agents", icon: Bot },
-  { href: "/knowledge-graphs", label: "Knowledge Graphs", icon: Network },
-  { href: "/chat", label: "Chat", icon: MessageSquare },
-  { href: "/approvals", label: "Approvals", icon: CheckCircle },
-  { href: "/logs", label: "Logs", icon: ScrollText },
-  { href: "/cookbooks", label: "Cookbooks", icon: BookOpen },
-  { href: "/settings", label: "Settings", icon: Settings },
+const navGroups = [
+  {
+    label: "Compose",
+    items: [
+      { href: "/tools", label: "Tools", icon: Wrench },
+      { href: "/skills", label: "Skills", icon: Zap },
+      { href: "/agents", label: "Agents", icon: Bot },
+    ],
+  },
+  {
+    label: "Validate",
+    items: [
+      { href: "/guardrails", label: "Guardrails", icon: Shield },
+      { href: "/hooks", label: "Hooks", icon: Webhook },
+    ],
+  },
+  {
+    label: "Connect",
+    items: [
+      { href: "/mcp", label: "MCP Servers", icon: Cable },
+      { href: "/knowledge-graphs", label: "Knowledge Graphs", icon: Network },
+    ],
+  },
+  {
+    label: "Monitor",
+    items: [
+      { href: "/chat", label: "Chat", icon: MessageSquare },
+      { href: "/approvals", label: "Approvals", icon: CheckCircle },
+      { href: "/logs", label: "Logs", icon: ScrollText },
+    ],
+  },
+  {
+    label: "Platform",
+    items: [
+      { href: "/cookbooks", label: "Cookbooks", icon: BookOpen },
+      { href: "/settings", label: "Settings", icon: Settings },
+    ],
+  },
 ];
 
 function AppSidebar() {
@@ -61,34 +92,36 @@ function AppSidebar() {
       <Separator className="mb-2" />
 
       <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupLabel className="text-xs text-muted-foreground uppercase tracking-wider">
-            Platform
-          </SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {navItems.map(({ href, label, icon: Icon }) => {
-                const active =
-                  pathname === href || pathname.startsWith(href + "/");
-                return (
-                  <SidebarMenuItem key={href}>
-                    <SidebarMenuButton
-                      isActive={active}
-                      tooltip={label}
-                      render={<Link href={href} />}
-                    >
-                      <Icon className="h-4 w-4" />
-                      <span>{label}</span>
-                      {active && (
-                        <ChevronRight className="ml-auto h-3 w-3 opacity-50" />
-                      )}
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                );
-              })}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+        {navGroups.map((group) => (
+          <SidebarGroup key={group.label}>
+            <SidebarGroupLabel className="text-[10px] text-muted-foreground/60 uppercase tracking-widest font-semibold px-2 group-data-[collapsible=icon]:hidden">
+              {group.label}
+            </SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {group.items.map(({ href, label, icon: Icon }) => {
+                  const active =
+                    pathname === href || pathname.startsWith(href + "/");
+                  return (
+                    <SidebarMenuItem key={href}>
+                      <SidebarMenuButton
+                        isActive={active}
+                        tooltip={label}
+                        render={<Link href={href} />}
+                      >
+                        <Icon className="h-4 w-4" />
+                        <span>{label}</span>
+                        {active && (
+                          <ChevronRight className="ml-auto h-3 w-3 opacity-50" />
+                        )}
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  );
+                })}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        ))}
       </SidebarContent>
     </Sidebar>
   );

@@ -4,27 +4,71 @@
 
 @layer base {
   :root {
-    --background: 0 0% 3.6%;
-    --foreground: 0 0% 98%;
-    --card: 0 0% 10%;
-    --card-foreground: 0 0% 98%;
-    --border: 0 0% 20%;
-    --input: 0 0% 15%;
-    --primary: 229 89% 52%;
+    --background: 0 0% 9%;
+    --foreground: 0 0% 97%;
+    --card: 0 0% 13%;
+    --card-foreground: 0 0% 97%;
+    --popover: 0 0% 13%;
+    --popover-foreground: 0 0% 97%;
+    --primary: 264 80% 58%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 127 73% 40%;
-    --secondary-foreground: 0 0% 100%;
-    --destructive: 0 85% 56%;
+    --secondary: 0 0% 17%;
+    --secondary-foreground: 0 0% 97%;
+    --muted: 0 0% 17%;
+    --muted-foreground: 0 0% 55%;
+    --accent: 0 0% 17%;
+    --accent-foreground: 0 0% 97%;
+    --destructive: 0 75% 55%;
     --destructive-foreground: 0 0% 100%;
-    --muted: 0 0% 15%;
-    --muted-foreground: 0 0% 60%;
+    --border: 0 0% 100% / 0.1;
+    --input: 0 0% 100% / 0.12;
+    --ring: 264 80% 58%;
+    --violet: 264 80% 58%;
+    --radius: 0.625rem;
   }
 }
 
-html {
-  scroll-behavior: smooth;
+@layer components {
+  .admin-card {
+    @apply rounded-xl border border-white/10 bg-[hsl(0,0%,13%)] p-5 transition-all duration-200;
+  }
+  .admin-card-hover {
+    @apply hover:border-violet-500/40 hover:shadow-lg hover:shadow-violet-500/5;
+  }
+  .stat-card {
+    @apply rounded-xl border border-white/10 bg-[hsl(0,0%,13%)] px-5 py-4;
+  }
+  .status-badge {
+    @apply inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium;
+  }
+  .filter-chip {
+    @apply rounded-full border border-white/10 px-3 py-1 text-xs font-medium transition-colors cursor-pointer;
+    @apply hover:border-violet-500/50 hover:text-violet-400;
+  }
+  .filter-chip-active {
+    @apply border-violet-500/60 bg-violet-500/10 text-violet-400;
+  }
+  .nav-item {
+    @apply flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors;
+    @apply text-white/50 hover:bg-white/5 hover:text-white;
+  }
+  .nav-item-active {
+    @apply bg-violet-500/15 text-violet-400;
+  }
+  .admin-table th {
+    @apply px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-white/40 bg-white/5;
+  }
+  .admin-table td {
+    @apply px-4 py-3 text-sm border-t border-white/5;
+  }
 }
 
-body {
-  @apply bg-background text-foreground;
+@layer base {
+  body {
+    @apply bg-[hsl(0,0%,9%)] text-[hsl(0,0%,97%)];
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  * {
+    @apply border-white/10;
+  }
 }

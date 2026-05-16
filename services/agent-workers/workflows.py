@@ -82,7 +82,13 @@ class AgentWorkflow:
         ]
 
         # Await recall result and patch system prompt if memories found
-        past_memories = await recall_handle
+        # Memory recall is non-fatal: if the embedding service is unavailable the
+        # agent proceeds without memories rather than crashing the workflow.
+        try:
+            past_memories = await recall_handle
+        except Exception as mem_err:
+            workflow.logger.warning(f"[WORKFLOW] Memory recall skipped (non-fatal): {mem_err}")
+            past_memories = []
         if past_memories:
             system_prompt += "\n\nPast findings/memories:\n- " + "\n- ".join(past_memories)
             messages[0] = {"role": "system", "content": system_prompt}
@@ -100,6 +106,20 @@ class AgentWorkflow:
             retry_policy=RetryPolicy(maximum_attempts=2),
         )
 
+        # Resolve selected skills from the catalog and inject their rendered
+        # Skill.md-style instructions into the agent context.
+        skill_context = await workflow.execute_activity(
+            "resolve_skill_context",
+            args=[tenant_id, skills],
+            start_to_close_timeout=timedelta(seconds=20),
+            retry_policy=RetryPolicy(maximum_attempts=2),
+        )
+        resolved_skills = skill_context.get("skills") or skills
+        rendered_skills = skill_context.get("markdown") or ""
+        if rendered_skills:
+            system_prompt += "\n\nAvailable skill instructions:\n\n" + rendered_skills
+            messages[0] = {"role": "system", "content": system_prompt}
+
         # Build agent context
         agent_context = {
             "agent_id": agent_id,
@@ -108,7 +128,7 @@ class AgentWorkflow:
             "model": model,
             "max_iterations": max_iterations,
             "system_prompt": system_prompt,
-            "skills": skills,
+            "skills": resolved_skills,
             "tools": direct_tools,
             "system_tools": system_tools,
             "mcp_servers": explicit_mcp_servers,
@@ -323,12 +343,16 @@ class AgentWorkflow:
         self._emit({"type": "text", "content": final_answer})
         self._emit({"type": "done"})
 
-        # 3. Fire-and-forget store_memory (start without awaiting)
-        workflow.start_activity(
-            "store_memory",
-            args=[f"Observation for '{prompt}': {final_answer}", agent_id],
-            start_to_close_timeout=timedelta(seconds=10),
-        )
+        # 3. Fire-and-forget store_memory — non-blocking, non-fatal.
+        # If the embedding service is down the memory simply won't be stored.
+        try:
+            workflow.start_activity(
+                "store_memory",
+                args=[f"Observation for '{prompt}': {final_answer}", agent_id],
+                start_to_close_timeout=timedelta(seconds=10),
+            )
+        except Exception as store_err:
+            workflow.logger.warning(f"[WORKFLOW] store_memory skipped: {store_err}")
 
         return f"Agent {agent_id} completed: {final_answer}"
 

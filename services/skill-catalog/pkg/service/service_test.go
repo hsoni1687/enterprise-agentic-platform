@@ -71,6 +71,21 @@ func TestCreateSkill_MissingTenantHeader_Returns400(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 }
 
+func TestCreateSkill_DuplicateNameVersion_Returns409(t *testing.T) {
+	mux, s := newHandler(t)
+	require.NoError(t, s.Create(nil, baseSkill()))
+
+	duplicate := baseSkill()
+	duplicate.ID = "skill-duplicate"
+	body, _ := json.Marshal(duplicate)
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/skills", bytes.NewReader(body))
+	req.Header.Set("X-Tenant-ID", "tenant-other")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusConflict, rr.Code)
+}
+
 // GET /api/v1/skills/{id}
 
 func TestGetSkill_Returns200(t *testing.T) {
@@ -109,6 +124,7 @@ func TestListSkills_StatusFilter(t *testing.T) {
 
 	active := baseSkill()
 	active.ID = "skill-002"
+	active.Name = "analyze-errors"
 	active.Status = models.StatusActive
 	require.NoError(t, s.Create(nil, active))
 
@@ -122,6 +138,67 @@ func TestListSkills_StatusFilter(t *testing.T) {
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 	assert.Len(t, resp, 1)
 	assert.Equal(t, "skill-002", resp[0].ID)
+}
+
+func TestListSkills_AvailableIncludesSystemPublicAndTeamPrivate(t *testing.T) {
+	mux, s := newHandler(t)
+
+	system := baseSkill()
+	system.ID = "system-skill"
+	system.TenantID = "platform-system"
+	system.Name = "system-skill"
+	system.Scope = "system"
+	system.Status = models.StatusActive
+	require.NoError(t, s.Create(nil, system))
+
+	public := baseSkill()
+	public.ID = "public-skill"
+	public.TenantID = "tenant-other"
+	public.Name = "public-skill"
+	public.Visibility = "public"
+	public.Status = models.StatusActive
+	require.NoError(t, s.Create(nil, public))
+
+	teamPrivate := baseSkill()
+	teamPrivate.ID = "team-private"
+	teamPrivate.Name = "team-private"
+	teamPrivate.TeamID = "team-a"
+	teamPrivate.Status = models.StatusActive
+	require.NoError(t, s.Create(nil, teamPrivate))
+
+	otherTeamPrivate := baseSkill()
+	otherTeamPrivate.ID = "other-team-private"
+	otherTeamPrivate.Name = "other-team-private"
+	otherTeamPrivate.TeamID = "team-b"
+	otherTeamPrivate.Status = models.StatusActive
+	require.NoError(t, s.Create(nil, otherTeamPrivate))
+
+	req, _ := http.NewRequest(http.MethodGet, "/api/v1/skills?available=true&include_system=true&include_public=true&status=active", nil)
+	req.Header.Set("X-Tenant-ID", testTenant)
+	req.Header.Set("X-Team-ID", "team-a")
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+	var resp []*models.SkillManifest
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+	assert.Len(t, resp, 3)
+}
+
+func TestRenderSkill_ReturnsVirtualSkillMarkdown(t *testing.T) {
+	mux, s := newHandler(t)
+	require.NoError(t, s.Create(nil, baseSkill()))
+
+	req, _ := http.NewRequest(http.MethodGet, "/api/v1/skills/skill-001/render", nil)
+	req.Header.Set("X-Tenant-ID", testTenant)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+	var resp map[string]string
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+	assert.Contains(t, resp["markdown"], "# query-slow-logs")
+	assert.Contains(t, resp["markdown"], "Standard Operating Procedure")
 }
 
 // PUT /api/v1/skills/{id}

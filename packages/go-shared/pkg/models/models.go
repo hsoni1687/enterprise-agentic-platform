@@ -65,8 +65,8 @@ type ToolRef struct {
 
 // HookSpec is a declarative hook configuration attached to a SkillManifest.
 type HookSpec struct {
-	Phase  string         `json:"phase"`  // "pre" | "post"
-	Type   string         `json:"type"`   // "audit_log" | "cost_meter" | "hitl_intercept" | "rate_limit"
+	Phase  string         `json:"phase"` // "pre" | "post"
+	Type   string         `json:"type"`  // "audit_log" | "cost_meter" | "hitl_intercept" | "rate_limit"
 	Config map[string]any `json:"config,omitempty"`
 }
 
@@ -87,11 +87,14 @@ type SkillManifest struct {
 	Status           ResourceStatus `json:"status"`
 	PublishedBy      string         `json:"published_by"`
 	CreatedAt        time.Time      `json:"created_at"`
-	Scope            string         `json:"scope"` // "tenant" | "system"
+	Scope            string         `json:"scope"`      // "tenant" | "system"
+	Visibility       string         `json:"visibility"` // "private" | "public"
+	TeamID           string         `json:"team_id,omitempty"`
 }
 
 // SkillRef is a version-pinned reference to a skill used inside SubAgentContract.
 type SkillRef struct {
+	ID      string `json:"id,omitempty"`
 	Name    string `json:"name"`
 	Version string `json:"version"`
 }
@@ -234,13 +237,13 @@ type StartSessionRequest struct {
 // AgentEvent is a single observable event emitted by a running agent workflow,
 // streamed to the client via SSE.
 type AgentEvent struct {
-	Type      string      `json:"type"`               // "thinking" | "tool_call" | "text" | "done" | "error" | "approval"
-	Content   string      `json:"content,omitempty"`  // text / thinking / error content
-	ToolName  string      `json:"tool_name,omitempty"` // tool_call: tool name
-	ToolArgs  interface{} `json:"tool_args,omitempty"` // tool_call: tool arguments (object, not string)
+	Type       string      `json:"type"`                  // "thinking" | "tool_call" | "text" | "done" | "error" | "approval"
+	Content    string      `json:"content,omitempty"`     // text / thinking / error content
+	ToolName   string      `json:"tool_name,omitempty"`   // tool_call: tool name
+	ToolArgs   interface{} `json:"tool_args,omitempty"`   // tool_call: tool arguments (object, not string)
 	ToolResult interface{} `json:"tool_result,omitempty"` // tool_call: execution result
 	ApprovalID string      `json:"approval_id,omitempty"` // approval: approval request ID
-	Reason    string      `json:"reason,omitempty"` // approval: why approval is needed
+	Reason     string      `json:"reason,omitempty"`      // approval: why approval is needed
 }
 
 // ChatRequest is the body for POST /api/v1/agents/{id}/chat.
@@ -335,13 +338,13 @@ const (
 
 // TenantSettings stores quota and configuration for a tenant.
 type TenantSettings struct {
-	TenantID                string        `json:"tenant_id"`
-	DisplayName             string        `json:"display_name"`
-	Status                  TenantStatus  `json:"status"`
-	MaxConcurrentWorkflows  int           `json:"max_concurrent_workflows"`
-	TokenBudgetMonthly      int64         `json:"token_budget_monthly"`
-	CreatedAt               time.Time     `json:"created_at"`
-	UpdatedAt               time.Time     `json:"updated_at"`
+	TenantID               string       `json:"tenant_id"`
+	DisplayName            string       `json:"display_name"`
+	Status                 TenantStatus `json:"status"`
+	MaxConcurrentWorkflows int          `json:"max_concurrent_workflows"`
+	TokenBudgetMonthly     int64        `json:"token_budget_monthly"`
+	CreatedAt              time.Time    `json:"created_at"`
+	UpdatedAt              time.Time    `json:"updated_at"`
 }
 
 // TenantSettingsUpdate is used to update tenant settings.
@@ -354,12 +357,12 @@ type TenantSettingsUpdate struct {
 
 // ModelAccess controls which models a tenant can use and per-model quotas.
 type ModelAccess struct {
-	TenantID        string     `json:"tenant_id"`
-	ModelID         string     `json:"model_id"`
-	Enabled         bool       `json:"enabled"`
-	DailyTokenLimit *int64     `json:"daily_token_limit,omitempty"` // nil = no limit
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	TenantID        string    `json:"tenant_id"`
+	ModelID         string    `json:"model_id"`
+	Enabled         bool      `json:"enabled"`
+	DailyTokenLimit *int64    `json:"daily_token_limit,omitempty"` // nil = no limit
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 // PlatformConfig stores platform-wide settings (e.g., LLM proxy URL, API keys).
@@ -377,12 +380,12 @@ type AdminAuthResponse struct {
 
 // TenantStats provides aggregated statistics for a tenant.
 type TenantStats struct {
-	TenantID      string      `json:"tenant_id"`
-	AgentCount    int         `json:"agent_count"`
-	SkillCount    int         `json:"skill_count"`
-	ToolCount     int         `json:"tool_count"`
-	MonthlyCost   float64     `json:"monthly_cost"`
-	Settings      *TenantSettings `json:"settings,omitempty"`
+	TenantID    string          `json:"tenant_id"`
+	AgentCount  int             `json:"agent_count"`
+	SkillCount  int             `json:"skill_count"`
+	ToolCount   int             `json:"tool_count"`
+	MonthlyCost float64         `json:"monthly_cost"`
+	Settings    *TenantSettings `json:"settings,omitempty"`
 }
 
 // --- LLM Configuration ---
@@ -404,15 +407,15 @@ type LLMConfigRequest struct {
 
 // SystemAgent represents a platform-system agent (Manifest Assistant, etc).
 type SystemAgent struct {
-	ID            string         `json:"id"`
-	Name          string         `json:"name"`
-	Version       string         `json:"version"`
-	SystemPrompt  string         `json:"system_prompt"`
-	Skills        []SkillRef     `json:"skills"`
-	Model         string         `json:"model"`
-	MaxIterations int            `json:"max_iterations"`
-	MemoryBudgetMB int           `json:"memory_budget_mb"`
-	Status        ResourceStatus `json:"status"`
-	CreatedAt     time.Time      `json:"created_at"`
-	UpdatedAt     time.Time      `json:"updated_at"`
+	ID             string         `json:"id"`
+	Name           string         `json:"name"`
+	Version        string         `json:"version"`
+	SystemPrompt   string         `json:"system_prompt"`
+	Skills         []SkillRef     `json:"skills"`
+	Model          string         `json:"model"`
+	MaxIterations  int            `json:"max_iterations"`
+	MemoryBudgetMB int            `json:"memory_budget_mb"`
+	Status         ResourceStatus `json:"status"`
+	CreatedAt      time.Time      `json:"created_at"`
+	UpdatedAt      time.Time      `json:"updated_at"`
 }

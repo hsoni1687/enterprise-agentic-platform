@@ -51,9 +51,13 @@ export interface SkillManifest {
   status: ResourceStatus;
   published_by: string;
   created_at: string;
+  scope?: "tenant" | "system";
+  visibility?: "private" | "public";
+  team_id?: string;
 }
 
 export interface SkillRef {
+  id?: string;
   name: string;
   version: string;
 }

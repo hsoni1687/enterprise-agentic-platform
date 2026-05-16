@@ -72,6 +72,25 @@ func invoke(t *testing.T, d *dispatch.Dispatcher, skillName, tenantID string, ar
 	return rr
 }
 
+func invokeByID(t *testing.T, d *dispatch.Dispatcher, skillID, tenantID string, args map[string]any) *httptest.ResponseRecorder {
+	t.Helper()
+	req := dispatch.InvokeRequest{
+		SkillID: skillID,
+		Version: "1.0.0",
+		Args:    args,
+		AgentID: "agent-001",
+		TraceID: "trace-abc",
+	}
+	body, _ := json.Marshal(req)
+	r, _ := http.NewRequest(http.MethodPost, "/api/v1/skills/legacy-name/invoke", bytes.NewReader(body))
+	r.Header.Set("X-Tenant-ID", tenantID)
+
+	mux := dispatch.BuildMux(d)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, r)
+	return rr
+}
+
 // --- tests ---
 
 func TestInvokeSkill_HappyPath_ReturnsCompleted(t *testing.T) {
@@ -84,6 +103,17 @@ func TestInvokeSkill_HappyPath_ReturnsCompleted(t *testing.T) {
 	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
 	assert.Equal(t, dispatch.StatusCompleted, resp.Status)
 	assert.Equal(t, "tool-output-ok", resp.Result)
+}
+
+func TestInvokeSkill_PrefersSkillID(t *testing.T) {
+	d, _, _ := newDispatcher(t, readSkill())
+
+	rr := invokeByID(t, d, "skill-001", "tenant-x", map[string]any{"window": "1h"})
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+	var resp dispatch.InvokeResponse
+	require.NoError(t, json.NewDecoder(rr.Body).Decode(&resp))
+	assert.Equal(t, dispatch.StatusCompleted, resp.Status)
 }
 
 func TestInvokeSkill_UnknownSkill_Returns404(t *testing.T) {

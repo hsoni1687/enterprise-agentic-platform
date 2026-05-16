@@ -146,7 +146,9 @@ services:
       - BASH_EXECUTOR_URL=http://bash-executor:8092
       - SANDBOX_MANAGER_URL=http://sandbox-manager:8082
       - KG_SERVICE_URL=http://kg-service:8093
+      - SKILL_CATALOG_URL=http://skill-catalog:8087
     depends_on:
+      - skill-catalog
       - bash-executor
       - sandbox-manager
       - kg-service
@@ -306,6 +308,7 @@ services:
       - TEMPORAL_TASK_QUEUE=default-tenant-agent-queue
       - SANDBOX_MANAGER_URL=http://sandbox-manager:8082/api/v1/execute
       - SKILL_DISPATCHER_URL=http://skill-dispatcher:8085
+      - SKILL_CATALOG_URL=http://skill-catalog:8087
       - TOOL_REGISTRY_URL=http://tool-registry:8086
       - POSTGRES_URL=postgresql://postgres:postgres@postgres:5432/agentplatform?sslmode=disable
     depends_on:
@@ -338,6 +341,7 @@ services:
       - TEMPORAL_TASK_QUEUE=platform-system-agent-queue
       - SANDBOX_MANAGER_URL=http://sandbox-manager:8082/api/v1/execute
       - SKILL_DISPATCHER_URL=http://skill-dispatcher:8085
+      - SKILL_CATALOG_URL=http://skill-catalog:8087
       - TOOL_REGISTRY_URL=http://tool-registry:8086
       - POSTGRES_URL=postgresql://postgres:postgres@postgres:5432/agentplatform?sslmode=disable
       - BEARTYPE_DOOR_DISABLE_CHECKER=1
@@ -502,6 +506,7 @@ services:
         NEXT_PUBLIC_AGENT_REGISTRY_URL: http://localhost:8088
         NEXT_PUBLIC_KG_SERVICE_URL: http://localhost:8093
         NEXT_PUBLIC_LLM_GATEWAY_URL: http://localhost:4000
+        NEXT_PUBLIC_LLM_GATEWAY_KEY: ${LITELLM_MASTER_KEY:-sk-litellm-dev}
         NEXT_PUBLIC_OLLAMA_URL: http://localhost:11434
         NEXT_PUBLIC_TENANT_ID: default-tenant
     container_name: agent-studio

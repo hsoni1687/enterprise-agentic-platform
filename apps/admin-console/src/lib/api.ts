@@ -326,7 +326,10 @@ export const adminApi = {
     published_by?: string;
   }): Promise<any> {
     const response = await request("POST", "/api/v1/admin/system-skills", data);
-    if (!response.ok) throw new Error("Failed to create system skill");
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(text || "Failed to create system skill");
+    }
     return response.json();
   },
 

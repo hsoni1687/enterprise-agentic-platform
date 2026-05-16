@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 
 	"github.com/agent-platform/go-shared/pkg/models"
@@ -10,11 +11,15 @@ import (
 
 var ErrNotFound = errors.New("skill not found")
 var ErrForbidden = errors.New("forbidden: system resource is immutable")
+var ErrConflict = errors.New("skill name and version already exist")
 
 type ListFilter struct {
 	TenantID      string
+	TeamID        string
 	Status        string
 	IncludeSystem bool
+	IncludePublic bool
+	Available     bool
 }
 
 type Store interface {
@@ -59,7 +64,11 @@ func NewInMemoryStore() *InMemoryStore {
 func (s *InMemoryStore) Create(_ context.Context, sk *models.SkillManifest) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.hasNameVersionLocked(sk.Name, sk.Version, "") {
+		return ErrConflict
+	}
 	cp := *sk
+	defaultSkillFields(&cp)
 	s.records[sk.ID] = &cp
 	return nil
 }
@@ -71,7 +80,7 @@ func (s *InMemoryStore) GetByID(_ context.Context, id, tenantID string) (*models
 	if !ok {
 		return nil, ErrNotFound
 	}
-	if sk.Scope == "system" || sk.TenantID == tenantID {
+	if canReadSkill(sk, tenantID, "") {
 		cp := *sk
 		return &cp, nil
 	}
@@ -82,7 +91,7 @@ func (s *InMemoryStore) GetByName(_ context.Context, name, version, tenantID str
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, sk := range s.records {
-		if sk.TenantID == tenantID && sk.Name == name && sk.Version == version {
+		if sk.Name == name && sk.Version == version && canReadSkill(sk, tenantID, "") {
 			cp := *sk
 			return &cp, nil
 		}
@@ -95,14 +104,8 @@ func (s *InMemoryStore) List(_ context.Context, f ListFilter) ([]*models.SkillMa
 	defer s.mu.RUnlock()
 	var out []*models.SkillManifest
 	for _, sk := range s.records {
-		if f.IncludeSystem {
-			if sk.TenantID != f.TenantID && sk.Scope != "system" {
-				continue
-			}
-		} else {
-			if sk.TenantID != f.TenantID {
-				continue
-			}
+		if !matchesListFilter(sk, f) {
+			continue
 		}
 		if f.Status != "" && string(sk.Status) != f.Status {
 			continue
@@ -123,9 +126,25 @@ func (s *InMemoryStore) Update(_ context.Context, sk *models.SkillManifest) erro
 	if existing.Scope == "system" {
 		return ErrForbidden
 	}
+	if s.hasNameVersionLocked(sk.Name, sk.Version, sk.ID) {
+		return ErrConflict
+	}
 	cp := *sk
+	defaultSkillFields(&cp)
 	s.records[sk.ID] = &cp
 	return nil
+}
+
+func (s *InMemoryStore) hasNameVersionLocked(name, version, exceptID string) bool {
+	for _, existing := range s.records {
+		if existing.ID == exceptID {
+			continue
+		}
+		if strings.EqualFold(existing.Name, name) && existing.Version == version {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *InMemoryStore) Transition(_ context.Context, id, tenantID string, target models.ResourceStatus, _, _ string) error {
@@ -143,4 +162,49 @@ func (s *InMemoryStore) Transition(_ context.Context, id, tenantID string, targe
 	}
 	sk.Status = target
 	return nil
+}
+
+func defaultSkillFields(sk *models.SkillManifest) {
+	if sk.Scope == "" {
+		sk.Scope = "tenant"
+	}
+	if sk.Visibility == "" {
+		sk.Visibility = "private"
+	}
+}
+
+func canReadSkill(sk *models.SkillManifest, tenantID, teamID string) bool {
+	if sk.Scope == "system" {
+		return true
+	}
+	if sk.Visibility == "public" {
+		return true
+	}
+	if sk.TenantID != tenantID {
+		return false
+	}
+	return sk.TeamID == "" || teamID == "" || sk.TeamID == teamID
+}
+
+func matchesListFilter(sk *models.SkillManifest, f ListFilter) bool {
+	if f.Available {
+		if sk.Scope == "system" && f.IncludeSystem {
+			return true
+		}
+		if sk.Scope == "tenant" && sk.Visibility == "public" && f.IncludePublic {
+			return true
+		}
+		return sk.Scope == "tenant" && sk.TenantID == f.TenantID &&
+			(sk.Visibility != "private" || sk.TeamID == "" || f.TeamID == "" || sk.TeamID == f.TeamID)
+	}
+	if sk.TenantID == f.TenantID {
+		return true
+	}
+	if f.IncludeSystem && sk.Scope == "system" {
+		return true
+	}
+	if f.IncludePublic && sk.Scope == "tenant" && sk.Visibility == "public" {
+		return true
+	}
+	return false
 }

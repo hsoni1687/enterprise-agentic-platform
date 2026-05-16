@@ -13,11 +13,48 @@ import {
   FileText,
   LogOut,
   Server,
-  Wrench,
   Hammer,
   Network,
   BookOpen,
+  Shield,
+  ChevronRight,
+  Bot,
 } from "lucide-react";
+
+const navGroups = [
+  {
+    label: "Overview",
+    items: [
+      { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+      { label: "Tenants", href: "/tenants", icon: Users },
+    ],
+  },
+  {
+    label: "Platform Catalog",
+    items: [
+      { label: "System Agents", href: "/system-agents", icon: Bot },
+      { label: "System Skills", href: "/system-skills", icon: Zap },
+      { label: "System Tools", href: "/system-tools", icon: Hammer },
+      { label: "Knowledge Graphs", href: "/knowledge-graphs", icon: Network },
+      { label: "Cookbooks", href: "/cookbooks", icon: BookOpen },
+    ],
+  },
+  {
+    label: "Infrastructure",
+    items: [
+      { label: "LLM Config", href: "/llm-config", icon: Settings },
+      { label: "MCP Servers", href: "/mcp-servers", icon: Server },
+    ],
+  },
+  {
+    label: "Observability",
+    items: [
+      { label: "Executions", href: "/executions", icon: BarChart3 },
+      { label: "Cost Tracking", href: "/cost", icon: BarChart3 },
+      { label: "Audit Log", href: "/audit", icon: FileText },
+    ],
+  },
+];
 
 export default function AdminLayout({ children }: { children: ReactNode }) {
   const router = useRouter();
@@ -25,9 +62,7 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const key = sessionStorage.getItem("admin_api_key");
-    if (!key) {
-      router.push("/login");
-    }
+    if (!key) router.push("/login");
   }, [router]);
 
   function handleLogout() {
@@ -35,82 +70,87 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
     router.push("/login");
   }
 
-  const navItems = [
-    { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-    { label: "Tenants", href: "/tenants", icon: Users },
-    { label: "LLM Config", href: "/llm-config", icon: Settings },
-    { label: "System Agents", href: "/system-agents", icon: Zap },
-    { label: "System Tools", href: "/system-tools", icon: Hammer },
-    { label: "System Skills", href: "/system-skills", icon: Wrench },
-    { label: "Knowledge Graphs", href: "/knowledge-graphs", icon: Network },
-    { label: "Cookbooks", href: "/cookbooks", icon: BookOpen },
-    { label: "Executions", href: "/executions", icon: BarChart3 },
-    { label: "Cost Tracking", href: "/cost", icon: BarChart3 },
-    { label: "MCP Servers", href: "/mcp-servers", icon: Server },
-    { label: "Audit Log", href: "/audit", icon: FileText },
-  ];
+  const allItems = navGroups.flatMap((g) => g.items);
+  const currentLabel = allItems.find((item) => item.href === pathname)?.label ?? "Admin Console";
 
   return (
-    <div className="flex h-screen bg-background">
+    <div className="flex h-screen overflow-hidden" style={{ background: "hsl(0,0%,9%)" }}>
       {/* Sidebar */}
-      <div className="w-64 border-r border-border bg-card flex flex-col">
+      <aside className="w-60 flex flex-col shrink-0 border-r" style={{ background: "hsl(0,0%,11%)", borderColor: "rgba(255,255,255,0.08)" }}>
         {/* Logo */}
-        <div className="p-6 border-b border-border">
-          <h1 className="text-lg font-bold">Admin Console</h1>
-          <p className="text-xs text-muted-foreground mt-1">
-            A1 Agent Engine
-          </p>
-        </div>
-
-        {/* Navigation */}
-        <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = pathname === item.href;
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={`flex items-center gap-3 px-4 py-2 rounded-md text-sm transition-colors ${
-                  isActive
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:bg-muted"
-                }`}
-              >
-                <Icon className="h-4 w-4" />
-                {item.label}
-              </Link>
-            );
-          })}
-        </nav>
-
-        {/* Logout */}
-        <div className="p-4 border-t border-border">
-          <button
-            onClick={handleLogout}
-            className="w-full flex items-center gap-3 px-4 py-2 rounded-md text-sm text-muted-foreground hover:bg-muted transition-colors"
-          >
-            <LogOut className="h-4 w-4" />
-            Sign Out
-          </button>
-        </div>
-      </div>
-
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Header */}
-        <div className="h-16 border-b border-border bg-card px-6 flex items-center justify-between">
-          <h2 className="text-lg font-semibold">
-            {navItems.find((item) => item.href === pathname)?.label ||
-              "Dashboard"}
-          </h2>
-          <div className="text-xs text-muted-foreground">
-            Logged in as Platform Admin
+        <div className="flex items-center gap-2.5 px-4 py-4 border-b" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
+          <div className="flex h-7 w-7 items-center justify-center rounded-lg" style={{ background: "rgba(139,92,246,0.2)" }}>
+            <Shield className="h-4 w-4 text-violet-400" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-white">Admin Console</p>
+            <p className="text-[10px] text-white/40">Platform Operations</p>
           </div>
         </div>
 
+        {/* Navigation */}
+        <nav className="flex-1 overflow-y-auto px-3 py-3 space-y-4">
+          {navGroups.map((group) => (
+            <div key={group.label}>
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-white/30 px-2 mb-1.5">
+                {group.label}
+              </p>
+              <div className="space-y-0.5">
+                {group.items.map(({ label, href, icon: Icon }) => {
+                  const active = pathname === href;
+                  return (
+                    <Link
+                      key={href}
+                      href={href}
+                      className={`nav-item ${active ? "nav-item-active" : ""}`}
+                    >
+                      <Icon className="h-4 w-4 shrink-0" />
+                      <span className="flex-1 truncate">{label}</span>
+                      {active && <ChevronRight className="h-3 w-3 opacity-50 shrink-0" />}
+                    </Link>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </nav>
+
+        {/* Sign out */}
+        <div className="px-3 py-3 border-t" style={{ borderColor: "rgba(255,255,255,0.08)" }}>
+          <button
+            onClick={handleLogout}
+            className="nav-item w-full"
+          >
+            <LogOut className="h-4 w-4 shrink-0" />
+            Sign Out
+          </button>
+        </div>
+      </aside>
+
+      {/* Main */}
+      <div className="flex flex-col flex-1 overflow-hidden">
+        {/* Topbar */}
+        <header
+          className="flex h-10 shrink-0 items-center justify-between border-b px-6"
+          style={{ background: "hsl(0,0%,11%)", borderColor: "rgba(255,255,255,0.08)" }}
+        >
+          <div className="flex items-center gap-2 text-sm">
+            <span className="text-white/40">Admin</span>
+            <ChevronRight className="h-3 w-3 text-white/20" />
+            <span className="font-medium text-white">{currentLabel}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-white/30">Platform Admin</span>
+            <div className="h-6 w-6 rounded-full bg-violet-500/20 flex items-center justify-center">
+              <Shield className="h-3 w-3 text-violet-400" />
+            </div>
+          </div>
+        </header>
+
         {/* Content */}
-        <div className="flex-1 overflow-y-auto p-6">{children}</div>
+        <main className="flex-1 overflow-y-auto">
+          {children}
+        </main>
       </div>
     </div>
   );

@@ -55,7 +55,7 @@ class AgentToolRegistry:
             logger.error(f"Code execution failed: {e}")
             return f"Error executing code: {e}"
 
-    async def invoke_skill(self, skill_name: str, args: dict) -> str:
+    async def invoke_skill(self, skill_name: str, args: dict, skill_id: str = "") -> str:
         """Invoke a skill via Skill Dispatcher HTTP."""
         logger.info(f"Invoking skill '{skill_name}' for agent {self.context.agent_id}")
         url = os.getenv("SKILL_DISPATCHER_URL", "http://localhost:8085")
@@ -63,7 +63,7 @@ class AgentToolRegistry:
             async with httpx.AsyncClient() as client:
                 resp = await client.post(
                     f"{url}/api/v1/skills/{skill_name}/invoke",
-                    json={"args": args, "agent_id": self.context.agent_id},
+                    json={"args": args, "agent_id": self.context.agent_id, "skill_id": skill_id},
                     headers={"X-Tenant-ID": self.context.tenant_id},
                     timeout=30.0,
                 )
@@ -221,6 +221,7 @@ class AgentToolRegistry:
         # 2. Skills from manifest
         for skill_def in self.context.skills:
             skill_name = skill_def.get("name", "").replace(" ", "-").replace("_", "-").lower()
+            skill_id = skill_def.get("id", "")
             skill_description = skill_def.get("description", f"Execute {skill_name} skill")
 
             # Create inline tool function for this skill with unique name via decorator
@@ -229,6 +230,7 @@ class AgentToolRegistry:
                 ctx: RunContext[Any],
                 args: dict = None,
                 _skill_name: str = skill_name,
+                _skill_id: str = skill_id,
                 _skill_desc: str = skill_description
             ) -> str:
                 """Execute the skill.
@@ -240,7 +242,7 @@ class AgentToolRegistry:
                     Skill execution result
                 """
                 tool_args = args or {}
-                return await registry.invoke_skill(_skill_name, tool_args)
+                return await registry.invoke_skill(_skill_name, tool_args, _skill_id)
 
         # 3. Direct tools (system-injected + manifest-specified)
         all_direct_tools = list(self.context.system_tools) + list(self.context.tools)
@@ -337,13 +339,29 @@ async def build_agent_with_tools(
     if not os.getenv("OPENAI_API_KEY"):
         os.environ["OPENAI_API_KEY"] = os.getenv("LITELLM_MASTER_KEY", "sk-litellm-dev")
 
-    # Let PydanticAI infer and configure the model from environment
-    logger.info(f"[build_agent] Inferring model: openai:{context.model}")
+    # Build PydanticAI model object.
+    # For ollama/* models we route DIRECTLY to Ollama's OpenAI-compatible API
+    # instead of going through LiteLLM, because LiteLLM with a master_key validates
+    # model names against the model_list and may reject dynamically-named Ollama models.
+    model_name = context.model
+    logger.info(f"[build_agent] Resolving model: {model_name}")
     try:
-        model = infer_model(f"openai:{context.model}")
-        logger.info(f"[build_agent] Model inferred successfully")
+        if model_name.startswith("ollama/"):
+            from pydantic_ai.models.openai import OpenAIModel
+            from pydantic_ai.providers.openai import OpenAIProvider
+            ollama_base = os.getenv("OLLAMA_API_BASE", "http://host.docker.internal:11434")
+            bare_name = model_name[len("ollama/"):]  # strip the "ollama/" prefix
+            logger.info(f"[build_agent] Routing {model_name} directly to Ollama at {ollama_base}")
+            provider = OpenAIProvider(
+                base_url=f"{ollama_base}/v1",
+                api_key="ollama",  # Ollama doesn't require a real key
+            )
+            model = OpenAIModel(bare_name, provider=provider)
+        else:
+            model = infer_model(f"openai:{model_name}")
+        logger.info(f"[build_agent] Model resolved successfully")
     except Exception as e:
-        logger.error(f"[build_agent] Failed to infer model: {e}", exc_info=True)
+        logger.error(f"[build_agent] Failed to resolve model: {e}", exc_info=True)
         raise
 
     # Initialize agent with configured model
