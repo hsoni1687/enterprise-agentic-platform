@@ -1,12 +1,14 @@
 package mcpclient
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 )
 
 // AuthConfig represents authentication configuration
@@ -32,6 +34,7 @@ type Client struct {
 	URL        string
 	HTTPClient *http.Client
 	AuthConfig *AuthConfig
+	sessionID  string // Mcp-Session-Id returned by initialize (Streamable HTTP)
 }
 
 // MCPTool represents a tool definition from an MCP server
@@ -49,12 +52,14 @@ type jsonRPCRequest struct {
 	ID      int         `json:"id"`
 }
 
-// jsonRPCResponse is a JSON-RPC 2.0 response
+// jsonRPCResponse is a JSON-RPC 2.0 response.
+// ID is json.RawMessage because servers may send it as an int OR a string
+// (e.g. "server-error") depending on the error path.
 type jsonRPCResponse struct {
 	JSONRPC string                 `json:"jsonrpc"`
 	Result  map[string]interface{} `json:"result"`
 	Error   *jsonRPCError          `json:"error"`
-	ID      int                    `json:"id"`
+	ID      json.RawMessage        `json:"id"`
 }
 
 // jsonRPCError is a JSON-RPC 2.0 error object
@@ -71,12 +76,27 @@ func NewClient(url string) *Client {
 	}
 }
 
+// mcpEndpoint normalises the registered URL so the /mcp/ path is never doubled.
+// Registered URLs may be:
+//   - bare:            http://host:port           → http://host:port/mcp/
+//   - with path:       http://host:port/mcp       → http://host:port/mcp/
+//   - already correct: http://host:port/mcp/      → http://host:port/mcp/
+func (c *Client) mcpEndpoint() string {
+	u := strings.TrimRight(c.URL, "/")
+	if !strings.HasSuffix(u, "/mcp") {
+		u = u + "/mcp"
+	}
+	return u + "/"
+}
+
 // SetAuth sets authentication configuration for the client
 func (c *Client) SetAuth(auth *AuthConfig) {
 	c.AuthConfig = auth
 }
 
-// Initialize sends the initialize request to the MCP server
+// Initialize sends the initialize request to the MCP server.
+// For servers using the Streamable HTTP transport the response includes an
+// Mcp-Session-Id header; subsequent requests must echo it back.
 func (c *Client) Initialize(ctx context.Context) error {
 	req := jsonRPCRequest{
 		JSONRPC: "2.0",
@@ -92,8 +112,14 @@ func (c *Client) Initialize(ctx context.Context) error {
 		ID: 1,
 	}
 
-	_, err := c.send(ctx, req)
-	return err
+	_, sessionID, err := c.sendWithHeaders(ctx, req)
+	if err != nil {
+		return err
+	}
+	if sessionID != "" {
+		c.sessionID = sessionID
+	}
+	return nil
 }
 
 // ListTools returns the list of available tools from the MCP server
@@ -158,18 +184,35 @@ func (c *Client) CallTool(ctx context.Context, name string, args map[string]inte
 	return "", fmt.Errorf("unexpected tool call response format")
 }
 
-// send sends a JSON-RPC 2.0 request and returns the result
+// send sends a JSON-RPC 2.0 request and returns the result.
 func (c *Client) send(ctx context.Context, req jsonRPCRequest) (map[string]interface{}, error) {
+	result, _, err := c.sendWithHeaders(ctx, req)
+	return result, err
+}
+
+// sendWithHeaders sends a JSON-RPC 2.0 request and returns the result plus the
+// Mcp-Session-Id response header (empty string if not present).
+// It supports both the classic HTTP transport (application/json response) and
+// the newer Streamable HTTP / SSE transport (text/event-stream response).
+func (c *Client) sendWithHeaders(ctx context.Context, req jsonRPCRequest) (map[string]interface{}, string, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.URL+"/mcp", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", c.mcpEndpoint(), bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
+	// Accept both classic JSON and SSE (Streamable HTTP) responses so that
+	// servers using either MCP transport variant will work.
 	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "application/json, text/event-stream")
+
+	// Echo session ID back to the server for Streamable HTTP transport.
+	if c.sessionID != "" {
+		httpReq.Header.Set("Mcp-Session-Id", c.sessionID)
+	}
 
 	// Inject authentication headers if configured
 	if c.AuthConfig != nil {
@@ -178,25 +221,67 @@ func (c *Client) send(ctx context.Context, req jsonRPCRequest) (map[string]inter
 
 	httpResp, err := c.HTTPClient.Do(httpReq)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	defer httpResp.Body.Close()
 
+	ct := httpResp.Header.Get("Content-Type")
+	sessionID := httpResp.Header.Get("Mcp-Session-Id")
+
+	// ── SSE / Streamable HTTP transport ──────────────────────────────────────
+	// The server responds with text/event-stream; read the first "data:" line
+	// that contains a complete JSON-RPC response object.
+	if strings.Contains(ct, "text/event-stream") {
+		result, err := c.readSSEResponse(httpResp.Body)
+		return result, sessionID, err
+	}
+
+	// ── Classic JSON transport ────────────────────────────────────────────────
 	respBody, err := io.ReadAll(httpResp.Body)
 	if err != nil {
-		return nil, err
+		return nil, sessionID, err
 	}
 
 	var jsonResp jsonRPCResponse
 	if err := json.Unmarshal(respBody, &jsonResp); err != nil {
-		return nil, err
+		return nil, sessionID, fmt.Errorf("parse MCP response: %w (body: %s)", err, string(respBody))
 	}
 
 	if jsonResp.Error != nil {
-		return nil, fmt.Errorf("MCP error: %s", jsonResp.Error.Message)
+		return nil, sessionID, fmt.Errorf("MCP error: %s", jsonResp.Error.Message)
 	}
 
-	return jsonResp.Result, nil
+	return jsonResp.Result, sessionID, nil
+}
+
+// readSSEResponse reads a text/event-stream body and returns the first
+// JSON-RPC result found in a "data:" line.
+func (c *Client) readSSEResponse(body io.Reader) (map[string]interface{}, error) {
+	scanner := bufio.NewScanner(body)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "" || data == "[DONE]" {
+			continue
+		}
+
+		var jsonResp jsonRPCResponse
+		if err := json.Unmarshal([]byte(data), &jsonResp); err != nil {
+			// Not a JSON-RPC envelope — skip non-JSON lines
+			continue
+		}
+		if jsonResp.Error != nil {
+			return nil, fmt.Errorf("MCP error: %s", jsonResp.Error.Message)
+		}
+		return jsonResp.Result, nil
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("read SSE stream: %w", err)
+	}
+	return nil, fmt.Errorf("no JSON-RPC response found in SSE stream")
 }
 
 // helper to safely convert interface{} to string

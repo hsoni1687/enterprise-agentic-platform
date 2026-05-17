@@ -55,6 +55,7 @@ func main() {
 	mux.HandleFunc("DELETE /api/v1/mcp/servers/{id}", svc.HandleDeleteServer)
 	mux.HandleFunc("GET /api/v1/mcp/servers/{id}/tools", svc.HandleDiscoverTools)
 	mux.HandleFunc("POST /api/v1/mcp/servers/{id}/call", svc.HandleInvokeTool)
+	mux.HandleFunc("POST /api/v1/mcp/servers/{id}/execute", svc.HandleInvokeTool) // alias for UI compat
 
 	addr := fmt.Sprintf(":%s", port)
 	log.Printf("MCP Registry starting on %s", addr)

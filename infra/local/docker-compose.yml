@@ -305,8 +305,10 @@ services:
     environment:
       - TEMPORAL_HOSTPORT=temporal:7233
       - LLM_GATEWAY_URL=http://litellm:4000/v1
+      - LITELLM_URL=http://litellm:4000
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-litellm-dev}
       - OPENAI_API_KEY=${LITELLM_MASTER_KEY:-sk-litellm-dev}
+      - MCP_REGISTRY_URL=http://mcp-registry:8090
       - EMBEDDING_MODEL=local-embedding
       - TEMPORAL_TASK_QUEUE=default-tenant-agent-queue
       - SANDBOX_MANAGER_URL=http://sandbox-manager:8082/api/v1/execute
@@ -338,8 +340,10 @@ services:
     environment:
       - TEMPORAL_HOSTPORT=temporal:7233
       - LLM_GATEWAY_URL=http://litellm:4000/v1
+      - LITELLM_URL=http://litellm:4000
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-litellm-dev}
       - OPENAI_API_KEY=${LITELLM_MASTER_KEY:-sk-litellm-dev}
+      - MCP_REGISTRY_URL=http://mcp-registry:8090
       - EMBEDDING_MODEL=local-embedding
       - TEMPORAL_TASK_QUEUE=platform-system-agent-queue
       - SANDBOX_MANAGER_URL=http://sandbox-manager:8082/api/v1/execute

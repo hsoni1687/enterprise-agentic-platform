@@ -449,6 +449,13 @@ func (s *Service) InvokeTool(ctx context.Context, serverID string, toolName stri
 	if authConfig != nil {
 		client.SetAuth(authConfig)
 	}
+
+	// Initialize the client first so that Streamable HTTP servers can return
+	// a session ID that must be echoed on all subsequent requests.
+	if err := client.Initialize(ctx); err != nil {
+		return "", fmt.Errorf("failed to initialize MCP client: %w", err)
+	}
+
 	result, err := client.CallTool(ctx, toolName, args)
 	if err != nil {
 		return "", fmt.Errorf("failed to invoke tool: %w", err)
@@ -585,16 +592,30 @@ func (s *Service) HandleInvokeTool(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Accept both body shapes:
+	//   new: { "tool_name": "...", "args": {...} }
+	//   old: { "tool": "...",      "input": {...} }
 	var req struct {
 		ToolName string                 `json:"tool_name"`
+		Tool     string                 `json:"tool"`
 		Args     map[string]interface{} `json:"args"`
+		Input    map[string]interface{} `json:"input"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
+	// Normalise: prefer new fields, fall back to old
+	toolName := req.ToolName
+	if toolName == "" {
+		toolName = req.Tool
+	}
+	args := req.Args
+	if args == nil {
+		args = req.Input
+	}
 
-	result, err := s.InvokeTool(r.Context(), serverID, req.ToolName, req.Args)
+	result, err := s.InvokeTool(r.Context(), serverID, toolName, args)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

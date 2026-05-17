@@ -479,10 +479,10 @@ export const mcpApi = {
   executeTool: (serverId: string, toolName: string, input: Record<string, unknown>) =>
     req<{ result: unknown; duration_ms: number; error?: string }>(
       MCP_REGISTRY,
-      `/api/v1/mcp/servers/${serverId}/execute`,
+      `/api/v1/mcp/servers/${serverId}/call`,
       {
         method: "POST",
-        body: JSON.stringify({ tool: toolName, input }),
+        body: JSON.stringify({ tool_name: toolName, args: input }),
       }
     ),
 

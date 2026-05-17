@@ -62,9 +62,10 @@ async def _json_llm_call(model: str, system: str, user: str) -> dict:
 # These run instantly and don't require an LLM call.
 _GUARDRAIL_PATTERNS: dict[str, re.Pattern] = {
     "gr-pii-block": re.compile(
-        r"\b\d{3}-\d{2}-\d{4}\b"                  # SSN
-        r"|(?<!\d)4[0-9]{12}(?:[0-9]{3})?(?!\d)"  # Visa card
-        r"|\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b",  # email
+        r"\b\d{3}-\d{2}-\d{4}\b"                                          # SSN
+        r"|(?<!\d)\d{4}[\s\-]?\d{4}[\s\-]?\d{4}[\s\-]?\d{4}(?!\d)"      # Any 16-digit card (Visa/MC/Discover/etc.)
+        r"|(?<!\d)3[47]\d{2}[\s\-]?\d{6}[\s\-]?\d{5}(?!\d)"             # Amex (15-digit, 4-6-5 groups)
+        r"|\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b",        # email
         re.IGNORECASE,
     ),
     "gr-prompt-injection": re.compile(
@@ -90,9 +91,10 @@ _GUARDRAIL_PATTERNS: dict[str, re.Pattern] = {
 }
 
 _PII_REDACT = re.compile(
-    r"\b\d{3}-\d{2}-\d{4}\b"
-    r"|(?<!\d)4[0-9]{12}(?:[0-9]{3})?(?!\d)"
-    r"|\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b",
+    r"\b\d{3}-\d{2}-\d{4}\b"                                          # SSN
+    r"|(?<!\d)\d{4}[\s\-]?\d{4}[\s\-]?\d{4}[\s\-]?\d{4}(?!\d)"      # Any 16-digit card
+    r"|(?<!\d)3[47]\d{2}[\s\-]?\d{6}[\s\-]?\d{5}(?!\d)"             # Amex (15-digit)
+    r"|\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b",        # email
     re.IGNORECASE,
 )
 _SECRET_REDACT = re.compile(
