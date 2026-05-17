@@ -125,6 +125,22 @@ func main() {
 	mux.Handle("PUT /api/v1/admin/cookbooks/{id}/files", authMiddleware(adminAPIKey, http.HandlerFunc(handler.HandleUpdateCookbookFile)))
 	mux.Handle("POST /api/v1/admin/cookbooks/{id}/import", authMiddleware(adminAPIKey, http.HandlerFunc(handler.HandleImportCookbook)))
 
+	// Platform Guardrails
+	mux.Handle("GET /api/v1/admin/guardrails", authMiddleware(adminAPIKey, http.HandlerFunc(handler.HandleListGuardrails)))
+	mux.Handle("POST /api/v1/admin/guardrails", authMiddleware(adminAPIKey, http.HandlerFunc(handler.HandleCreateGuardrail)))
+	mux.Handle("PUT /api/v1/admin/guardrails/{id}", authMiddleware(adminAPIKey, http.HandlerFunc(handler.HandleUpdateGuardrail)))
+	mux.Handle("POST /api/v1/admin/guardrails/{id}/toggle", authMiddleware(adminAPIKey, http.HandlerFunc(handler.HandleToggleGuardrail)))
+
+	// Platform Hooks
+	mux.Handle("GET /api/v1/admin/hooks", authMiddleware(adminAPIKey, http.HandlerFunc(handler.HandleListHooks)))
+	mux.Handle("POST /api/v1/admin/hooks", authMiddleware(adminAPIKey, http.HandlerFunc(handler.HandleCreateHook)))
+	mux.Handle("PUT /api/v1/admin/hooks/{id}", authMiddleware(adminAPIKey, http.HandlerFunc(handler.HandleUpdateHook)))
+	mux.Handle("POST /api/v1/admin/hooks/{id}/toggle", authMiddleware(adminAPIKey, http.HandlerFunc(handler.HandleToggleHook)))
+
+	// Public read-only catalog (no admin key — used by agent-studio)
+	mux.HandleFunc("GET /api/v1/platform/guardrails", handler.HandlePublicListGuardrails)
+	mux.HandleFunc("GET /api/v1/platform/hooks", handler.HandlePublicListHooks)
+
 	log.Printf("Starting Admin API on :8089 (Admin Key: %s...)", adminAPIKey[:10])
 	if err := http.ListenAndServe(":8089", withCORS(mux)); err != nil {
 		log.Fatalf("Server failed: %v", err)
@@ -135,7 +151,7 @@ func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Admin-Key")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Admin-Key, X-Tenant-ID")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return

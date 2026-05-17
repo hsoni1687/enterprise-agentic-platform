@@ -139,6 +139,128 @@ type TeamManifest struct {
 	CreatedAt            time.Time            `json:"created_at"`
 }
 
+// --- Agent Tiers ---
+
+// AgentTier classifies the execution model of an agent.
+// lite     → single-shot, no Temporal, <2 s target
+// workflow → multi-step static DAG, Temporal durable
+// deep     → autonomous planning + memory, Temporal orchestrated
+type AgentTier string
+
+const (
+	AgentTierLite     AgentTier = "lite"
+	AgentTierWorkflow AgentTier = "workflow"
+	AgentTierDeep     AgentTier = "deep"
+)
+
+// AutonomyLevel describes how much the agent acts without human oversight.
+type AutonomyLevel string
+
+const (
+	AutonomyNone       AutonomyLevel = "none"
+	AutonomySupervised AutonomyLevel = "supervised"
+	AutonomyAutonomous AutonomyLevel = "autonomous"
+)
+
+// ExecutionConfig holds tier-specific runtime constraints. Fields are pointers
+// so callers can distinguish "not set" from "zero". Workflow-tier agents also
+// carry their step DAG here.
+type ExecutionConfig struct {
+	// Common
+	MaxDurationSeconds int     `json:"max_duration_seconds"`
+	MaxToolCalls       *int    `json:"max_tool_calls"` // nil = unlimited
+	MaxTokens          int     `json:"max_tokens"`
+	MaxCostUSD         float64 `json:"max_cost_usd"`
+
+	// Workflow tier
+	Steps          []WorkflowStep `json:"steps,omitempty"`
+	HITLOnMutating bool           `json:"hitl_on_mutating,omitempty"`
+
+	// Deep tier
+	PlanningMode       string `json:"planning_mode,omitempty"`        // "dynamic" | "static" | "none"
+	SelfCorrection     bool   `json:"self_correction,omitempty"`
+	MemoryCrossSession bool   `json:"memory_cross_session,omitempty"`
+	HITLOnUncertainty  bool   `json:"hitl_on_uncertainty,omitempty"`
+}
+
+// WorkflowStep is a single node in a Workflow-tier agent's static execution DAG.
+type WorkflowStep struct {
+	ID          string            `json:"id"`
+	Name        string            `json:"name"`
+	Description string            `json:"description,omitempty"`
+	Type        string            `json:"type"` // "llm" | "tool" | "skill" | "condition" | "approval" | "loop"
+
+	// Tool / Skill steps
+	ToolID       string            `json:"tool_id,omitempty"`
+	SkillID      string            `json:"skill_id,omitempty"`
+	InputMapping map[string]string `json:"input_mapping,omitempty"`
+
+	// Condition steps
+	Condition  string `json:"condition,omitempty"`
+	OnTrue     string `json:"on_true,omitempty"`
+	OnFalse    string `json:"on_false,omitempty"`
+
+	// Approval steps
+	ApprovalMessage        string `json:"approval_message,omitempty"`
+	ApprovalTimeoutSeconds int    `json:"approval_timeout_seconds,omitempty"`
+	OnTimeout              string `json:"on_timeout,omitempty"` // "proceed" | "abort" | "escalate"
+
+	// Retry / ordering
+	RetryOnFailure bool     `json:"retry_on_failure,omitempty"`
+	MaxRetries     int      `json:"max_retries,omitempty"`
+	FallbackStepID string   `json:"fallback_step_id,omitempty"`
+	DependsOn      []string `json:"depends_on,omitempty"`
+	NextStepID     string   `json:"next_step_id,omitempty"`
+}
+
+// TierDefaults returns the canonical ExecutionConfig for a given tier.
+func TierDefaults(tier AgentTier) ExecutionConfig {
+	switch tier {
+	case AgentTierLite:
+		maxCalls := 2
+		return ExecutionConfig{
+			MaxDurationSeconds: 10,
+			MaxToolCalls:       &maxCalls,
+			MaxTokens:          2000,
+			MaxCostUSD:         0.01,
+			PlanningMode:       "none",
+		}
+	case AgentTierWorkflow:
+		maxCalls := 20
+		return ExecutionConfig{
+			MaxDurationSeconds: 300,
+			MaxToolCalls:       &maxCalls,
+			MaxTokens:          10000,
+			MaxCostUSD:         0.10,
+			PlanningMode:       "static",
+			HITLOnMutating:     true,
+		}
+	default: // deep
+		return ExecutionConfig{
+			MaxDurationSeconds: 3600,
+			MaxToolCalls:       nil, // unlimited
+			MaxTokens:          100000,
+			MaxCostUSD:         5.00,
+			PlanningMode:       "dynamic",
+			SelfCorrection:     true,
+			MemoryCrossSession: true,
+			HITLOnMutating:     true,
+		}
+	}
+}
+
+// TierAutonomy returns the default AutonomyLevel for a tier.
+func TierAutonomy(tier AgentTier) AutonomyLevel {
+	switch tier {
+	case AgentTierLite:
+		return AutonomyNone
+	case AgentTierWorkflow:
+		return AutonomySupervised
+	default:
+		return AutonomyAutonomous
+	}
+}
+
 // --- Agent Manifests (updated) ---
 
 // AgentManifest defines the configuration and capabilities of an agent.
@@ -147,6 +269,8 @@ type AgentManifest struct {
 	TenantID       string         `json:"tenant_id"`
 	Name           string         `json:"name"`
 	Version        string         `json:"version"`
+	Description    string         `json:"description,omitempty"`
+	Tags           []string       `json:"tags,omitempty"`
 	SystemPrompt   string         `json:"system_prompt"`
 	Skills         []SkillRef     `json:"skills"`
 	Tools          []ToolRef      `json:"tools,omitempty"`
@@ -155,6 +279,16 @@ type AgentManifest struct {
 	MemoryBudgetMB int            `json:"memory_budget_mb"`
 	MCPServers     []string       `json:"mcp_servers,omitempty"`
 	Status         ResourceStatus `json:"status"`
+
+	// Tier classification (new)
+	Tier            AgentTier       `json:"tier"`
+	AutonomyLevel   AutonomyLevel   `json:"autonomy_level"`
+	ExecutionConfig ExecutionConfig `json:"execution_config"`
+	TemplateID      string          `json:"template_id,omitempty"`
+
+	// Guardrails & hooks selected by the user from the platform catalog
+	GuardrailIDs []string `json:"guardrail_ids,omitempty"`
+	HookIDs      []string `json:"hook_ids,omitempty"`
 }
 
 // SkillDefinition defines a tool-call parameter schema (used in LLM tool-call formatting).

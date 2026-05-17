@@ -48,8 +48,9 @@ async def recall_memories(query: str, agent_id: str, limit: int = 3) -> list[str
     
     # 1. Get Embedding for query via LLM Gateway
     gateway_url = os.getenv("LLM_GATEWAY_URL", "http://localhost:4000/v1")
-    client = AsyncOpenAI(base_url=gateway_url, api_key=get_litellm_api_key())
-    
+    # max_retries=0 → fail immediately on embedding error; Temporal handles retries
+    client = AsyncOpenAI(base_url=gateway_url, api_key=get_litellm_api_key(), max_retries=0)
+
     try:
         resp = await client.embeddings.create(
             input=[query],
@@ -82,8 +83,8 @@ async def store_memory(content: str, agent_id: str, metadata: dict = None) -> bo
     logging.info(f"Storing memory for agent {agent_id}: {content[:50]}...")
     
     gateway_url = os.getenv("LLM_GATEWAY_URL", "http://localhost:4000/v1")
-    client = AsyncOpenAI(base_url=gateway_url, api_key=get_litellm_api_key())
-    
+    client = AsyncOpenAI(base_url=gateway_url, api_key=get_litellm_api_key(), max_retries=0)
+
     try:
         resp = await client.embeddings.create(
             input=[content],

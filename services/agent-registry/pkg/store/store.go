@@ -21,6 +21,7 @@ type AgentRecord struct {
 type ListFilter struct {
 	TenantID string
 	Status   string
+	Tier     string // optional: "lite" | "workflow" | "deep"
 }
 
 type Store interface {

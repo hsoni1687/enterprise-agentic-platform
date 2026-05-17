@@ -535,3 +535,38 @@ export const kgApi = {
       `/search/nodes?graph_id=${graphId}&node_type=${nodeType}&limit=${limit}`
     ),
 };
+
+// ── Platform catalog (public, no admin key) ───────────────────────────────────
+
+export interface PlatformGuardrail {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  action: "block" | "redact" | "flag";
+  scope: string;
+  admin_managed: boolean;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PlatformHook {
+  id: string;
+  name: string;
+  type: string;
+  description: string;
+  phase: "pre" | "post" | "both";
+  category: string;
+  admin_managed: boolean;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export const platformApi = {
+  listGuardrails: () =>
+    req<PlatformGuardrail[]>(ADMIN_API, "/api/v1/platform/guardrails"),
+  listHooks: () =>
+    req<PlatformHook[]>(ADMIN_API, "/api/v1/platform/hooks"),
+};

@@ -3,16 +3,17 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Copy package files from monorepo root
+# Copy root + workspace package manifests only — npm ci cached unless lockfile changes
 COPY package.json package-lock.json ./
+COPY apps/admin-console/package.json ./apps/admin-console/
 
-# Copy app
-COPY apps/admin-console ./apps/admin-console
-
-# Install dependencies
+# Install all workspace dependencies (cached layer)
 RUN npm ci
 
-# Build app
+# Copy full app source AFTER install so code edits don't bust the install cache
+COPY apps/admin-console ./apps/admin-console
+
+# Build
 WORKDIR /app/apps/admin-console
 RUN npm run build
 

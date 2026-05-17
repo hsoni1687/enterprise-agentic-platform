@@ -221,6 +221,9 @@ services:
     environment:
       - TEMPORAL_HOSTPORT=temporal:7233
       - AGENT_REGISTRY_URL=http://agent-registry:8088
+      - LITELLM_URL=http://litellm:4000
+      - LITELLM_MASTER_KEY=sk-litellm-dev
+      - SKILL_CATALOG_URL=http://skill-catalog:8087
     depends_on:
       - temporal
       - agent-registry
@@ -509,6 +512,7 @@ services:
         NEXT_PUBLIC_LLM_GATEWAY_KEY: ${LITELLM_MASTER_KEY:-sk-litellm-dev}
         NEXT_PUBLIC_OLLAMA_URL: http://localhost:11434
         NEXT_PUBLIC_TENANT_ID: default-tenant
+        NEXT_PUBLIC_ADMIN_API_URL: http://localhost:8089
     container_name: agent-studio
     ports:
       - "3000:3000"

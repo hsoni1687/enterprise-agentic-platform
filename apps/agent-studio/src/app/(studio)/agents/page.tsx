@@ -13,9 +13,9 @@ import {
   AlertTriangle, Ban, EyeOff,
 } from "lucide-react";
 import Link from "next/link";
-import { agentsApi, skillsApi, toolsApi, modelsApi, mcpApi, ModelInfo } from "@/lib/api";
+import { agentsApi, skillsApi, toolsApi, modelsApi, mcpApi, platformApi, ModelInfo, PlatformGuardrail, PlatformHook } from "@/lib/api";
 import { ManifestAssistantPanel, AssistantDraft } from "@/components/manifest-assistant-panel";
-import { AgentRecord, SkillManifest, ToolSpec, MCPServer } from "@/lib/types";
+import { AgentRecord, SkillManifest, ToolSpec, MCPServer, AgentTier, TIER_DEFAULTS, TIER_AUTONOMY } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -56,20 +56,8 @@ type AgentForm = z.infer<typeof agentSchema>;
 
 // ── Static catalog items (no backend yet for guardrails/hooks on agent) ───────
 
-const GUARDRAIL_OPTIONS = [
-  { id: "gr-pii-block", name: "PII Detection", description: "Redact SSN, cards, phones", action: "redact" as const, admin_managed: true },
-  { id: "gr-prompt-injection", name: "Prompt Injection Guard", description: "Block injection attempts", action: "block" as const, admin_managed: true },
-  { id: "gr-toxic-content", name: "Toxic Content Filter", description: "Block harmful output", action: "block" as const, admin_managed: true },
-  { id: "gr-secret-leak", name: "Secret Leakage Prevention", description: "Redact API keys and tokens", action: "redact" as const, admin_managed: true },
-  { id: "gr-off-topic", name: "Off-Topic Deflection", description: "Flag out-of-scope responses", action: "flag" as const, admin_managed: false },
-];
-
-const HOOK_OPTIONS = [
-  { id: "hook-audit-log", type: "audit_log", name: "Audit Log", description: "Record every invocation", phase: "both", icon: Activity },
-  { id: "hook-cost-meter", type: "cost_meter", name: "Cost Meter", description: "Track token usage & cost", phase: "post", icon: DollarSign },
-  { id: "hook-hitl", type: "hitl_intercept", name: "HITL Intercept", description: "Pause for human approval on mutating skills", phase: "pre", icon: UserCheck },
-  { id: "hook-rate-limit", type: "rate_limit", name: "Rate Limiter", description: "Enforce invocation rate limits", phase: "pre", icon: Clock },
-];
+// Guardrails and hooks are loaded from the platform catalog API (not hardcoded).
+// Admin-created items show a badge but are fully toggleable — nothing is forced.
 
 const ACTION_ICON: Record<string, typeof Ban> = { block: Ban, redact: EyeOff, flag: AlertTriangle };
 const ACTION_COLOR: Record<string, string> = {
@@ -493,11 +481,15 @@ function StepSafety({
   onToggleGuardrail,
   selectedHooks,
   onToggleHook,
+  catalogGuardrails,
+  catalogHooks,
 }: {
   selectedGuardrails: string[];
   onToggleGuardrail: (id: string) => void;
   selectedHooks: string[];
   onToggleHook: (id: string) => void;
+  catalogGuardrails: PlatformGuardrail[];
+  catalogHooks: PlatformHook[];
 }) {
   const guardrailSet = new Set(selectedGuardrails);
   const hookSet = new Set(selectedHooks);
@@ -509,46 +501,52 @@ function StepSafety({
         <div>
           <p className="text-sm font-semibold mb-0.5">Guardrails</p>
           <p className="text-xs text-muted-foreground">
-            Enforcement gates that inspect, block, or redact agent inputs and outputs.
-            Admin-managed guardrails are always on.
+            Choose which enforcement gates to attach to this agent. Toggle any on or off — nothing is forced.
           </p>
         </div>
-        <div className="space-y-2">
-          {GUARDRAIL_OPTIONS.map((gr) => {
-            const ActionIcon = ACTION_ICON[gr.action] ?? AlertTriangle;
-            const selected = guardrailSet.has(gr.id) || gr.admin_managed;
-            return (
-              <div
-                key={gr.id}
-                className={`flex items-center gap-3 rounded-lg border px-3 py-2.5 ${
-                  gr.admin_managed ? "border-violet-500/20 bg-violet-500/5" : selected ? "border-violet-500/40 bg-violet-500/8" : "border-border"
-                }`}
-              >
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    {gr.admin_managed && <Shield className="h-3 w-3 text-violet-400 shrink-0" />}
-                    <p className="text-xs font-medium">{gr.name}</p>
-                    <span className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-medium ${ACTION_COLOR[gr.action]}`}>
-                      <ActionIcon className="h-2.5 w-2.5" />{gr.action}
-                    </span>
-                    {gr.admin_managed && <Badge variant="outline" className="text-[9px]">Managed</Badge>}
-                  </div>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">{gr.description}</p>
-                </div>
-                <button
-                  type="button"
-                  disabled={gr.admin_managed}
-                  onClick={() => !gr.admin_managed && onToggleGuardrail(gr.id)}
-                  className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
-                    selected ? "bg-violet-500" : "bg-muted"
-                  } ${gr.admin_managed ? "opacity-60 cursor-not-allowed" : "cursor-pointer"}`}
+
+        {catalogGuardrails.length === 0 ? (
+          <p className="text-xs text-muted-foreground border border-dashed rounded-lg px-3 py-4 text-center">
+            No guardrails in catalog yet. Ask your admin to add some.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {catalogGuardrails.map((gr) => {
+              const action = gr.action ?? "flag";
+              const ActionIcon = ACTION_ICON[action] ?? AlertTriangle;
+              const selected = guardrailSet.has(gr.id);
+              return (
+                <div
+                  key={gr.id}
+                  onClick={() => onToggleGuardrail(gr.id)}
+                  className={`flex items-center gap-3 rounded-lg border px-3 py-2.5 cursor-pointer transition-all ${
+                    selected ? "border-violet-500/40 bg-violet-500/8" : "border-border hover:border-muted-foreground/30"
+                  }`}
                 >
-                  <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${selected ? "translate-x-4" : "translate-x-0.5"}`} />
-                </button>
-              </div>
-            );
-          })}
-        </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-xs font-medium">{gr.name}</p>
+                      <span className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-medium ${ACTION_COLOR[action]}`}>
+                        <ActionIcon className="h-2.5 w-2.5" />{action}
+                      </span>
+                      {gr.admin_managed && (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">admin</span>
+                      )}
+                    </div>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">{gr.description}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); onToggleGuardrail(gr.id); }}
+                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors ${selected ? "bg-violet-500" : "bg-muted"}`}
+                  >
+                    <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${selected ? "translate-x-4" : "translate-x-0.5"}`} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       <Separator />
@@ -558,43 +556,56 @@ function StepSafety({
         <div>
           <p className="text-sm font-semibold mb-0.5">Hooks</p>
           <p className="text-xs text-muted-foreground">
-            Lifecycle hooks run before/after every skill execution. They are observational — guardrails enforce; hooks observe.
+            Lifecycle hooks run before/after skill execution. Guardrails enforce; hooks observe and extend.
           </p>
         </div>
-        <div className="space-y-2">
-          {HOOK_OPTIONS.map((hook) => {
-            const Icon = hook.icon;
-            const selected = hookSet.has(hook.id);
-            return (
-              <div
-                key={hook.id}
-                className={`flex items-center gap-3 rounded-lg border px-3 py-2.5 transition-all ${
-                  selected ? "border-violet-500/40 bg-violet-500/8" : "border-border"
-                }`}
-              >
-                <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${selected ? "bg-violet-500/20" : "bg-muted"}`}>
-                  <Icon className={`h-3.5 w-3.5 ${selected ? "text-violet-400" : "text-muted-foreground"}`} />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <p className="text-xs font-medium">{hook.name}</p>
-                    <span className={`text-[9px] px-1.5 py-0.5 rounded ${hook.phase === "pre" ? "bg-teal-500/10 text-teal-400" : hook.phase === "post" ? "bg-purple-500/10 text-purple-400" : "bg-blue-500/10 text-blue-400"}`}>
-                      {hook.phase}
-                    </span>
-                  </div>
-                  <p className="text-[10px] text-muted-foreground">{hook.description}</p>
-                </div>
-                <button
-                  type="button"
+
+        {catalogHooks.length === 0 ? (
+          <p className="text-xs text-muted-foreground border border-dashed rounded-lg px-3 py-4 text-center">
+            No hooks in catalog yet. Ask your admin to add some.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {catalogHooks.map((hook) => {
+              const selected = hookSet.has(hook.id);
+              const phase = hook.phase ?? "both";
+              return (
+                <div
+                  key={hook.id}
                   onClick={() => onToggleHook(hook.id)}
-                  className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors ${selected ? "bg-violet-500" : "bg-muted"}`}
+                  className={`flex items-center gap-3 rounded-lg border px-3 py-2.5 cursor-pointer transition-all ${
+                    selected ? "border-violet-500/40 bg-violet-500/8" : "border-border hover:border-muted-foreground/30"
+                  }`}
                 >
-                  <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${selected ? "translate-x-4" : "translate-x-0.5"}`} />
-                </button>
-              </div>
-            );
-          })}
-        </div>
+                  <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${selected ? "bg-violet-500/20" : "bg-muted"}`}>
+                    <Webhook className={`h-3.5 w-3.5 ${selected ? "text-violet-400" : "text-muted-foreground"}`} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-xs font-medium">{hook.name}</p>
+                      <span className={`text-[9px] px-1.5 py-0.5 rounded ${
+                        phase === "pre" ? "bg-teal-500/10 text-teal-400"
+                        : phase === "post" ? "bg-purple-500/10 text-purple-400"
+                        : "bg-blue-500/10 text-blue-400"
+                      }`}>{phase}</span>
+                      {hook.admin_managed && (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">admin</span>
+                      )}
+                    </div>
+                    <p className="text-[10px] text-muted-foreground">{hook.description}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); onToggleHook(hook.id); }}
+                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors ${selected ? "bg-violet-500" : "bg-muted"}`}
+                  >
+                    <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${selected ? "translate-x-4" : "translate-x-0.5"}`} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -605,14 +616,18 @@ function StepReview({
   selectedGuardrails,
   selectedHooks,
   availableMCP,
+  catalogGuardrails,
+  catalogHooks,
 }: {
   form: AgentForm;
   selectedGuardrails: string[];
   selectedHooks: string[];
   availableMCP: MCPServer[];
+  catalogGuardrails: PlatformGuardrail[];
+  catalogHooks: PlatformHook[];
 }) {
-  const enabledGuardrails = GUARDRAIL_OPTIONS.filter((g) => g.admin_managed || selectedGuardrails.includes(g.id));
-  const enabledHooks = HOOK_OPTIONS.filter((h) => selectedHooks.includes(h.id));
+  const enabledGuardrails = catalogGuardrails.filter((g) => selectedGuardrails.includes(g.id));
+  const enabledHooks = catalogHooks.filter((h) => selectedHooks.includes(h.id));
 
   const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
     <div className="rounded-xl border border-border bg-muted/20 p-4 space-y-2">
@@ -703,10 +718,116 @@ function StepReview({
   );
 }
 
+// ── Tier metadata ─────────────────────────────────────────────────────────────
+
+const TIER_META: Record<AgentTier, {
+  label: string;
+  tagline: string;
+  icon: string;
+  color: string;
+  badge: string;
+  examples: string[];
+  speed: number;
+  cost: number;
+  power: number;
+}> = {
+  lite: {
+    label: "Lite Agent",
+    tagline: "Fast, focused, single-purpose",
+    icon: "⚡",
+    color: "border-green-500/40 bg-green-500/5 hover:border-green-500/70",
+    badge: "bg-green-500/10 text-green-400",
+    examples: ["FAQ bot", "API caller", "Notifier", "Validator"],
+    speed: 95, cost: 95, power: 30,
+  },
+  workflow: {
+    label: "Workflow Agent",
+    tagline: "Multi-step, structured, predictable",
+    icon: "🔗",
+    color: "border-blue-500/40 bg-blue-500/5 hover:border-blue-500/70",
+    badge: "bg-blue-500/10 text-blue-400",
+    examples: ["Support router", "Deploy pipeline", "Data enrichment", "Escalation flow"],
+    speed: 55, cost: 60, power: 65,
+  },
+  deep: {
+    label: "Deep Agent",
+    tagline: "Autonomous, reasoning, long-running",
+    icon: "🧠",
+    color: "border-purple-500/40 bg-purple-500/5 hover:border-purple-500/70",
+    badge: "bg-purple-500/10 text-purple-400",
+    examples: ["Researcher", "Autonomous debugger", "Financial analyst", "Investigator"],
+    speed: 20, cost: 25, power: 95,
+  },
+};
+
+function TierBar({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="flex items-center gap-2 text-xs">
+      <span className="w-12 text-muted-foreground shrink-0">{label}</span>
+      <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
+        <div className="h-full bg-primary rounded-full transition-all" style={{ width: `${value}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function TierPicker({ onSelect }: { onSelect: (tier: AgentTier) => void }) {
+  return (
+    <div className="p-6 flex flex-col gap-5">
+      <div>
+        <h2 className="text-lg font-semibold">What are you building?</h2>
+        <p className="text-sm text-muted-foreground mt-1">
+          Choose the agent type that matches your use case. You can change this later.
+        </p>
+      </div>
+      <div className="grid gap-3">
+        {(["lite", "workflow", "deep"] as AgentTier[]).map((tier) => {
+          const meta = TIER_META[tier];
+          return (
+            <button
+              key={tier}
+              type="button"
+              onClick={() => onSelect(tier)}
+              className={`text-left rounded-xl border p-4 transition-all cursor-pointer group ${meta.color}`}
+            >
+              <div className="flex items-start gap-3">
+                <span className="text-2xl mt-0.5">{meta.icon}</span>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-0.5">
+                    <span className="font-semibold text-sm">{meta.label}</span>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${meta.badge}`}>
+                      {tier}
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mb-3">{meta.tagline}</p>
+                  <div className="flex flex-col gap-1.5 mb-3">
+                    <TierBar label="Speed" value={meta.speed} />
+                    <TierBar label="Cost" value={meta.cost} />
+                    <TierBar label="Power" value={meta.power} />
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {meta.examples.map((ex) => (
+                      <span key={ex} className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+                        {ex}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0 mt-1 group-hover:translate-x-0.5 transition-transform" />
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ── CreateAgentSheet (wizard) ─────────────────────────────────────────────────
 
 function CreateAgentSheet({ onCreated }: { onCreated: () => void }) {
   const [open, setOpen] = useState(false);
+  const [tier, setTier] = useState<AgentTier | null>(null);
   const [step, setStep] = useState<StepId>("identity");
   const [showAssistant, setShowAssistant] = useState(false);
 
@@ -751,18 +872,38 @@ function CreateAgentSheet({ onCreated }: { onCreated: () => void }) {
     queryFn: () => mcpApi.listServers(),
     enabled: open,
   });
+  const { data: catalogGuardrailsData } = useQuery({
+    queryKey: ["platform-guardrails"],
+    queryFn: () => platformApi.listGuardrails(),
+    enabled: open,
+  });
+  const { data: catalogHooksData } = useQuery({
+    queryKey: ["platform-hooks"],
+    queryFn: () => platformApi.listHooks(),
+    enabled: open,
+  });
 
   const availableModels = modelsData?.models ?? [];
   const availableSkills = activeSkills ?? [];
   const availableTools = approvedTools ?? [];
   const availableMCP = mcpData?.servers ?? [];
+  const catalogGuardrails = catalogGuardrailsData ?? [];
+  const catalogHooks = catalogHooksData ?? [];
 
   const mutation = useMutation({
     mutationFn: (data: AgentForm) =>
-      agentsApi.create({ ...data, mcp_servers: selectedMCPServers }),
+      agentsApi.create({
+        ...data,
+        mcp_servers: selectedMCPServers,
+        // Tier fields
+        tier: tier ?? "deep",
+        autonomy_level: TIER_AUTONOMY[tier ?? "deep"],
+        execution_config: TIER_DEFAULTS[tier ?? "deep"] as import("@/lib/types").ExecutionConfig,
+      }),
     onSuccess: () => {
       reset();
       setStep("identity");
+      setTier(null);
       setSelectedGuardrails([]);
       setSelectedHooks(["hook-audit-log"]);
       setSelectedMCPServers([]);
@@ -820,7 +961,16 @@ function CreateAgentSheet({ onCreated }: { onCreated: () => void }) {
 
   function handleOpenChange(v: boolean) {
     setOpen(v);
-    if (!v) { reset(); setStep("identity"); }
+    if (!v) { reset(); setStep("identity"); setTier(null); }
+  }
+
+  function handleTierSelect(selectedTier: AgentTier) {
+    setTier(selectedTier);
+    // Pre-fill iteration limits based on tier
+    const defaults = TIER_DEFAULTS[selectedTier];
+    if (selectedTier === "lite") setValue("max_iterations", 1);
+    else if (selectedTier === "workflow") setValue("max_iterations", 20);
+    else setValue("max_iterations", 100);
   }
 
   return (
@@ -833,22 +983,49 @@ function CreateAgentSheet({ onCreated }: { onCreated: () => void }) {
       <SheetContent className="sm:max-w-[680px] overflow-hidden flex flex-col p-0">
         {/* Header */}
         <SheetHeader className="border-b border-border px-6 py-3 flex flex-row items-center justify-between shrink-0">
-          <SheetTitle className="text-base font-semibold">Create Agent</SheetTitle>
-          <Button type="button" variant="outline" size="sm" onClick={() => setShowAssistant(!showAssistant)} className="gap-2 h-7 text-xs">
-            <Sparkles size={13} />
-            {showAssistant ? "Hide" : "AI"} Assistant
-          </Button>
+          <div className="flex items-center gap-2">
+            <SheetTitle className="text-base font-semibold">
+              {tier ? `New ${TIER_META[tier].label}` : "Create Agent"}
+            </SheetTitle>
+            {tier && (
+              <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${TIER_META[tier].badge}`}>
+                {TIER_META[tier].icon} {tier}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            {tier && (
+              <Button type="button" variant="ghost" size="sm" onClick={() => setTier(null)} className="h-7 text-xs text-muted-foreground">
+                ← Change type
+              </Button>
+            )}
+            {tier && (
+              <Button type="button" variant="outline" size="sm" onClick={() => setShowAssistant(!showAssistant)} className="gap-2 h-7 text-xs">
+                <Sparkles size={13} />
+                {showAssistant ? "Hide" : "AI"} Assistant
+              </Button>
+            )}
+          </div>
         </SheetHeader>
 
-        {/* Step indicator */}
-        <div className="shrink-0 border-b border-border pb-3">
-          <StepIndicator current={step} />
-        </div>
+        {/* Tier picker OR step indicator */}
+        {!tier ? null : (
+          <div className="shrink-0 border-b border-border pb-3">
+            <StepIndicator current={step} />
+          </div>
+        )}
 
         {/* Content */}
         <div className="flex flex-1 overflow-hidden">
-          {/* Form area */}
-          <form
+          {/* Tier picker — shown when no tier selected yet */}
+          {!tier && (
+            <div className="flex-1 overflow-y-auto">
+              <TierPicker onSelect={handleTierSelect} />
+            </div>
+          )}
+
+          {/* Form area — shown once tier is selected */}
+          {tier && <form
             onSubmit={handleSubmit((d) => mutation.mutate(d))}
             className="flex flex-col flex-1 overflow-hidden"
           >
@@ -885,6 +1062,8 @@ function CreateAgentSheet({ onCreated }: { onCreated: () => void }) {
                   onToggleGuardrail={(id) => setSelectedGuardrails((p) => p.includes(id) ? p.filter((x) => x !== id) : [...p, id])}
                   selectedHooks={selectedHooks}
                   onToggleHook={(id) => setSelectedHooks((p) => p.includes(id) ? p.filter((x) => x !== id) : [...p, id])}
+                  catalogGuardrails={catalogGuardrails}
+                  catalogHooks={catalogHooks}
                 />
               )}
               {step === "review" && (
@@ -893,6 +1072,8 @@ function CreateAgentSheet({ onCreated }: { onCreated: () => void }) {
                   selectedGuardrails={selectedGuardrails}
                   selectedHooks={selectedHooks}
                   availableMCP={availableMCP}
+                  catalogGuardrails={catalogGuardrails}
+                  catalogHooks={catalogHooks}
                 />
               )}
               {mutation.error && <p className="text-xs text-destructive mt-3">{String(mutation.error)}</p>}
@@ -916,10 +1097,10 @@ function CreateAgentSheet({ onCreated }: { onCreated: () => void }) {
                 </Button>
               )}
             </div>
-          </form>
+          </form>}
 
           {/* AI Assistant panel */}
-          {showAssistant && (
+          {tier && showAssistant && (
             <div className="w-64 border-l border-border flex flex-col shrink-0">
               <div className="px-4 py-3 border-b border-border flex items-center gap-2">
                 <Sparkles size={14} className="text-violet-400" />
@@ -1027,6 +1208,11 @@ export default function AgentsPage() {
                     <span className="font-semibold text-sm">{agent.name}</span>
                     <span className="text-xs text-muted-foreground font-mono">v{agent.version}</span>
                     <span className={`status-badge ${STATUS_COLORS[agent.status] ?? ""}`}>{agent.status}</span>
+                    {agent.tier && TIER_META[agent.tier as AgentTier] && (
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${TIER_META[agent.tier as AgentTier].badge}`}>
+                        {TIER_META[agent.tier as AgentTier].icon} {agent.tier}
+                      </span>
+                    )}
                   </div>
                   <p className="text-muted-foreground text-xs mt-1.5 line-clamp-2">{agent.system_prompt}</p>
                   <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground flex-wrap">

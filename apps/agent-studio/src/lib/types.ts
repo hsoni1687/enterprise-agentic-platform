@@ -73,11 +73,93 @@ export interface MCPServer {
   updated_at: string;
 }
 
+// ── Agent Tiers ──────────────────────────────────────────────────────────────
+
+export type AgentTier = "lite" | "workflow" | "deep";
+export type AutonomyLevel = "none" | "supervised" | "autonomous";
+
+export interface ExecutionConfig {
+  max_duration_seconds: number;
+  max_tool_calls: number | null;   // null = unlimited
+  max_tokens: number;
+  max_cost_usd: number;
+  // workflow tier
+  steps?: WorkflowStep[];
+  hitl_on_mutating?: boolean;
+  // deep tier
+  planning_mode?: "none" | "static" | "dynamic";
+  self_correction?: boolean;
+  memory_cross_session?: boolean;
+  hitl_on_uncertainty?: boolean;
+}
+
+export interface WorkflowStep {
+  id: string;
+  name: string;
+  description?: string;
+  type: "llm" | "tool" | "skill" | "condition" | "approval" | "loop";
+  tool_id?: string;
+  skill_id?: string;
+  input_mapping?: Record<string, string>;
+  condition?: string;
+  on_true?: string;
+  on_false?: string;
+  approval_message?: string;
+  approval_timeout_seconds?: number;
+  on_timeout?: "proceed" | "abort" | "escalate";
+  retry_on_failure?: boolean;
+  max_retries?: number;
+  fallback_step_id?: string;
+  depends_on?: string[];
+  next_step_id?: string;
+}
+
+/** Tier-specific defaults used when pre-filling the wizard */
+export const TIER_DEFAULTS: Record<AgentTier, Partial<ExecutionConfig>> = {
+  lite: {
+    max_duration_seconds: 10,
+    max_tool_calls: 2,
+    max_tokens: 2000,
+    max_cost_usd: 0.01,
+    planning_mode: "none",
+  },
+  workflow: {
+    max_duration_seconds: 300,
+    max_tool_calls: 20,
+    max_tokens: 10000,
+    max_cost_usd: 0.10,
+    planning_mode: "static",
+    hitl_on_mutating: true,
+    steps: [],
+  },
+  deep: {
+    max_duration_seconds: 3600,
+    max_tool_calls: null,
+    max_tokens: 100000,
+    max_cost_usd: 5.0,
+    planning_mode: "dynamic",
+    self_correction: true,
+    memory_cross_session: true,
+    hitl_on_mutating: true,
+    hitl_on_uncertainty: false,
+  },
+};
+
+export const TIER_AUTONOMY: Record<AgentTier, AutonomyLevel> = {
+  lite: "none",
+  workflow: "supervised",
+  deep: "autonomous",
+};
+
+// ── Agent Manifest & Record ───────────────────────────────────────────────────
+
 export interface AgentManifest {
   id: string;
   tenant_id: string;
   name: string;
   version: string;
+  description?: string;
+  tags?: string[];
   system_prompt: string;
   skills: SkillRef[];
   tools?: ToolRef[];
@@ -85,6 +167,13 @@ export interface AgentManifest {
   max_iterations: number;
   memory_budget_mb: number;
   mcp_servers?: string[];
+  // Tier (new)
+  tier: AgentTier;
+  autonomy_level: AutonomyLevel;
+  execution_config: ExecutionConfig;
+  template_id?: string;
+  guardrail_ids?: string[];
+  hook_ids?: string[];
 }
 
 export interface AgentRecord {
@@ -92,6 +181,8 @@ export interface AgentRecord {
   tenant_id: string;
   name: string;
   version: string;
+  description?: string;
+  tags?: string[];
   system_prompt: string;
   skills: SkillRef[];
   tools?: ToolRef[];
@@ -101,6 +192,13 @@ export interface AgentRecord {
   mcp_servers?: string[];
   status: ResourceStatus;
   created_at: string;
+  // Tier (new)
+  tier: AgentTier;
+  autonomy_level: AutonomyLevel;
+  execution_config: ExecutionConfig;
+  template_id?: string;
+  guardrail_ids?: string[];
+  hook_ids?: string[];
 }
 
 export interface TransitionRequest {

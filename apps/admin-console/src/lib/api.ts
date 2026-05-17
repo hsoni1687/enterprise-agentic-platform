@@ -479,4 +479,86 @@ export const adminApi = {
       throw new Error(`Save failed (${response.status}): ${body}`);
     }
   },
+
+  // ── Platform Guardrails ──────────────────────────────────────────────────────
+
+  async listGuardrails(): Promise<any[]> {
+    const response = await request("GET", "/api/v1/admin/guardrails");
+    if (!response.ok) throw new Error("Failed to fetch guardrails");
+    return response.json();
+  },
+
+  async createGuardrail(data: {
+    name: string;
+    description: string;
+    category: string;
+    action: string;
+    admin_managed: boolean;
+    enabled: boolean;
+  }): Promise<any> {
+    const response = await request("POST", "/api/v1/admin/guardrails", data);
+    if (!response.ok) throw new Error("Failed to create guardrail");
+    return response.json();
+  },
+
+  async updateGuardrail(id: string, data: {
+    name: string;
+    description: string;
+    category: string;
+    action: string;
+    admin_managed: boolean;
+    enabled: boolean;
+  }): Promise<any> {
+    const response = await request("PUT", `/api/v1/admin/guardrails/${id}`, data);
+    if (!response.ok) throw new Error("Failed to update guardrail");
+    return response.json();
+  },
+
+  async toggleGuardrail(id: string): Promise<any> {
+    const response = await request("POST", `/api/v1/admin/guardrails/${id}/toggle`);
+    if (!response.ok) throw new Error("Failed to toggle guardrail");
+    return response.json();
+  },
+
+  // ── Platform Hooks ───────────────────────────────────────────────────────────
+
+  async listHooks(): Promise<any[]> {
+    const response = await request("GET", "/api/v1/admin/hooks");
+    if (!response.ok) throw new Error("Failed to fetch hooks");
+    return response.json();
+  },
+
+  async createHook(data: {
+    name: string;
+    type: string;
+    description: string;
+    phase: string;
+    category: string;
+    admin_managed: boolean;
+    enabled: boolean;
+  }): Promise<any> {
+    const response = await request("POST", "/api/v1/admin/hooks", data);
+    if (!response.ok) throw new Error("Failed to create hook");
+    return response.json();
+  },
+
+  async updateHook(id: string, data: {
+    name: string;
+    type: string;
+    description: string;
+    phase: string;
+    category: string;
+    admin_managed: boolean;
+    enabled: boolean;
+  }): Promise<any> {
+    const response = await request("PUT", `/api/v1/admin/hooks/${id}`, data);
+    if (!response.ok) throw new Error("Failed to update hook");
+    return response.json();
+  },
+
+  async toggleHook(id: string): Promise<any> {
+    const response = await request("POST", `/api/v1/admin/hooks/${id}/toggle`);
+    if (!response.ok) throw new Error("Failed to toggle hook");
+    return response.json();
+  },
 };

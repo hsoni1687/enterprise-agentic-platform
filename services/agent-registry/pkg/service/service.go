@@ -102,6 +102,7 @@ func (h *Handler) handleList(w http.ResponseWriter, r *http.Request) {
 	f := store.ListFilter{
 		TenantID: tid,
 		Status:   r.URL.Query().Get("status"),
+		Tier:     r.URL.Query().Get("tier"),
 	}
 	records, err := h.store.List(r.Context(), f)
 	if err != nil {

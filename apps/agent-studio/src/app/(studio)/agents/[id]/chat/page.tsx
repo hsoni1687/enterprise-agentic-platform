@@ -27,7 +27,7 @@ import { useTenant } from "@/contexts/tenant-context";
 
 const API_GATEWAY = process.env.NEXT_PUBLIC_API_GATEWAY_URL ?? "http://localhost:8080";
 const WORKFLOW_INITIATOR = "http://localhost:8081";
-const CHAT_TIMEOUT_MS = 60_000; // 60 s
+const CHAT_TIMEOUT_MS = 120_000; // 120 s — LLM + planning can take 30-60 s on local models
 
 function friendlyError(raw: string): string {
   const r = raw?.toUpperCase?.() ?? "";

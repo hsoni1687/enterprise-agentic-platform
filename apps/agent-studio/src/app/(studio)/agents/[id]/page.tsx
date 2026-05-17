@@ -14,7 +14,7 @@ import {
   Activity, DollarSign, UserCheck, Clock,
   Ban, EyeOff, AlertTriangle, Plus, Minus,
 } from "lucide-react";
-import { agentsApi, skillsApi, toolsApi, modelsApi, mcpApi, ModelInfo } from "@/lib/api";
+import { agentsApi, skillsApi, toolsApi, modelsApi, mcpApi, platformApi, PlatformGuardrail, PlatformHook, ModelInfo } from "@/lib/api";
 import { ManifestAssistantPanel, AssistantDraft } from "@/components/manifest-assistant-panel";
 import { AgentRecord, SkillManifest, ToolSpec, MCPServer } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -46,22 +46,14 @@ const agentSchema = z.object({
 
 type AgentForm = z.infer<typeof agentSchema>;
 
-// ── Static catalogs ───────────────────────────────────────────────────────────
+// ── Hook phase icons (keyed by hook type) ─────────────────────────────────────
 
-const GUARDRAIL_OPTIONS = [
-  { id: "gr-pii-block", name: "PII Detection", description: "Redact SSN, cards, phones", action: "redact" as const, admin_managed: true },
-  { id: "gr-prompt-injection", name: "Prompt Injection Guard", description: "Block injection attempts", action: "block" as const, admin_managed: true },
-  { id: "gr-toxic-content", name: "Toxic Content Filter", description: "Block harmful output", action: "block" as const, admin_managed: true },
-  { id: "gr-secret-leak", name: "Secret Leakage Prevention", description: "Redact API keys and tokens", action: "redact" as const, admin_managed: true },
-  { id: "gr-off-topic", name: "Off-Topic Deflection", description: "Flag out-of-scope responses", action: "flag" as const, admin_managed: false },
-];
-
-const HOOK_OPTIONS = [
-  { id: "hook-audit-log", type: "audit_log", name: "Audit Log", description: "Record every invocation", phase: "both", icon: Activity },
-  { id: "hook-cost-meter", type: "cost_meter", name: "Cost Meter", description: "Track token usage & cost", phase: "post", icon: DollarSign },
-  { id: "hook-hitl", type: "hitl_intercept", name: "HITL Intercept", description: "Pause for human approval on mutating skills", phase: "pre", icon: UserCheck },
-  { id: "hook-rate-limit", type: "rate_limit", name: "Rate Limiter", description: "Enforce invocation rate limits", phase: "pre", icon: Clock },
-];
+const HOOK_ICON: Record<string, typeof Activity> = {
+  audit_log: Activity,
+  cost_meter: DollarSign,
+  hitl_intercept: UserCheck,
+  rate_limit: Clock,
+};
 
 const ACTION_ICON: Record<string, typeof Ban> = { block: Ban, redact: EyeOff, flag: AlertTriangle };
 const ACTION_COLOR: Record<string, string> = {
@@ -397,105 +389,140 @@ function StepToolsMCP({
 
 function StepSafety({
   selectedGuardrails, onToggleGuardrail, selectedHooks, onToggleHook,
+  guardrails, hooks, safetyLoading,
 }: {
   selectedGuardrails: string[];
   onToggleGuardrail: (id: string) => void;
   selectedHooks: string[];
   onToggleHook: (id: string) => void;
+  guardrails: PlatformGuardrail[];
+  hooks: PlatformHook[];
+  safetyLoading: boolean;
 }) {
+  // Every guardrail/hook is a catalog item — user picks which to attach (same model as skills).
+  // admin_managed=true just means "admin created it" — shown as a badge, never locked.
   const guardrailSet = new Set(selectedGuardrails);
   const hookSet = new Set(selectedHooks);
 
+  if (safetyLoading) {
+    return (
+      <div className="space-y-3">
+        {[1,2,3].map((i) => (
+          <div key={i} className="h-14 rounded-lg bg-muted animate-pulse" />
+        ))}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
+      {/* ── Guardrails ── */}
       <div className="space-y-3">
         <div>
           <p className="text-sm font-semibold mb-0.5">Guardrails</p>
-          <p className="text-xs text-muted-foreground">Admin-managed guardrails are always on.</p>
+          <p className="text-xs text-muted-foreground">
+            Choose which enforcement gates this agent should use. Toggle any guardrail on or off — none are forced.
+          </p>
         </div>
-        <div className="space-y-2">
-          {GUARDRAIL_OPTIONS.map((gr) => {
-            const ActionIcon = ACTION_ICON[gr.action] ?? AlertTriangle;
-            const selected = guardrailSet.has(gr.id) || gr.admin_managed;
-            return (
-              <div key={gr.id} className={`flex items-center gap-3 rounded-lg border px-3 py-2.5 ${
-                gr.admin_managed ? "border-violet-500/20 bg-violet-500/5" : selected ? "border-violet-500/40 bg-violet-500/8" : "border-border"
-              }`}>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    {gr.admin_managed && <Shield className="h-3 w-3 text-violet-400 shrink-0" />}
-                    <p className="text-xs font-medium">{gr.name}</p>
-                    <span className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-medium ${ACTION_COLOR[gr.action]}`}>
-                      <ActionIcon className="h-2.5 w-2.5" />{gr.action}
-                    </span>
-                    {gr.admin_managed && <Badge variant="outline" className="text-[9px]">Managed</Badge>}
+
+        {guardrails.length === 0 ? (
+          <p className="text-xs text-muted-foreground py-2">No guardrails in catalog yet. Ask an admin to create some.</p>
+        ) : (
+          <div className="space-y-2">
+            {guardrails.map((gr) => {
+              const ActionIcon = ACTION_ICON[gr.action] ?? AlertTriangle;
+              const selected = guardrailSet.has(gr.id);
+              return (
+                <div key={gr.id} className={`flex items-center gap-3 rounded-lg border px-3 py-2.5 transition-all cursor-pointer ${
+                  selected ? "border-violet-500/40 bg-violet-500/8" : "border-border hover:border-border/80"
+                }`} onClick={() => onToggleGuardrail(gr.id)}>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-xs font-medium">{gr.name}</p>
+                      <span className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-medium ${ACTION_COLOR[gr.action]}`}>
+                        <ActionIcon className="h-2.5 w-2.5" />{gr.action}
+                      </span>
+                      {gr.admin_managed && (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground">admin</span>
+                      )}
+                    </div>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">{gr.description}</p>
                   </div>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">{gr.description}</p>
+                  <button type="button" onClick={(e) => { e.stopPropagation(); onToggleGuardrail(gr.id); }}
+                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors ${selected ? "bg-violet-500" : "bg-muted"}`}>
+                    <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${selected ? "translate-x-4" : "translate-x-0.5"}`} />
+                  </button>
                 </div>
-                <button type="button" disabled={gr.admin_managed} onClick={() => !gr.admin_managed && onToggleGuardrail(gr.id)}
-                  className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
-                    selected ? "bg-violet-500" : "bg-muted"
-                  } ${gr.admin_managed ? "opacity-60 cursor-not-allowed" : "cursor-pointer"}`}
-                >
-                  <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${selected ? "translate-x-4" : "translate-x-0.5"}`} />
-                </button>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       <Separator />
 
+      {/* ── Hooks ── */}
       <div className="space-y-3">
         <div>
           <p className="text-sm font-semibold mb-0.5">Hooks</p>
-          <p className="text-xs text-muted-foreground">Lifecycle hooks run before/after every skill execution.</p>
+          <p className="text-xs text-muted-foreground">
+            Choose lifecycle hooks for this agent. Hooks run before/after skill execution — all optional.
+          </p>
         </div>
-        <div className="space-y-2">
-          {HOOK_OPTIONS.map((hook) => {
-            const Icon = hook.icon;
-            const selected = hookSet.has(hook.id);
-            return (
-              <div key={hook.id} className={`flex items-center gap-3 rounded-lg border px-3 py-2.5 transition-all ${
-                selected ? "border-violet-500/40 bg-violet-500/8" : "border-border"
-              }`}>
-                <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${selected ? "bg-violet-500/20" : "bg-muted"}`}>
-                  <Icon className={`h-3.5 w-3.5 ${selected ? "text-violet-400" : "text-muted-foreground"}`} />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <p className="text-xs font-medium">{hook.name}</p>
-                    <span className={`text-[9px] px-1.5 py-0.5 rounded ${
-                      hook.phase === "pre" ? "bg-teal-500/10 text-teal-400" :
-                      hook.phase === "post" ? "bg-purple-500/10 text-purple-400" :
-                      "bg-blue-500/10 text-blue-400"
-                    }`}>{hook.phase}</span>
+        {hooks.length === 0 ? (
+          <p className="text-xs text-muted-foreground py-2">No hooks in catalog yet. Ask an admin to create some.</p>
+        ) : (
+          <div className="space-y-2">
+            {hooks.map((hook) => {
+              const Icon = HOOK_ICON[hook.type] ?? Activity;
+              const selected = hookSet.has(hook.id);
+              return (
+                <div key={hook.id} className={`flex items-center gap-3 rounded-lg border px-3 py-2.5 transition-all cursor-pointer ${
+                  selected ? "border-violet-500/40 bg-violet-500/8" : "border-border hover:border-border/80"
+                }`} onClick={() => onToggleHook(hook.id)}>
+                  <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${selected ? "bg-violet-500/20" : "bg-muted"}`}>
+                    <Icon className={`h-3.5 w-3.5 ${selected ? "text-violet-400" : "text-muted-foreground"}`} />
                   </div>
-                  <p className="text-[10px] text-muted-foreground">{hook.description}</p>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-xs font-medium">{hook.name}</p>
+                      {hook.admin_managed && (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground">admin</span>
+                      )}
+                      <span className={`text-[9px] px-1.5 py-0.5 rounded ${
+                        hook.phase === "pre" ? "bg-teal-500/10 text-teal-400" :
+                        hook.phase === "post" ? "bg-purple-500/10 text-purple-400" :
+                        "bg-blue-500/10 text-blue-400"
+                      }`}>{hook.phase}</span>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground">{hook.description}</p>
+                  </div>
+                  <button type="button" onClick={(e) => { e.stopPropagation(); onToggleHook(hook.id); }}
+                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors ${selected ? "bg-violet-500" : "bg-muted"}`}
+                  >
+                    <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${selected ? "translate-x-4" : "translate-x-0.5"}`} />
+                  </button>
                 </div>
-                <button type="button" onClick={() => onToggleHook(hook.id)}
-                  className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors ${selected ? "bg-violet-500" : "bg-muted"}`}
-                >
-                  <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${selected ? "translate-x-4" : "translate-x-0.5"}`} />
-                </button>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-function StepReview({ form, selectedGuardrails, selectedHooks, availableMCP }: {
+function StepReview({ form, selectedGuardrails, selectedHooks, availableMCP, guardrails, hooks }: {
   form: AgentForm;
   selectedGuardrails: string[];
   selectedHooks: string[];
   availableMCP: MCPServer[];
+  guardrails: PlatformGuardrail[];
+  hooks: PlatformHook[];
 }) {
-  const enabledGuardrails = GUARDRAIL_OPTIONS.filter((g) => g.admin_managed || selectedGuardrails.includes(g.id));
-  const enabledHooks = HOOK_OPTIONS.filter((h) => selectedHooks.includes(h.id));
+  // Only show what the user explicitly selected — no auto-include of admin items
+  const enabledGuardrails = guardrails.filter((g) => selectedGuardrails.includes(g.id));
+  const enabledHooks = hooks.filter((h) => selectedHooks.includes(h.id));
   const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
     <div className="rounded-xl border border-border bg-muted/20 p-4 space-y-2">
       <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{title}</p>
@@ -615,11 +642,23 @@ function EditAgentSheet({ agent, onUpdated }: { agent: AgentRecord; onUpdated: (
     queryFn: () => mcpApi.listServers(),
     enabled: open,
   });
+  const { data: guardrailsData, isLoading: guardrailsLoading } = useQuery({
+    queryKey: ["platform-guardrails"],
+    queryFn: () => platformApi.listGuardrails(),
+    enabled: open,
+  });
+  const { data: hooksData, isLoading: hooksLoading } = useQuery({
+    queryKey: ["platform-hooks"],
+    queryFn: () => platformApi.listHooks(),
+    enabled: open,
+  });
 
   const availableModels = modelsData?.models ?? [];
   const availableSkills = activeSkills ?? [];
   const availableTools = approvedTools ?? [];
   const availableMCP = mcpData?.servers ?? [];
+  const availableGuardrails = guardrailsData ?? [];
+  const availableHooks = hooksData ?? [];
 
   const mutation = useMutation({
     mutationFn: (data: AgentForm) =>
@@ -708,10 +747,20 @@ function EditAgentSheet({ agent, onUpdated }: { agent: AgentRecord; onUpdated: (
                   onToggleGuardrail={(id) => setSelectedGuardrails((p) => p.includes(id) ? p.filter((x) => x !== id) : [...p, id])}
                   selectedHooks={selectedHooks}
                   onToggleHook={(id) => setSelectedHooks((p) => p.includes(id) ? p.filter((x) => x !== id) : [...p, id])}
+                  guardrails={availableGuardrails}
+                  hooks={availableHooks}
+                  safetyLoading={guardrailsLoading || hooksLoading}
                 />
               )}
               {step === "review" && (
-                <StepReview form={formValues} selectedGuardrails={selectedGuardrails} selectedHooks={selectedHooks} availableMCP={availableMCP} />
+                <StepReview
+                  form={formValues}
+                  selectedGuardrails={selectedGuardrails}
+                  selectedHooks={selectedHooks}
+                  availableMCP={availableMCP}
+                  guardrails={availableGuardrails}
+                  hooks={availableHooks}
+                />
               )}
               {mutation.error && (
                 <p className="text-xs text-destructive mt-3">{String(mutation.error)}</p>
@@ -797,6 +846,16 @@ export default function AgentDetailPage({
     queryKey: ["mcp-servers"],
     queryFn: () => mcpApi.listServers(),
   });
+  const { data: platformGuardrailsData } = useQuery({
+    queryKey: ["platform-guardrails"],
+    queryFn: () => platformApi.listGuardrails(),
+  });
+  const { data: platformHooksData } = useQuery({
+    queryKey: ["platform-hooks"],
+    queryFn: () => platformApi.listHooks(),
+  });
+  const pageGuardrails = platformGuardrailsData ?? [];
+  const pageHooks = platformHooksData ?? [];
 
   const deployMutation = useMutation({
     mutationFn: async () => {
@@ -1017,7 +1076,7 @@ export default function AgentDetailPage({
             <div>
               <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">Guardrails</p>
               <div className="space-y-1.5">
-                {GUARDRAIL_OPTIONS.filter((g) => g.admin_managed).map((g) => {
+                {pageGuardrails.filter((g) => g.admin_managed).map((g) => {
                   const ActionIcon = ACTION_ICON[g.action] ?? AlertTriangle;
                   return (
                     <div key={g.id} className="flex items-center gap-2 rounded border border-violet-500/20 bg-violet-500/5 px-2.5 py-1.5">
@@ -1027,13 +1086,16 @@ export default function AgentDetailPage({
                     </div>
                   );
                 })}
+                {pageGuardrails.filter((g) => g.admin_managed).length === 0 && (
+                  <p className="text-xs text-muted-foreground">None configured</p>
+                )}
               </div>
             </div>
             <div>
               <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">Hooks</p>
               <div className="space-y-1.5">
-                {[HOOK_OPTIONS[0], HOOK_OPTIONS[1]].map((h) => {
-                  const Icon = h.icon;
+                {pageHooks.filter((h) => h.admin_managed).map((h) => {
+                  const Icon = HOOK_ICON[h.type] ?? Activity;
                   return (
                     <div key={h.id} className="flex items-center gap-2 rounded border border-border bg-muted/20 px-2.5 py-1.5">
                       <Icon className="h-3 w-3 text-muted-foreground shrink-0" />
@@ -1046,6 +1108,9 @@ export default function AgentDetailPage({
                     </div>
                   );
                 })}
+                {pageHooks.filter((h) => h.admin_managed).length === 0 && (
+                  <p className="text-xs text-muted-foreground">None configured</p>
+                )}
               </div>
             </div>
           </div>

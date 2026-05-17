@@ -19,6 +19,7 @@ import {
   Shield,
   ChevronRight,
   Bot,
+  Webhook,
 } from "lucide-react";
 
 const navGroups = [
@@ -37,6 +38,13 @@ const navGroups = [
       { label: "System Tools", href: "/system-tools", icon: Hammer },
       { label: "Knowledge Graphs", href: "/knowledge-graphs", icon: Network },
       { label: "Cookbooks", href: "/cookbooks", icon: BookOpen },
+    ],
+  },
+  {
+    label: "Governance",
+    items: [
+      { label: "Guardrails", href: "/guardrails", icon: Shield },
+      { label: "Hooks", href: "/hooks", icon: Webhook },
     ],
   },
   {

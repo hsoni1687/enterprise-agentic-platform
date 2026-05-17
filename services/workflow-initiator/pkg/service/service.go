@@ -95,8 +95,11 @@ func SendWorkflowSignal(workflowID, signalName string, payload interface{}) erro
 	return temporalClient.SignalWorkflow(context.Background(), workflowID, "", signalName, payload)
 }
 
-// HandleStartSession dispatches a new AgentWorkflow to Temporal.
-// If the request does not include a manifest, it fetches it from the agent-registry.
+// HandleStartSession dispatches a new agent session.
+// Routing depends on the agent's tier:
+//   - lite     → synchronous LiteLLMHandler (no Temporal)
+//   - workflow → Temporal WorkflowAgentRun
+//   - deep     → Temporal AgentWorkflow (existing orchestrated path)
 func HandleStartSession(w http.ResponseWriter, r *http.Request) {
 	var req models.StartSessionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -107,39 +110,53 @@ func HandleStartSession(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "agent_id is required", http.StatusBadRequest)
 		return
 	}
+
+	log.Printf("[INITIATOR] Received request: agent_id=%s, tenant_id=%s, manifest_provided=%v",
+		req.AgentID, req.TenantID, req.Manifest != nil)
+
+	// Fetch manifest when not supplied by caller
+	if req.Manifest == nil {
+		if manifest := fetchManifest(r.Context(), req.AgentID, req.TenantID); manifest != nil {
+			log.Printf("[INITIATOR] Manifest fetched: model=%s tier=%s", manifest.Model, manifest.Tier)
+			req.Manifest = manifest
+		} else {
+			log.Printf("[INITIATOR] Manifest fetch failed — using defaults")
+		}
+	}
+
+	// ── Tier routing ──────────────────────────────────────────────────────────
+	tier := models.AgentTierDeep
+	if req.Manifest != nil && req.Manifest.Tier != "" {
+		tier = req.Manifest.Tier
+	}
+
+	log.Printf("[INITIATOR] Routing agent_id=%s to tier=%s", req.AgentID, tier)
+
+	switch tier {
+	case models.AgentTierLite:
+		// Synchronous execution — no Temporal, returns inline
+		HandleLiteSession(w, r, req)
+		return
+	case models.AgentTierWorkflow:
+		dispatchTemporalSession(w, req, "WorkflowAgentRun")
+	default: // deep (and any legacy agents without a tier)
+		dispatchTemporalSession(w, req, "AgentWorkflow")
+	}
+}
+
+// dispatchTemporalSession starts a named Temporal workflow and returns its IDs.
+func dispatchTemporalSession(w http.ResponseWriter, req models.StartSessionRequest, workflowType string) {
 	if temporalClient == nil {
 		http.Error(w, "Temporal client not connected", http.StatusServiceUnavailable)
 		return
 	}
 
-	// Fetch manifest from agent-registry when not supplied by caller.
-	log.Printf("[INITIATOR] Received request: agent_id=%s, tenant_id=%s, manifest_provided=%v",
-		req.AgentID, req.TenantID, req.Manifest != nil)
-
-	if req.Manifest == nil {
-		log.Printf("[INITIATOR] Manifest not provided, fetching from registry for agent_id=%s, tenant_id=%s",
-			req.AgentID, req.TenantID)
-		if manifest := fetchManifest(r.Context(), req.AgentID, req.TenantID); manifest != nil {
-			log.Printf("[INITIATOR] Manifest fetched successfully: model=%s, system_prompt_len=%d, max_iterations=%d",
-				manifest.Model, len(manifest.SystemPrompt), manifest.MaxIterations)
-			req.Manifest = manifest
-		} else {
-			log.Printf("[INITIATOR] Failed to fetch manifest, using nil (workflow will use defaults)")
-		}
-	} else {
-		log.Printf("[INITIATOR] Manifest provided in request: model=%s, system_prompt_len=%d",
-			req.Manifest.Model, len(req.Manifest.SystemPrompt))
-	}
-
-	// Use default task queue for all workflows (agent-workers only listens on default-tenant-agent-queue)
 	taskQueue := "default-tenant-agent-queue"
-
 	workflowOptions := client.StartWorkflowOptions{
 		ID:        fmt.Sprintf("agent-wf-%s-%s", req.AgentID, req.SessionID),
 		TaskQueue: taskQueue,
 	}
 
-	// Convert request to map for Temporal serialization to ensure manifest passes through properly
 	reqMap := map[string]interface{}{
 		"agent_id":        req.AgentID,
 		"session_id":      req.SessionID,
@@ -149,22 +166,21 @@ func HandleStartSession(w http.ResponseWriter, r *http.Request) {
 		"context":         req.Context,
 	}
 	if req.Manifest != nil {
-		// Convert manifest struct to map for proper Temporal serialization
 		manifestBytes, _ := json.Marshal(req.Manifest)
 		var manifestMap map[string]interface{}
 		json.Unmarshal(manifestBytes, &manifestMap)
 		reqMap["manifest"] = manifestMap
-		log.Printf("[INITIATOR] Passing manifest to Temporal: model=%s, keys=%d", req.Manifest.Model, len(manifestMap))
+		log.Printf("[INITIATOR] Dispatching %s: model=%s, keys=%d", workflowType, req.Manifest.Model, len(manifestMap))
 	}
 
-	we, err := temporalClient.ExecuteWorkflow(context.Background(), workflowOptions, "AgentWorkflow", reqMap)
+	we, err := temporalClient.ExecuteWorkflow(context.Background(), workflowOptions, workflowType, reqMap)
 	if err != nil {
-		log.Printf("Failed to dispatch workflow: %v", err)
+		log.Printf("Failed to dispatch %s workflow: %v", workflowType, err)
 		http.Error(w, fmt.Sprintf("Failed to dispatch workflow: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	log.Printf("Started workflow: ID=%s, RunID=%s", we.GetID(), we.GetRunID())
+	log.Printf("Started %s: ID=%s, RunID=%s", workflowType, we.GetID(), we.GetRunID())
 
 	resp := models.SessionStatus{
 		WorkflowID: we.GetID(),
@@ -183,6 +199,16 @@ func HandleGetSessionStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "workflow id is required", http.StatusBadRequest)
 		return
 	}
+
+	// Lite sessions are tracked in memory, not Temporal
+	if IsLiteSession(id) {
+		_, status := GetLiteSessionState(id, 0)
+		resp := models.SessionStatus{WorkflowID: id, Status: status}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+		return
+	}
+
 	if temporalClient == nil {
 		http.Error(w, "Temporal client not connected", http.StatusServiceUnavailable)
 		return
@@ -211,6 +237,22 @@ func HandleGetSessionEvents(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "workflow id is required", http.StatusBadRequest)
 		return
 	}
+
+	// Lite session
+	if IsLiteSession(id) {
+		from := 0
+		if s := r.URL.Query().Get("from"); s != "" {
+			fmt.Sscanf(s, "%d", &from)
+		}
+		events, _ := GetLiteSessionState(id, from)
+		if events == nil {
+			events = []models.AgentEvent{}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(events)
+		return
+	}
+
 	if temporalClient == nil {
 		http.Error(w, "Temporal client not connected", http.StatusServiceUnavailable)
 		return
@@ -261,6 +303,22 @@ func HandlePollSession(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "workflow id is required", http.StatusBadRequest)
 		return
 	}
+
+	// ── Lite session: served from in-memory store, no Temporal ───────────────
+	if IsLiteSession(id) {
+		from := 0
+		if s := r.URL.Query().Get("from"); s != "" {
+			fmt.Sscanf(s, "%d", &from)
+		}
+		events, status := GetLiteSessionState(id, from)
+		if events == nil {
+			events = []models.AgentEvent{}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(models.PollResponse{Events: events, Status: status})
+		return
+	}
+
 	if temporalClient == nil {
 		http.Error(w, "Temporal client not connected", http.StatusServiceUnavailable)
 		return

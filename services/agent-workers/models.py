@@ -138,3 +138,83 @@ class MCPToolDefinition(BaseModel):
     def qualified_name(self) -> str:
         """Return the fully-qualified tool name (mcp__server_name__tool_name)."""
         return f"mcp__{self.server_name}__{self.tool_name}"
+
+
+# ─── Orchestration models ─────────────────────────────────────────────────────
+
+
+class Task(BaseModel):
+    """Single atomic task in an execution plan."""
+
+    task_id: str = Field(..., description="Unique task identifier within the plan (e.g. 't1')")
+    description: str = Field(..., description="Human-readable description of what this task does")
+    resource_type: str = Field(
+        ...,
+        description="Type of resource to invoke: tool | skill | mcp | llm | code",
+    )
+    resource_name: str = Field(
+        ...,
+        description="Exact name of the tool/skill/mcp to call, or 'reasoning' for llm type",
+    )
+    resource_args: dict = Field(default_factory=dict, description="Arguments to pass to the resource")
+    preconditions: list[str] = Field(
+        default_factory=list,
+        description="Natural language preconditions that must hold before this task runs",
+    )
+    depends_on: list[str] = Field(
+        default_factory=list,
+        description="task_ids whose successful completion this task depends on",
+    )
+    validation: str = Field(
+        default="",
+        description="How to verify the task succeeded (checked by validate_task_result)",
+    )
+    critical: bool = Field(
+        default=True,
+        description="If True, failure aborts the plan. If False, failure is recorded and execution continues.",
+    )
+
+
+class TaskPlan(BaseModel):
+    """Structured execution plan produced by the planner."""
+
+    tasks: list[Task] = Field(default_factory=list)
+    reasoning: str = Field(default="", description="Planner's explanation of the decomposition")
+
+
+class TaskStatus(str):
+    PENDING = "pending"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    BLOCKED = "blocked"    # dependency failed
+    SKIPPED = "skipped"    # non-critical, recovery decided to skip
+
+
+class TaskResult(BaseModel):
+    """Outcome of executing a single task."""
+
+    task_id: str
+    status: str = Field(default="pending")
+    output: str = Field(default="")
+    error: Optional[str] = None
+    validation_passed: bool = Field(default=True)
+    validation_reason: str = Field(default="")
+    recovery_applied: Optional[str] = None   # retry_with_args | use_alternative | skip | abort
+
+
+class GuardrailResult(BaseModel):
+    """Result of applying guardrails to text."""
+
+    blocked: bool = False
+    block_reason: Optional[str] = None
+    sanitized_text: str = ""
+    violations: list[dict] = Field(default_factory=list)
+
+
+class HookResult(BaseModel):
+    """Result of running lifecycle hooks."""
+
+    blocked: bool = False
+    block_reason: Optional[str] = None
+    modified_args: dict = Field(default_factory=dict)

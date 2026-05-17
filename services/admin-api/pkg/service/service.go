@@ -2194,3 +2194,355 @@ func (h *AdminHandler) httpPost(url string, tenantID string, body []byte) (*http
 	client := &http.Client{Timeout: 30 * time.Second}
 	return client.Do(req)
 }
+
+// ─── Guardrail structs ────────────────────────────────────────────────────────
+
+type Guardrail struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Description  string `json:"description"`
+	Category     string `json:"category"`
+	Action       string `json:"action"`
+	Scope        string `json:"scope"`
+	AdminManaged bool   `json:"admin_managed"`
+	Enabled      bool   `json:"enabled"`
+	CreatedAt    string `json:"created_at"`
+	UpdatedAt    string `json:"updated_at"`
+}
+
+type GuardrailUpsertRequest struct {
+	Name         string `json:"name"`
+	Description  string `json:"description"`
+	Category     string `json:"category"`
+	Action       string `json:"action"`
+	AdminManaged bool   `json:"admin_managed"`
+	Enabled      bool   `json:"enabled"`
+}
+
+// HandleListGuardrails returns all platform guardrails.
+func (h *AdminHandler) HandleListGuardrails(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	rows, err := h.DB.Query(ctx, `
+		SELECT id, name, description, category, action, scope, admin_managed, enabled,
+		       created_at::text, updated_at::text
+		FROM platform_guardrails
+		ORDER BY admin_managed DESC, name
+	`)
+	if err != nil {
+		http.Error(w, `{"error":"db error"}`, http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var guardrails []Guardrail
+	for rows.Next() {
+		var g Guardrail
+		if err := rows.Scan(&g.ID, &g.Name, &g.Description, &g.Category, &g.Action,
+			&g.Scope, &g.AdminManaged, &g.Enabled, &g.CreatedAt, &g.UpdatedAt); err != nil {
+			continue
+		}
+		guardrails = append(guardrails, g)
+	}
+	if guardrails == nil {
+		guardrails = []Guardrail{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(guardrails)
+}
+
+// HandleCreateGuardrail creates a new platform guardrail.
+func (h *AdminHandler) HandleCreateGuardrail(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	var req GuardrailUpsertRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
+		return
+	}
+	if req.Name == "" {
+		http.Error(w, `{"error":"name required"}`, http.StatusBadRequest)
+		return
+	}
+
+	var g Guardrail
+	err := h.DB.QueryRow(ctx, `
+		INSERT INTO platform_guardrails (name, description, category, action, scope, admin_managed, enabled)
+		VALUES ($1, $2, $3, $4, 'platform', $5, $6)
+		RETURNING id, name, description, category, action, scope, admin_managed, enabled,
+		          created_at::text, updated_at::text
+	`, req.Name, req.Description, req.Category, req.Action, req.AdminManaged, req.Enabled,
+	).Scan(&g.ID, &g.Name, &g.Description, &g.Category, &g.Action,
+		&g.Scope, &g.AdminManaged, &g.Enabled, &g.CreatedAt, &g.UpdatedAt)
+	if err != nil {
+		http.Error(w, `{"error":"db error"}`, http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(g)
+}
+
+// HandleUpdateGuardrail updates a platform guardrail.
+func (h *AdminHandler) HandleUpdateGuardrail(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := r.PathValue("id")
+
+	var req GuardrailUpsertRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
+		return
+	}
+
+	var g Guardrail
+	err := h.DB.QueryRow(ctx, `
+		UPDATE platform_guardrails
+		SET name=$1, description=$2, category=$3, action=$4,
+		    admin_managed=$5, enabled=$6, updated_at=NOW()
+		WHERE id=$7
+		RETURNING id, name, description, category, action, scope, admin_managed, enabled,
+		          created_at::text, updated_at::text
+	`, req.Name, req.Description, req.Category, req.Action, req.AdminManaged, req.Enabled, id,
+	).Scan(&g.ID, &g.Name, &g.Description, &g.Category, &g.Action,
+		&g.Scope, &g.AdminManaged, &g.Enabled, &g.CreatedAt, &g.UpdatedAt)
+	if err != nil {
+		http.Error(w, `{"error":"not found or db error"}`, http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(g)
+}
+
+// HandleToggleGuardrail flips the enabled flag for a guardrail.
+func (h *AdminHandler) HandleToggleGuardrail(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := r.PathValue("id")
+
+	var g Guardrail
+	err := h.DB.QueryRow(ctx, `
+		UPDATE platform_guardrails
+		SET enabled = NOT enabled, updated_at = NOW()
+		WHERE id = $1
+		RETURNING id, name, description, category, action, scope, admin_managed, enabled,
+		          created_at::text, updated_at::text
+	`, id).Scan(&g.ID, &g.Name, &g.Description, &g.Category, &g.Action,
+		&g.Scope, &g.AdminManaged, &g.Enabled, &g.CreatedAt, &g.UpdatedAt)
+	if err != nil {
+		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(g)
+}
+
+// ─── Hook structs ─────────────────────────────────────────────────────────────
+
+type PlatformHook struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Type         string `json:"type"`
+	Description  string `json:"description"`
+	Phase        string `json:"phase"`
+	Category     string `json:"category"`
+	AdminManaged bool   `json:"admin_managed"`
+	Enabled      bool   `json:"enabled"`
+	CreatedAt    string `json:"created_at"`
+	UpdatedAt    string `json:"updated_at"`
+}
+
+type HookUpsertRequest struct {
+	Name         string `json:"name"`
+	Type         string `json:"type"`
+	Description  string `json:"description"`
+	Phase        string `json:"phase"`
+	Category     string `json:"category"`
+	AdminManaged bool   `json:"admin_managed"`
+	Enabled      bool   `json:"enabled"`
+}
+
+// HandleListHooks returns all platform hooks.
+func (h *AdminHandler) HandleListHooks(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	rows, err := h.DB.Query(ctx, `
+		SELECT id, name, type, description, phase, category, admin_managed, enabled,
+		       created_at::text, updated_at::text
+		FROM platform_hooks
+		ORDER BY admin_managed DESC, name
+	`)
+	if err != nil {
+		http.Error(w, `{"error":"db error"}`, http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var hooks []PlatformHook
+	for rows.Next() {
+		var hook PlatformHook
+		if err := rows.Scan(&hook.ID, &hook.Name, &hook.Type, &hook.Description,
+			&hook.Phase, &hook.Category, &hook.AdminManaged, &hook.Enabled,
+			&hook.CreatedAt, &hook.UpdatedAt); err != nil {
+			continue
+		}
+		hooks = append(hooks, hook)
+	}
+	if hooks == nil {
+		hooks = []PlatformHook{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(hooks)
+}
+
+// HandleCreateHook creates a new platform hook.
+func (h *AdminHandler) HandleCreateHook(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	var req HookUpsertRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
+		return
+	}
+	if req.Name == "" || req.Type == "" {
+		http.Error(w, `{"error":"name and type required"}`, http.StatusBadRequest)
+		return
+	}
+
+	var hook PlatformHook
+	err := h.DB.QueryRow(ctx, `
+		INSERT INTO platform_hooks (name, type, description, phase, category, admin_managed, enabled)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		RETURNING id, name, type, description, phase, category, admin_managed, enabled,
+		          created_at::text, updated_at::text
+	`, req.Name, req.Type, req.Description, req.Phase, req.Category, req.AdminManaged, req.Enabled,
+	).Scan(&hook.ID, &hook.Name, &hook.Type, &hook.Description,
+		&hook.Phase, &hook.Category, &hook.AdminManaged, &hook.Enabled,
+		&hook.CreatedAt, &hook.UpdatedAt)
+	if err != nil {
+		http.Error(w, `{"error":"db error"}`, http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(hook)
+}
+
+// HandleUpdateHook updates a platform hook.
+func (h *AdminHandler) HandleUpdateHook(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := r.PathValue("id")
+
+	var req HookUpsertRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
+		return
+	}
+
+	var hook PlatformHook
+	err := h.DB.QueryRow(ctx, `
+		UPDATE platform_hooks
+		SET name=$1, type=$2, description=$3, phase=$4, category=$5,
+		    admin_managed=$6, enabled=$7, updated_at=NOW()
+		WHERE id=$8
+		RETURNING id, name, type, description, phase, category, admin_managed, enabled,
+		          created_at::text, updated_at::text
+	`, req.Name, req.Type, req.Description, req.Phase, req.Category,
+		req.AdminManaged, req.Enabled, id,
+	).Scan(&hook.ID, &hook.Name, &hook.Type, &hook.Description,
+		&hook.Phase, &hook.Category, &hook.AdminManaged, &hook.Enabled,
+		&hook.CreatedAt, &hook.UpdatedAt)
+	if err != nil {
+		http.Error(w, `{"error":"not found or db error"}`, http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(hook)
+}
+
+// HandleToggleHook flips the enabled flag for a hook.
+func (h *AdminHandler) HandleToggleHook(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := r.PathValue("id")
+
+	var hook PlatformHook
+	err := h.DB.QueryRow(ctx, `
+		UPDATE platform_hooks
+		SET enabled = NOT enabled, updated_at = NOW()
+		WHERE id = $1
+		RETURNING id, name, type, description, phase, category, admin_managed, enabled,
+		          created_at::text, updated_at::text
+	`, id).Scan(&hook.ID, &hook.Name, &hook.Type, &hook.Description,
+		&hook.Phase, &hook.Category, &hook.AdminManaged, &hook.Enabled,
+		&hook.CreatedAt, &hook.UpdatedAt)
+	if err != nil {
+		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(hook)
+}
+
+// ── Public (no admin-key) read-only catalog endpoints ─────────────────────────
+// Used by agent-studio so tenant users can select guardrails/hooks when creating agents.
+
+// HandlePublicListGuardrails returns all enabled guardrails (no admin key required).
+// admin_managed=true → platform-enforced (read-only for users)
+// admin_managed=false → optional (users can attach/detach)
+func (h *AdminHandler) HandlePublicListGuardrails(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	rows, err := h.DB.Query(ctx, `
+		SELECT id, name, description, category, action, scope, admin_managed, enabled,
+		       created_at::text, updated_at::text
+		FROM platform_guardrails
+		WHERE enabled = true
+		ORDER BY admin_managed DESC, name
+	`)
+	if err != nil {
+		http.Error(w, `{"error":"db error"}`, http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var guardrails []Guardrail
+	for rows.Next() {
+		var g Guardrail
+		if err := rows.Scan(&g.ID, &g.Name, &g.Description, &g.Category, &g.Action,
+			&g.Scope, &g.AdminManaged, &g.Enabled, &g.CreatedAt, &g.UpdatedAt); err != nil {
+			continue
+		}
+		guardrails = append(guardrails, g)
+	}
+	if guardrails == nil {
+		guardrails = []Guardrail{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(guardrails)
+}
+
+// HandlePublicListHooks returns all enabled hooks (no admin key required).
+func (h *AdminHandler) HandlePublicListHooks(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	rows, err := h.DB.Query(ctx, `
+		SELECT id, name, type, description, phase, category, admin_managed, enabled,
+		       created_at::text, updated_at::text
+		FROM platform_hooks
+		WHERE enabled = true
+		ORDER BY admin_managed DESC, name
+	`)
+	if err != nil {
+		http.Error(w, `{"error":"db error"}`, http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var hooks []PlatformHook
+	for rows.Next() {
+		var hook PlatformHook
+		if err := rows.Scan(&hook.ID, &hook.Name, &hook.Type, &hook.Description,
+			&hook.Phase, &hook.Category, &hook.AdminManaged, &hook.Enabled,
+			&hook.CreatedAt, &hook.UpdatedAt); err != nil {
+			continue
+		}
+		hooks = append(hooks, hook)
+	}
+	if hooks == nil {
+		hooks = []PlatformHook{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(hooks)
+}

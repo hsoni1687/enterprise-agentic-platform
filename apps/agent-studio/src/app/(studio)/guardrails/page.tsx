@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Shield, Plus, Play, Loader2, CheckCircle2, XCircle, AlertTriangle,
   Eye, EyeOff, Ban, Filter, ChevronRight, Clock,
 } from "lucide-react";
+import { platformApi } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -51,67 +52,7 @@ interface PlaygroundResult {
   timestamp: string;
 }
 
-// ── Mock data (no backend for guardrails yet) ─────────────────────────────────
-
-const MOCK_RULES: GuardrailRule[] = [
-  {
-    id: "gr-pii-block",
-    name: "PII Detection",
-    description: "Block or redact personally identifiable information including SSN, credit cards, and phone numbers.",
-    scope: "both",
-    action: "redact",
-    pattern: "\\b\\d{3}-\\d{2}-\\d{4}\\b|\\b\\d{16}\\b",
-    enabled: true,
-    admin_managed: true,
-    category: "Privacy",
-    created_at: "2025-01-01T00:00:00Z",
-  },
-  {
-    id: "gr-prompt-injection",
-    name: "Prompt Injection Guard",
-    description: "Detect and block prompt injection attempts targeting the agent's system prompt.",
-    scope: "input",
-    action: "block",
-    enabled: true,
-    admin_managed: true,
-    category: "Security",
-    created_at: "2025-01-01T00:00:00Z",
-  },
-  {
-    id: "gr-toxic-content",
-    name: "Toxic Content Filter",
-    description: "Flag responses containing hateful, violent, or adult content.",
-    scope: "output",
-    action: "block",
-    enabled: true,
-    admin_managed: true,
-    category: "Content Safety",
-    created_at: "2025-01-01T00:00:00Z",
-  },
-  {
-    id: "gr-secret-leak",
-    name: "Secret Leakage Prevention",
-    description: "Redact API keys, tokens, and passwords from agent outputs.",
-    scope: "output",
-    action: "redact",
-    pattern: "(sk-[a-zA-Z0-9]{32,}|ghp_[a-zA-Z0-9]{36,})",
-    enabled: true,
-    admin_managed: true,
-    category: "Security",
-    created_at: "2025-01-01T00:00:00Z",
-  },
-  {
-    id: "gr-off-topic",
-    name: "Off-Topic Deflection",
-    description: "Flag responses outside the agent's configured domain scope.",
-    scope: "both",
-    action: "flag",
-    enabled: false,
-    admin_managed: false,
-    category: "Quality",
-    created_at: "2025-03-15T00:00:00Z",
-  },
-];
+// No static mocks — data is loaded from the platform catalog API.
 
 const ACTION_CONFIG: Record<GuardrailAction, { icon: typeof Shield; label: string; color: string }> = {
   block: { icon: Ban, label: "Block", color: "text-red-400 bg-red-500/10" },
@@ -120,11 +61,18 @@ const ACTION_CONFIG: Record<GuardrailAction, { icon: typeof Shield; label: strin
   pass: { icon: CheckCircle2, label: "Pass", color: "text-green-400 bg-green-500/10" },
 };
 
-const SCOPE_COLORS: Record<GuardrailScope, string> = {
+const SCOPE_COLORS: Record<string, string> = {
   input: "bg-blue-500/10 text-blue-400",
   output: "bg-purple-500/10 text-purple-400",
   both: "bg-teal-500/10 text-teal-400",
+  platform: "bg-teal-500/10 text-teal-400", // platform = applies everywhere (same as both)
 };
+
+// Normalize DB scope to playground scope: "platform" → "both"
+function normalizeScope(s: string): GuardrailScope {
+  if (s === "input" || s === "output" || s === "both") return s;
+  return "both"; // "platform" and any future values default to both
+}
 
 const CATEGORIES = ["All", "Privacy", "Security", "Content Safety", "Quality"];
 
@@ -136,21 +84,82 @@ function simulateGuardrailCheck(input: string, rules: GuardrailRule[]): Playgrou
   let output = input;
   let passed = true;
 
-  const enabledRules = rules.filter((r) => r.enabled && (r.scope === "input" || r.scope === "both"));
+  // Playground mode: run all enabled rules regardless of scope.
+  // Scope is informational metadata; in the sandbox we test the full effect.
+  const enabledRules = rules.filter((r) => r.enabled);
 
   for (const rule of enabledRules) {
-    if (rule.id === "gr-pii-block" && /\b\d{3}-\d{2}-\d{4}\b|\b\d{16}\b/.test(input)) {
-      violations.push({ rule: rule.name, action: rule.action, matched: "PII pattern detected" });
-      if (rule.action === "redact") output = output.replace(/\b\d{3}-\d{2}-\d{4}\b/g, "[REDACTED-SSN]").replace(/\b\d{16}\b/g, "[REDACTED-CARD]");
-      if (rule.action === "block") passed = false;
+    // ── PII Detection ──────────────────────────────────────────────────────────
+    if (rule.id === "gr-pii-block") {
+      const piiPatterns: [RegExp, string, string][] = [
+        [/\b\d{3}-\d{2}-\d{4}\b/g,   "[REDACTED-SSN]",   "SSN pattern"],
+        [/\b\d{16}\b/g,               "[REDACTED-CARD]",  "Credit card number"],
+        [/\b\d{10,11}\b/g,            "[REDACTED-PHONE]", "Phone number"],
+        [/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[REDACTED-EMAIL]", "Email address"],
+      ];
+      for (const [pattern, replacement, matchLabel] of piiPatterns) {
+        if (pattern.test(output)) {
+          violations.push({ rule: rule.name, action: rule.action, matched: matchLabel });
+          if (rule.action === "redact") output = output.replace(pattern, replacement);
+          if (rule.action === "block") { passed = false; break; }
+        }
+      }
     }
-    if (rule.id === "gr-prompt-injection" && /ignore (previous|all) instructions|you are now|forget everything/i.test(input)) {
-      violations.push({ rule: rule.name, action: rule.action, matched: "Prompt injection pattern" });
-      passed = false;
+
+    // ── Prompt Injection ───────────────────────────────────────────────────────
+    if (rule.id === "gr-prompt-injection") {
+      const injectionPattern = /ignore (previous|all) instructions|you are now|forget everything|disregard your|act as|pretend you|jailbreak/i;
+      if (injectionPattern.test(input)) {
+        violations.push({ rule: rule.name, action: rule.action, matched: "Prompt injection pattern detected" });
+        if (rule.action === "block") passed = false;
+      }
     }
-    if (rule.id === "gr-secret-leak" && /(sk-[a-zA-Z0-9]{32,}|ghp_[a-zA-Z0-9]{36,})/.test(input)) {
-      violations.push({ rule: rule.name, action: rule.action, matched: "Secret/token detected" });
-      if (rule.action === "redact") output = output.replace(/(sk-[a-zA-Z0-9]{32,}|ghp_[a-zA-Z0-9]{36,})/g, "[REDACTED-SECRET]");
+
+    // ── Secret / Token Leakage ─────────────────────────────────────────────────
+    if (rule.id === "gr-secret-leak") {
+      const secretPattern = /(sk-[a-zA-Z0-9]{32,}|ghp_[a-zA-Z0-9]{36,}|xoxb-[a-zA-Z0-9-]+|AKIA[0-9A-Z]{16})/g;
+      if (secretPattern.test(output)) {
+        violations.push({ rule: rule.name, action: rule.action, matched: "API key / token detected" });
+        if (rule.action === "redact") output = output.replace(secretPattern, "[REDACTED-SECRET]");
+        if (rule.action === "block") passed = false;
+      }
+    }
+
+    // ── Toxic Content ──────────────────────────────────────────────────────────
+    if (rule.id === "gr-toxic-content") {
+      const toxicPattern = /\b(kill|murder|hate|racist|sexist|violence|abuse|harass)\b/i;
+      if (toxicPattern.test(input)) {
+        violations.push({ rule: rule.name, action: rule.action, matched: "Potentially toxic content" });
+        if (rule.action === "block") passed = false;
+        if (rule.action === "flag") violations[violations.length - 1].matched = "⚑ Flagged for review: toxic content";
+      }
+    }
+
+    // ── Off-Topic Deflection ───────────────────────────────────────────────────
+    if (rule.id === "gr-off-topic") {
+      // Playground: flag if input looks unrelated to business context (heuristic)
+      if (input.length > 20 && /\b(weather|sports|game|movie|recipe|joke|celebrity)\b/i.test(input)) {
+        violations.push({ rule: rule.name, action: rule.action, matched: "⚑ Flagged: possible off-topic query" });
+      }
+    }
+
+    // ── Hallucination Detector ─────────────────────────────────────────────────
+    if (rule.id === "gr-hallucination") {
+      if (/\b(definitely|100%|guaranteed|absolutely certain|no doubt|proven fact)\b/i.test(input)) {
+        violations.push({ rule: rule.name, action: rule.action, matched: "⚑ Flagged: overconfident assertion" });
+      }
+    }
+
+    // ── Custom regex-based rules ───────────────────────────────────────────────
+    if (rule.pattern && rule.id.startsWith("gr-") && !["gr-pii-block","gr-prompt-injection","gr-secret-leak","gr-toxic-content","gr-off-topic","gr-hallucination"].includes(rule.id)) {
+      try {
+        const customRegex = new RegExp(rule.pattern, "gi");
+        if (customRegex.test(output)) {
+          violations.push({ rule: rule.name, action: rule.action, matched: `Pattern /${rule.pattern}/ matched` });
+          if (rule.action === "redact") output = output.replace(new RegExp(rule.pattern, "gi"), "[REDACTED]");
+          if (rule.action === "block") passed = false;
+        }
+      } catch { /* invalid regex — skip */ }
     }
   }
 
@@ -302,12 +311,12 @@ function RuleCard({
           )}
         </div>
         <div className="shrink-0">
+          {/* All rules toggleable — admin_managed = informational badge only */}
           <button
-            onClick={() => !rule.admin_managed && onToggle(rule.id)}
-            disabled={rule.admin_managed}
-            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+            onClick={() => onToggle(rule.id)}
+            className={`relative inline-flex h-5 w-9 cursor-pointer items-center rounded-full transition-colors ${
               rule.enabled ? "bg-green-500" : "bg-muted"
-            } ${rule.admin_managed ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
+            }`}
           >
             <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform ${
               rule.enabled ? "translate-x-4" : "translate-x-0.5"
@@ -437,9 +446,34 @@ function GuardrailPlayground({ rules }: { rules: GuardrailRule[] }) {
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function GuardrailsPage() {
-  const [rules, setRules] = useState<GuardrailRule[]>(MOCK_RULES);
+  const [rules, setRules] = useState<GuardrailRule[]>([]);
+  const [loading, setLoading] = useState(true);
   const [categoryFilter, setCategoryFilter] = useState("All");
 
+  // Load from platform catalog on mount; all guardrails start enabled (as DB says)
+  useEffect(() => {
+    platformApi.listGuardrails()
+      .then((data) => {
+        // Map PlatformGuardrail → GuardrailRule (local state for playground toggling)
+        const mapped: GuardrailRule[] = data.map((g) => ({
+          id: g.id,
+          name: g.name,
+          description: g.description,
+          scope: normalizeScope(g.scope ?? "both"),
+          action: g.action as GuardrailAction,
+          pattern: undefined,
+          enabled: g.enabled,
+          admin_managed: g.admin_managed,
+          category: g.category ?? "General",
+          created_at: g.created_at,
+        }));
+        setRules(mapped);
+      })
+      .catch(() => setRules([]))
+      .finally(() => setLoading(false));
+  }, []);
+
+  // Local toggle — affects playground only, not persisted to DB
   function toggleRule(id: string) {
     setRules((prev) => prev.map((r) => r.id === id ? { ...r, enabled: !r.enabled } : r));
   }
@@ -491,8 +525,8 @@ export default function GuardrailsPage() {
         <div className="flex items-start gap-3 rounded-lg border border-violet-500/20 bg-violet-500/5 p-4">
           <Shield className="h-4 w-4 text-violet-400 shrink-0 mt-0.5" />
           <div className="text-sm">
-            <span className="font-medium text-violet-400">{adminCount} admin-managed rule{adminCount !== 1 ? "s" : ""}</span>
-            <span className="text-muted-foreground"> apply globally to all agents in this tenant and cannot be disabled by tenant users.</span>
+            <span className="font-medium text-violet-400">{adminCount} admin-managed rule{adminCount !== 1 ? "s" : ""} </span>
+            <span className="text-muted-foreground">are available in your catalog — toggle any on/off to test combinations in the playground. Attach the ones you want when configuring individual agents.</span>
           </div>
         </div>
       )}
@@ -522,9 +556,15 @@ export default function GuardrailsPage() {
           </p>
 
           <div className="space-y-3">
-            {filtered.map((rule) => (
-              <RuleCard key={rule.id} rule={rule} onToggle={toggleRule} />
-            ))}
+            {loading ? (
+              [1,2,3].map((i) => <div key={i} className="h-24 rounded-lg bg-muted animate-pulse" />)
+            ) : filtered.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-4">No guardrails found. Use &quot;Add Rule&quot; to create your first one.</p>
+            ) : (
+              filtered.map((rule) => (
+                <RuleCard key={rule.id} rule={rule} onToggle={toggleRule} />
+              ))
+            )}
           </div>
         </div>
 
