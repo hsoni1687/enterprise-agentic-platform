@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"strings"
 	"sync"
 
 	"github.com/pgvector/pgvector-go"
@@ -312,6 +313,25 @@ func (ms *InMemoryStore) SearchNodesByEmbedding(ctx context.Context, tenantID, g
 
 	// In-memory store doesn't support vector search, return empty
 	return []*Node{}, nil
+}
+
+func (ms *InMemoryStore) SearchNodesByKeyword(ctx context.Context, tenantID, graphID, query string, limit int) ([]*Node, error) {
+	ms.mu.RLock()
+	defer ms.mu.RUnlock()
+	var results []*Node
+	q := strings.ToLower(query)
+	for _, n := range ms.nodes {
+		if n.TenantID != tenantID || n.GraphID != graphID {
+			continue
+		}
+		if strings.Contains(strings.ToLower(n.Label), q) {
+			results = append(results, n)
+			if len(results) >= limit {
+				break
+			}
+		}
+	}
+	return results, nil
 }
 
 func (ms *InMemoryStore) UpdateNodeEmbedding(ctx context.Context, tenantID, nodeID string, embedding pgvector.Vector) error {

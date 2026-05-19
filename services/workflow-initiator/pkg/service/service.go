@@ -124,6 +124,15 @@ func HandleStartSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Apply model override if caller requested a specific model
+	if req.ModelOverride != "" {
+		if req.Manifest == nil {
+			req.Manifest = &models.AgentManifest{}
+		}
+		log.Printf("[INITIATOR] Applying model override: %s → %s", req.Manifest.Model, req.ModelOverride)
+		req.Manifest.Model = req.ModelOverride
+	}
+
 	// ── Tier routing ──────────────────────────────────────────────────────────
 	tier := models.AgentTierDeep
 	if req.Manifest != nil && req.Manifest.Tier != "" {

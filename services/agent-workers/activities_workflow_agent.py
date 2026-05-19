@@ -30,6 +30,10 @@ def _mcp_registry_url() -> str:
     return os.getenv("MCP_REGISTRY_URL", "http://mcp-registry:8090")
 
 
+def _kg_service_url() -> str:
+    return os.getenv("KG_SERVICE_URL", "http://kg-service:8093")
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Text-mode tool call parser
 # (for local models that don't emit tool_calls — they write JSON in content)
@@ -228,6 +232,67 @@ async def _call_mcp_tool(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Knowledge Graph context retrieval
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def _fetch_kg_context(
+    query: str,
+    knowledge_graph_ids: list[str],
+    tenant_id: str,
+    top_k: int = 5,
+) -> str:
+    """Semantic search across all attached knowledge graphs.
+
+    Calls kg-service /search/semantic for each attached graph and returns
+    a formatted context block ready to prepend to the system prompt.
+    Returns empty string if no graphs attached or retrieval fails.
+    """
+    if not knowledge_graph_ids:
+        return ""
+
+    url  = _kg_service_url()
+    hdrs = {"Content-Type": "application/json", "X-Tenant-ID": tenant_id or "default-tenant"}
+    chunks: list[str] = []
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            for graph_id in knowledge_graph_ids:
+                try:
+                    resp = await client.post(
+                        f"{url}/search/semantic",
+                        json={"graph_id": graph_id, "query": query, "limit": top_k},
+                        headers=hdrs,
+                    )
+                    if resp.status_code != 200:
+                        activity.logger.warning(
+                            f"[KG] semantic search failed graph={graph_id} status={resp.status_code}"
+                        )
+                        continue
+
+                    results = resp.json().get("results") or resp.json().get("nodes") or []
+                    for node in results:
+                        label = node.get("label", "")
+                        props = node.get("properties", {})
+                        content = props.get("content") or props.get("text") or label
+                        if content:
+                            chunks.append(content)
+
+                    activity.logger.info(
+                        f"[KG] graph={graph_id} returned {len(results)} chunks for query"
+                    )
+                except Exception as exc:
+                    activity.logger.warning(f"[KG] error querying graph={graph_id}: {exc}")
+    except Exception as exc:
+        activity.logger.warning(f"[KG] fetch_kg_context error: {exc}")
+
+    if not chunks:
+        return ""
+
+    context_block = "\n\n".join(f"- {c.strip()}" for c in chunks[:top_k * len(knowledge_graph_ids)])
+    return f"\n\n--- Relevant Knowledge ---\n{context_block}\n--- End Knowledge ---"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # run_single_llm_step
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -239,6 +304,7 @@ async def run_single_llm_step(
     agent_id: str,
     tenant_id: str,
     mcp_servers: list | None = None,
+    knowledge_graph_ids: list | None = None,
 ) -> str:
     """Call LiteLLM with optional MCP tool use and return the final text response.
 
@@ -250,14 +316,19 @@ async def run_single_llm_step(
     """
     activity.logger.info(
         f"[LLM_STEP] agent={agent_id} model={model} "
-        f"prompt_len={len(prompt)} mcp_servers={mcp_servers}"
+        f"prompt_len={len(prompt)} mcp_servers={mcp_servers} "
+        f"knowledge_graphs={knowledge_graph_ids}"
     )
+
+    # ── Fetch KG context (semantic search across attached graphs) ─────────────
+    kg_context = await _fetch_kg_context(prompt, knowledge_graph_ids or [], tenant_id)
+    effective_system_prompt = system_prompt + kg_context
 
     # ── Fetch MCP tools ───────────────────────────────────────────────────────
     tool_defs, tool_server_map = await _fetch_mcp_tools(mcp_servers or [], tenant_id)
 
     messages: list[dict] = [
-        {"role": "system", "content": system_prompt},
+        {"role": "system", "content": effective_system_prompt},
         {"role": "user",   "content": prompt},
     ]
 

@@ -289,6 +289,11 @@ type AgentManifest struct {
 	// Guardrails & hooks selected by the user from the platform catalog
 	GuardrailIDs []string `json:"guardrail_ids,omitempty"`
 	HookIDs      []string `json:"hook_ids,omitempty"`
+
+	// Knowledge graphs attached to this agent — IDs reference kg_graphs.id.
+	// At runtime the Memory Service performs semantic search across all attached
+	// graphs and injects the top-K chunks into the LLM prompt.
+	KnowledgeGraphIDs []string `json:"knowledge_graph_ids,omitempty"`
 }
 
 // SkillDefinition defines a tool-call parameter schema (used in LLM tool-call formatting).
@@ -366,6 +371,7 @@ type StartSessionRequest struct {
 	IdempotencyKey string            `json:"idempotency_key,omitempty"`
 	Context        map[string]string `json:"context"`
 	Manifest       *AgentManifest    `json:"manifest,omitempty"`
+	ModelOverride  string            `json:"model_override,omitempty"` // optional: override the agent's configured model
 }
 
 // AgentEvent is a single observable event emitted by a running agent workflow,
@@ -382,9 +388,11 @@ type AgentEvent struct {
 
 // ChatRequest is the body for POST /api/v1/agents/{id}/chat.
 type ChatRequest struct {
-	Message  string `json:"message"`
-	TenantID string `json:"tenant_id,omitempty"`
+	Message       string `json:"message"`
+	TenantID      string `json:"tenant_id,omitempty"`
+	ModelOverride string `json:"model_override,omitempty"` // optional: override the agent's configured model
 }
+
 
 // StartTeamRequest represents the internal request to start a team Temporal workflow.
 type StartTeamRequest struct {

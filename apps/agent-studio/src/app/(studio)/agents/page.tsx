@@ -10,12 +10,12 @@ import {
   ChevronRight, ChevronLeft, Check, Search,
   Zap, Wrench, Cable, Shield, Webhook, Activity,
   DollarSign, UserCheck, Clock, Circle, CheckCircle2,
-  AlertTriangle, Ban, EyeOff,
+  AlertTriangle, Ban, EyeOff, BookOpen,
 } from "lucide-react";
 import Link from "next/link";
-import { agentsApi, skillsApi, toolsApi, modelsApi, mcpApi, platformApi, ModelInfo, PlatformGuardrail, PlatformHook } from "@/lib/api";
+import { agentsApi, skillsApi, toolsApi, modelsApi, mcpApi, platformApi, kgApi, ModelInfo, PlatformGuardrail, PlatformHook } from "@/lib/api";
 import { ManifestAssistantPanel, AssistantDraft } from "@/components/manifest-assistant-panel";
-import { AgentRecord, SkillManifest, ToolSpec, MCPServer, AgentTier, TIER_DEFAULTS, TIER_AUTONOMY } from "@/lib/types";
+import { AgentRecord, SkillManifest, ToolSpec, MCPServer, AgentTier, TIER_DEFAULTS, TIER_AUTONOMY, KGGraph } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -73,6 +73,7 @@ const STEPS = [
   { id: "behavior",   label: "Behavior",   icon: Sparkles },
   { id: "skills",     label: "Skills",     icon: Zap },
   { id: "tools-mcp",  label: "Tools & MCP",icon: Wrench },
+  { id: "knowledge",  label: "Knowledge",  icon: BookOpen },
   { id: "safety",     label: "Safety",     icon: Shield },
   { id: "review",     label: "Review",     icon: CheckCircle2 },
 ] as const;
@@ -476,6 +477,91 @@ function StepToolsMCP({
   );
 }
 
+function StepKnowledge({
+  selectedKGs,
+  onToggleKG,
+  availableGraphs,
+  kgLoading,
+}: {
+  selectedKGs: string[];
+  onToggleKG: (id: string) => void;
+  availableGraphs: KGGraph[];
+  kgLoading: boolean;
+}) {
+  const selectedSet = new Set(selectedKGs);
+  return (
+    <div className="space-y-4">
+      <div>
+        <p className="text-sm font-semibold mb-0.5">Knowledge Graphs</p>
+        <p className="text-xs text-muted-foreground">
+          Attached graphs are semantically searched at runtime — relevant chunks are injected into the agent's context automatically.
+        </p>
+      </div>
+
+      {selectedKGs.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {selectedKGs.map((id) => {
+            const g = availableGraphs.find((x) => x.id === id);
+            return (
+              <span key={id} className="inline-flex items-center gap-1.5 rounded-full border border-violet-500/30 bg-violet-500/10 px-2.5 py-1 text-xs font-medium text-violet-400">
+                {g?.name ?? id}
+                <button type="button" onClick={() => onToggleKG(id)} className="hover:text-white transition-colors">×</button>
+              </span>
+            );
+          })}
+        </div>
+      )}
+
+      {kgLoading && <p className="text-xs text-muted-foreground">Loading knowledge graphs…</p>}
+      {!kgLoading && availableGraphs.length === 0 && (
+        <div className="rounded-lg border border-dashed border-border p-6 text-center">
+          <BookOpen className="h-6 w-6 text-muted-foreground mx-auto mb-2" />
+          <p className="text-xs text-muted-foreground">No knowledge graphs available.</p>
+          <p className="text-[10px] text-muted-foreground mt-0.5">
+            Create one under <span className="font-medium">Connect → Knowledge Graphs</span>.
+          </p>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 gap-2 max-h-72 overflow-y-auto pr-1">
+        {availableGraphs.map((graph) => {
+          const selected = selectedSet.has(graph.id);
+          return (
+            <button
+              key={graph.id}
+              type="button"
+              onClick={() => onToggleKG(graph.id)}
+              className={`text-left rounded-lg border px-3 py-2.5 transition-all ${
+                selected
+                  ? "border-violet-500/50 bg-violet-500/10"
+                  : "border-border hover:border-violet-500/30 hover:bg-muted/30"
+              }`}
+            >
+              <div className="flex items-center gap-2.5">
+                <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded ${
+                  selected ? "bg-violet-500 text-white" : "bg-muted text-muted-foreground"
+                }`}>
+                  {selected ? <Check className="h-3.5 w-3.5" /> : <BookOpen className="h-3.5 w-3.5" />}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-medium">{graph.name}</p>
+                  {graph.description && (
+                    <p className="text-[10px] text-muted-foreground truncate">{graph.description}</p>
+                  )}
+                  {graph.domain && (
+                    <p className="text-[10px] text-muted-foreground">Domain: {graph.domain}</p>
+                  )}
+                </div>
+                <Badge variant="outline" className="text-[10px] shrink-0 capitalize">{graph.scope}</Badge>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function StepSafety({
   selectedGuardrails,
   onToggleGuardrail,
@@ -618,6 +704,8 @@ function StepReview({
   availableMCP,
   catalogGuardrails,
   catalogHooks,
+  selectedKGs,
+  availableGraphs,
 }: {
   form: AgentForm;
   selectedGuardrails: string[];
@@ -625,9 +713,12 @@ function StepReview({
   availableMCP: MCPServer[];
   catalogGuardrails: PlatformGuardrail[];
   catalogHooks: PlatformHook[];
+  selectedKGs: string[];
+  availableGraphs: KGGraph[];
 }) {
   const enabledGuardrails = catalogGuardrails.filter((g) => selectedGuardrails.includes(g.id));
   const enabledHooks = catalogHooks.filter((h) => selectedHooks.includes(h.id));
+  const attachedGraphs = availableGraphs.filter((g) => selectedKGs.includes(g.id));
 
   const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
     <div className="rounded-xl border border-border bg-muted/20 p-4 space-y-2">
@@ -694,6 +785,15 @@ function StepReview({
           }
         </Section>
       </div>
+
+      <Section title={`Knowledge Graphs (${attachedGraphs.length})`}>
+        {attachedGraphs.length === 0
+          ? <p className="text-xs text-muted-foreground">No knowledge graphs attached</p>
+          : <div className="flex flex-wrap gap-1">{attachedGraphs.map((g) => (
+              <span key={g.id} className="text-xs bg-muted rounded px-2 py-0.5">{g.name}</span>
+            ))}</div>
+        }
+      </Section>
 
       <div className="grid grid-cols-2 gap-3">
         <Section title={`Guardrails (${enabledGuardrails.length})`}>
@@ -835,6 +935,7 @@ function CreateAgentSheet({ onCreated }: { onCreated: () => void }) {
   const [selectedGuardrails, setSelectedGuardrails] = useState<string[]>([]);
   const [selectedHooks, setSelectedHooks] = useState<string[]>(["hook-audit-log"]);
   const [selectedMCPServers, setSelectedMCPServers] = useState<string[]>([]);
+  const [selectedKGs, setSelectedKGs] = useState<string[]>([]);
 
   const { register, handleSubmit, reset, control, setValue, watch, formState: { errors } } = useForm<AgentForm>({
     resolver: zodResolver(agentSchema),
@@ -882,6 +983,11 @@ function CreateAgentSheet({ onCreated }: { onCreated: () => void }) {
     queryFn: () => platformApi.listHooks(),
     enabled: open,
   });
+  const { data: kgData, isLoading: kgLoading } = useQuery({
+    queryKey: ["knowledge-graphs"],
+    queryFn: () => kgApi.listGraphs(),
+    enabled: open,
+  });
 
   const availableModels = modelsData?.models ?? [];
   const availableSkills = activeSkills ?? [];
@@ -889,12 +995,14 @@ function CreateAgentSheet({ onCreated }: { onCreated: () => void }) {
   const availableMCP = mcpData?.servers ?? [];
   const catalogGuardrails = catalogGuardrailsData ?? [];
   const catalogHooks = catalogHooksData ?? [];
+  const availableGraphs: KGGraph[] = kgData ?? [];
 
   const mutation = useMutation({
     mutationFn: (data: AgentForm) =>
       agentsApi.create({
         ...data,
         mcp_servers: selectedMCPServers,
+        knowledge_graph_ids: selectedKGs,
         // Tier fields
         tier: tier ?? "deep",
         autonomy_level: TIER_AUTONOMY[tier ?? "deep"],
@@ -907,6 +1015,7 @@ function CreateAgentSheet({ onCreated }: { onCreated: () => void }) {
       setSelectedGuardrails([]);
       setSelectedHooks(["hook-audit-log"]);
       setSelectedMCPServers([]);
+      setSelectedKGs([]);
       setOpen(false);
       onCreated();
     },
@@ -939,6 +1048,11 @@ function CreateAgentSheet({ onCreated }: { onCreated: () => void }) {
     setSelectedMCPServers((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
     );
+  }
+
+  // KG toggle
+  function toggleKG(id: string) {
+    setSelectedKGs((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
   }
 
   const stepIdx = STEPS.findIndex((s) => s.id === step);
@@ -1056,6 +1170,14 @@ function CreateAgentSheet({ onCreated }: { onCreated: () => void }) {
                   mcpLoading={mcpLoading}
                 />
               )}
+              {step === "knowledge" && (
+                <StepKnowledge
+                  selectedKGs={selectedKGs}
+                  onToggleKG={toggleKG}
+                  availableGraphs={availableGraphs}
+                  kgLoading={kgLoading}
+                />
+              )}
               {step === "safety" && (
                 <StepSafety
                   selectedGuardrails={selectedGuardrails}
@@ -1074,6 +1196,8 @@ function CreateAgentSheet({ onCreated }: { onCreated: () => void }) {
                   availableMCP={availableMCP}
                   catalogGuardrails={catalogGuardrails}
                   catalogHooks={catalogHooks}
+                  selectedKGs={selectedKGs}
+                  availableGraphs={availableGraphs}
                 />
               )}
               {mutation.error && <p className="text-xs text-destructive mt-3">{String(mutation.error)}</p>}

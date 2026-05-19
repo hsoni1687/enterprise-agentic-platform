@@ -59,6 +59,11 @@ async function req<T>(base: string, path: string, init?: RequestInit): Promise<T
       console.error(`[API] Error ${res.status}: ${text}`);
       throw new Error(`${res.status}: ${text}`);
     }
+    // 204 No Content (and any other empty body) — return undefined without parsing JSON.
+    if (res.status === 204 || res.headers.get("content-length") === "0") {
+      console.log(`[API] Success (no body): ${url}`);
+      return undefined as T;
+    }
     const data = await res.json() as T;
     console.log(`[API] Success: ${url}`, data);
     return data;
@@ -309,7 +314,7 @@ export const systemAgentsApi = {
         tenant_id: "platform-system",
       }),
     }),
-  kgArchitectChat: (message: string, graphId?: string): Promise<Response> =>
+  kgArchitectChat: (message: string, graphId?: string, modelOverride?: string): Promise<Response> =>
     fetch(`${API_GATEWAY}/api/v1/agents/kg-architect/chat`, {
       method: "POST",
       headers: {
@@ -320,6 +325,7 @@ export const systemAgentsApi = {
         message,
         tenant_id: "platform-system",
         context: graphId ? { graph_id: graphId } : undefined,
+        ...(modelOverride ? { model_override: modelOverride } : {}),
       }),
     }),
 };
@@ -534,6 +540,40 @@ export const kgApi = {
       KG_SERVICE,
       `/search/nodes?graph_id=${graphId}&node_type=${nodeType}&limit=${limit}`
     ),
+  graphChat: (graphId: string, question: string, model?: string) =>
+    req<{ answer: string; sources: Array<{ id: string; label: string; type: string; description: string }>; model: string }>(
+      KG_SERVICE, "/graph/chat", {
+        method: "POST",
+        body: JSON.stringify({ graph_id: graphId, question, model: model || undefined }),
+      }
+    ),
+  getGraphContext: (graphId: string, question: string) =>
+    req<{ context: string; nodes: Array<{ id: string; label: string; type: string; description: string }> }>(
+      KG_SERVICE, "/graph/context", {
+        method: "POST",
+        body: JSON.stringify({ graph_id: graphId, question, top_k: 8 }),
+      }
+    ),
+  ingestURL: (graphId: string, url: string, extractionModel?: string) =>
+    req<{ nodes_created: number; edges_created: number; source: string }>(KG_SERVICE, "/ingest/url", {
+      method: "POST",
+      body: JSON.stringify({ graph_id: graphId, url, extraction_model: extractionModel || undefined }),
+    }),
+  ingestFile: (graphId: string, file: File, extractionModel?: string) => {
+    const form = new FormData();
+    form.append("graph_id", graphId);
+    form.append("file", file);
+    if (extractionModel) form.append("extraction_model", extractionModel);
+    // Use fetch directly — browser must set multipart boundary; don't set Content-Type manually
+    return fetch(`${KG_SERVICE}/ingest/file`, {
+      method: "POST",
+      body: form,
+      headers: { "X-Tenant-ID": _tenantId },
+    }).then(async (r) => {
+      if (!r.ok) throw new Error(await r.text());
+      return r.json() as Promise<{ nodes_created: number; edges_created: number; filename: string }>;
+    });
+  },
 };
 
 // ── Platform catalog (public, no admin key) ───────────────────────────────────

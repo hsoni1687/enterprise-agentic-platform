@@ -72,12 +72,25 @@ func HandleLiteSession(w http.ResponseWriter, _ *http.Request, req models.StartS
 	manifest := req.Manifest
 
 	// ── Execution limits ──────────────────────────────────────────────────────
-	maxDuration := 10 * time.Second
+	// Default 90 s: must be generous enough for a local LLM to process large
+	// prompts (e.g. with injected KG context). The HTTP client inside callLiteLLM
+	// already allows 60 s per request, so the context deadline must be at least
+	// that plus overhead. Agent config can still lower this floor.
+	maxDuration := 90 * time.Second
 	maxToolCalls := 2
 	if manifest != nil {
 		cfg := manifest.ExecutionConfig
 		if cfg.MaxDurationSeconds > 0 {
-			maxDuration = time.Duration(cfg.MaxDurationSeconds) * time.Second
+			// Respect agent config but floor at 60 s so LLM always has a chance
+			// to respond (local models can be slow on first token).
+			configured := time.Duration(cfg.MaxDurationSeconds) * time.Second
+			if configured > maxDuration {
+				maxDuration = configured
+			} else if configured >= 60*time.Second {
+				maxDuration = configured
+			}
+			// If < 60 s keep the 90 s default — prevents foot-guns where agents
+			// are created with a 10 s limit that breaks when KG context is large.
 		}
 		if cfg.MaxToolCalls != nil {
 			maxToolCalls = *cfg.MaxToolCalls

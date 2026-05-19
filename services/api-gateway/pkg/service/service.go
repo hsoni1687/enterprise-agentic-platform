@@ -169,7 +169,7 @@ func (h *GatewayHandler) HandleChatStream(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	var message, tenantID string
+	var message, tenantID, modelOverride string
 
 	if r.Method == http.MethodPost {
 		var chatReq models.ChatRequest
@@ -179,10 +179,12 @@ func (h *GatewayHandler) HandleChatStream(w http.ResponseWriter, r *http.Request
 		}
 		message = chatReq.Message
 		tenantID = chatReq.TenantID
+		modelOverride = chatReq.ModelOverride
 	} else {
 		// GET: read from query params
 		message = r.URL.Query().Get("message")
 		tenantID = r.URL.Query().Get("tenant_id")
+		modelOverride = r.URL.Query().Get("model_override")
 	}
 
 	if message == "" {
@@ -199,10 +201,11 @@ func (h *GatewayHandler) HandleChatStream(w http.ResponseWriter, r *http.Request
 
 	// Start the workflow.
 	startReq := models.StartSessionRequest{
-		AgentID:   agentID,
-		SessionID: fmt.Sprintf("chat-%d", time.Now().UnixMilli()),
-		TenantID:  tenantID,
-		Prompt:    message,
+		AgentID:       agentID,
+		SessionID:     fmt.Sprintf("chat-%d", time.Now().UnixMilli()),
+		TenantID:      tenantID,
+		Prompt:        message,
+		ModelOverride: modelOverride,
 	}
 	body, _ := json.Marshal(startReq)
 	initiatorResp, err := http.Post(

@@ -1,14 +1,14 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { systemAgentsApi } from "@/lib/api";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { systemAgentsApi, modelsApi } from "@/lib/api";
 import { ChatEvent } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
-import { Loader2 } from "lucide-react";
+import { Loader2, ChevronDown } from "lucide-react";
 import { KGVisualizer } from "./kg-visualizer";
 
 interface KGBuilderPanelProps {
@@ -20,7 +20,15 @@ export function KGBuilderPanel({ graphId }: KGBuilderPanelProps) {
   const [messages, setMessages] = useState<ChatEvent[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [selectedModel, setSelectedModel] = useState<string>("");
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  const { data: modelsData } = useQuery({
+    queryKey: ["models-list"],
+    queryFn: () => modelsApi.list(),
+    staleTime: 60_000,
+  });
+  const availableModels = modelsData?.models ?? [];
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -44,7 +52,8 @@ export function KGBuilderPanel({ graphId }: KGBuilderPanelProps) {
     try {
       const response = await systemAgentsApi.kgArchitectChat(
         `Graph: ${graphId}\n\n${userMessage}`,
-        graphId
+        graphId,
+        selectedModel || undefined
       );
 
       if (!response.body) {
@@ -165,6 +174,27 @@ export function KGBuilderPanel({ graphId }: KGBuilderPanelProps) {
           </ScrollArea>
 
           <div className="border-t p-3 space-y-2">
+            {/* Model picker */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground shrink-0">Model:</span>
+              <div className="relative flex-1">
+                <select
+                  value={selectedModel}
+                  onChange={(e) => setSelectedModel(e.target.value)}
+                  disabled={loading}
+                  className="w-full appearance-none bg-muted border border-border rounded px-2 py-1 text-xs pr-6 focus:outline-none focus:ring-1 focus:ring-violet-500 disabled:opacity-50"
+                >
+                  <option value="">Default (agent configured)</option>
+                  {availableModels.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}{m.source === "local" ? " (local)" : " (cloud)"}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground pointer-events-none" />
+              </div>
+            </div>
+
             <div className="flex gap-2">
               <Input
                 placeholder="Describe nodes, edges, or ask for changes..."

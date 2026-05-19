@@ -75,6 +75,7 @@ type Store interface {
 	QueryGraph(ctx context.Context, tenantID, graphID, startNodeID string, maxDepth int) ([]*Node, []*Edge, error)
 	SearchNodes(ctx context.Context, tenantID, graphID, nodeType string, limit int) ([]*Node, error)
 	SearchNodesByEmbedding(ctx context.Context, tenantID, graphID string, embedding pgvector.Vector, limit int) ([]*Node, error)
+	SearchNodesByKeyword(ctx context.Context, tenantID, graphID, query string, limit int) ([]*Node, error)
 	UpdateNodeEmbedding(ctx context.Context, tenantID, nodeID string, embedding pgvector.Vector) error
 
 	// Health

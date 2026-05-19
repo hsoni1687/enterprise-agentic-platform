@@ -287,6 +287,7 @@ services:
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-litellm-dev}
       - EMBEDDING_MODEL=local-embedding
       - EMBEDDING_DIMENSIONS=1536
+      - KG_EXTRACTION_MODEL=${KG_EXTRACTION_MODEL:-ollama/gemma4:latest}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -309,6 +310,7 @@ services:
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-litellm-dev}
       - OPENAI_API_KEY=${LITELLM_MASTER_KEY:-sk-litellm-dev}
       - MCP_REGISTRY_URL=http://mcp-registry:8090
+      - KG_SERVICE_URL=http://kg-service:8093
       - EMBEDDING_MODEL=local-embedding
       - TEMPORAL_TASK_QUEUE=default-tenant-agent-queue
       - SANDBOX_MANAGER_URL=http://sandbox-manager:8082/api/v1/execute
@@ -344,6 +346,7 @@ services:
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-litellm-dev}
       - OPENAI_API_KEY=${LITELLM_MASTER_KEY:-sk-litellm-dev}
       - MCP_REGISTRY_URL=http://mcp-registry:8090
+      - KG_SERVICE_URL=http://kg-service:8093
       - EMBEDDING_MODEL=local-embedding
       - TEMPORAL_TASK_QUEUE=platform-system-agent-queue
       - SANDBOX_MANAGER_URL=http://sandbox-manager:8082/api/v1/execute

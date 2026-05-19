@@ -19,16 +19,20 @@ func BuildMux(h *Handler) *http.ServeMux {
 	mux.HandleFunc("/nodes/list", h.ListNodes)
 	mux.HandleFunc("/nodes/delete", h.DeleteNode)
 	mux.HandleFunc("/nodes/reembed", h.ReembedNodes)
+	mux.HandleFunc("/ingest/url", h.IngestURL)
+	mux.HandleFunc("/ingest/file", h.IngestFile)
 
 	// Edges
 	mux.HandleFunc("/edges/create", h.CreateEdge)
 	mux.HandleFunc("/edges/list", h.ListEdges)
 	mux.HandleFunc("/edges/delete", h.DeleteEdge)
 
-	// Query
+	// Query & Chat
 	mux.HandleFunc("/query", h.QueryGraph)
 	mux.HandleFunc("/search/nodes", h.SearchNodes)
 	mux.HandleFunc("/search/semantic", h.SemanticSearch)
+	mux.HandleFunc("/graph/context", h.GraphContext) // lightweight retrieval, no LLM
+	mux.HandleFunc("/graph/chat", h.ChatQuery)
 
 	// Health
 	mux.HandleFunc("/health", h.Health)

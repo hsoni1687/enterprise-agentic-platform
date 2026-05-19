@@ -53,7 +53,8 @@ class WorkflowAgentRun:
         steps_raw      = exec_config.get("steps") or []
         hitl_on_mutating = exec_config.get("hitl_on_mutating", True)
         max_duration   = exec_config.get("max_duration_seconds", 300)
-        mcp_servers    = manifest.get("mcp_servers") or []
+        mcp_servers          = manifest.get("mcp_servers") or []
+        knowledge_graph_ids  = manifest.get("knowledge_graph_ids") or []
 
         workflow.logger.info(f"[WORKFLOW_AGENT] agent={agent_id} model={model} steps={len(steps_raw)}")
 
@@ -92,7 +93,7 @@ class WorkflowAgentRun:
             self._emit({"type": "thinking", "content": thinking_msg})
             result = await workflow.execute_activity(
                 "run_single_llm_step",
-                args=[prompt, system_prompt, model, agent_id, tenant_id, mcp_servers],
+                args=[prompt, system_prompt, model, agent_id, tenant_id, mcp_servers, knowledge_graph_ids],
                 start_to_close_timeout=timedelta(seconds=min(max_duration, 120)),
                 retry_policy=RetryPolicy(maximum_attempts=2),
             )
@@ -149,6 +150,7 @@ class WorkflowAgentRun:
                 result = await _execute_step(
                     self, step, step_results, system_prompt, model,
                     agent_id, tenant_id, hitl_on_mutating, max_duration, mcp_servers,
+                    knowledge_graph_ids,
                 )
                 # Remove any temporary sanitized key
                 step_results.pop("__guardrail_sanitized__", None)
@@ -211,6 +213,7 @@ async def _execute_step(
     hitl_on_mutating: bool,
     max_duration: int,
     mcp_servers: list | None = None,
+    knowledge_graph_ids: list | None = None,
 ) -> str:
     step_type = step.get("type", "llm")
     timeout = timedelta(seconds=min(max_duration, 120))
@@ -220,7 +223,7 @@ async def _execute_step(
         step_input = _resolve_input(step, step_results)
         return await workflow.execute_activity(
             "run_single_llm_step",
-            args=[step_input, system_prompt, model, agent_id, tenant_id, mcp_servers or []],
+            args=[step_input, system_prompt, model, agent_id, tenant_id, mcp_servers or [], knowledge_graph_ids or []],
             start_to_close_timeout=timeout,
             retry_policy=RetryPolicy(maximum_attempts=2),
         )

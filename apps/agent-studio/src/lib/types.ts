@@ -174,6 +174,7 @@ export interface AgentManifest {
   template_id?: string;
   guardrail_ids?: string[];
   hook_ids?: string[];
+  knowledge_graph_ids?: string[];
 }
 
 export interface AgentRecord {
@@ -199,6 +200,7 @@ export interface AgentRecord {
   template_id?: string;
   guardrail_ids?: string[];
   hook_ids?: string[];
+  knowledge_graph_ids?: string[];
 }
 
 export interface TransitionRequest {

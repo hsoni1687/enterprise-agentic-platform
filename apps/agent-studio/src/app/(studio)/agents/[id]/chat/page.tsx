@@ -17,7 +17,7 @@ import {
   XCircle,
   RefreshCw,
 } from "lucide-react";
-import { agentsApi } from "@/lib/api";
+import { agentsApi, kgApi } from "@/lib/api";
 import { ChatEvent, Message } from "@/lib/types";
 import { getSession, setSession, clearSession } from "@/lib/chat-session-cache";
 import { Button } from "@/components/ui/button";
@@ -161,7 +161,7 @@ function ThinkingBlock({ content }: { content: string }) {
         className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-muted/40 transition-colors"
       >
         <Terminal className="h-3 w-3 text-muted-foreground shrink-0" />
-        <span className="text-muted-foreground italic">thinking…</span>
+        <span className="text-muted-foreground">Reasoning</span>
         <span className="ml-auto text-muted-foreground/60">
           {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
         </span>
@@ -194,7 +194,11 @@ function AssistantMessage({ message, tenantId }: { message: Message; tenantId: s
         </div>
         <div className="flex-1 min-w-0 text-sm leading-relaxed">
           {message.events?.map((ev, i) => {
-            if (ev.type === "thinking" && ev.content) return <ThinkingBlock key={i} content={ev.content} />;
+            // Only show reasoning while the message is still streaming — hide it once done
+            if (ev.type === "thinking" && ev.content) {
+              if (!message.streaming) return null;
+              return <ThinkingBlock key={i} content={ev.content} />;
+            }
             if (ev.type === "tool_call") return <ToolCallBlock key={i} event={ev} />;
             if (ev.type === "approval") return <ApprovalBlock key={i} event={ev} tenantId={tenantId} />;
             return null;
@@ -263,7 +267,7 @@ export default function ChatPage({
   // Clean up on unmount
   useEffect(() => () => abortRef.current?.abort(), []);
 
-  const sendMessage = useCallback(() => {
+  const sendMessage = useCallback(async () => {
     const text = input.trim();
     if (!text || streaming) return;
 
@@ -274,6 +278,39 @@ export default function ChatPage({
     setMessages((prev) => [...prev, userMsg, assistantMsg]);
     setInput("");
     setStreaming(true);
+
+    // Inject context from attached knowledge graphs before sending to the agent.
+    let enrichedText = text;
+    const kgIds: string[] = agent?.knowledge_graph_ids ?? [];
+    console.log("[KG] agent knowledge_graph_ids:", kgIds);
+    if (kgIds.length > 0) {
+      const contextParts: string[] = [];
+      await Promise.allSettled(
+        kgIds.map(async (kgId) => {
+          try {
+            console.log("[KG] Fetching context for graph:", kgId, "question:", text);
+            const result = await kgApi.getGraphContext(kgId, text);
+            console.log("[KG] Context result:", result?.context?.slice(0, 200));
+            if (result?.context && result.context !== "(No relevant entities found)") {
+              // Cap context per graph at 1500 chars to keep the LLM prompt manageable
+              const ctx = result.context.length > 1500
+                ? result.context.slice(0, 1500) + "\n…(truncated)"
+                : result.context;
+              contextParts.push(ctx);
+            }
+          } catch (err) {
+            console.error("[KG] Failed to fetch context for graph:", kgId, err);
+          }
+        })
+      );
+      console.log("[KG] contextParts count:", contextParts.length);
+      if (contextParts.length > 0) {
+        enrichedText =
+          `--- Knowledge Graph Context ---\n${contextParts.join("\n\n")}\n--- End of Context ---\n\n` +
+          text;
+        console.log("[KG] enrichedText length:", enrichedText.length, "first 300 chars:", enrichedText.slice(0, 300));
+      }
+    }
 
     const abort = new AbortController();
     abortRef.current = abort;
@@ -294,7 +331,7 @@ export default function ChatPage({
     fetch(`${API_GATEWAY}/api/v1/agents/${id}/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Tenant-ID": tenantId },
-      body: JSON.stringify({ message: text, tenant_id: tenantId }),
+      body: JSON.stringify({ message: enrichedText, tenant_id: tenantId }),
       signal: abort.signal,
     })
       .then((resp) => {
@@ -373,7 +410,7 @@ export default function ChatPage({
         );
         setStreaming(false);
       });
-  }, [id, input, streaming, tenantId]);
+  }, [id, input, streaming, tenantId, agent]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }

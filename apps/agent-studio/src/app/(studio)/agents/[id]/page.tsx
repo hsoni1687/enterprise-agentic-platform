@@ -12,11 +12,11 @@ import {
   Sparkles, Cable, Shield, Webhook, Wrench, Check,
   ChevronRight, ChevronLeft, CheckCircle2, Search,
   Activity, DollarSign, UserCheck, Clock,
-  Ban, EyeOff, AlertTriangle, Plus, Minus,
+  Ban, EyeOff, AlertTriangle, Plus, Minus, BookOpen,
 } from "lucide-react";
-import { agentsApi, skillsApi, toolsApi, modelsApi, mcpApi, platformApi, PlatformGuardrail, PlatformHook, ModelInfo } from "@/lib/api";
+import { agentsApi, skillsApi, toolsApi, modelsApi, mcpApi, platformApi, kgApi, PlatformGuardrail, PlatformHook, ModelInfo } from "@/lib/api";
 import { ManifestAssistantPanel, AssistantDraft } from "@/components/manifest-assistant-panel";
-import { AgentRecord, SkillManifest, ToolSpec, MCPServer } from "@/lib/types";
+import { AgentRecord, SkillManifest, ToolSpec, MCPServer, KGGraph } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -65,12 +65,13 @@ const ACTION_COLOR: Record<string, string> = {
 // ── Wizard steps ──────────────────────────────────────────────────────────────
 
 const STEPS = [
-  { id: "identity",  label: "Identity",    icon: Bot },
-  { id: "behavior",  label: "Behavior",    icon: Sparkles },
-  { id: "skills",    label: "Skills",      icon: Zap },
-  { id: "tools-mcp", label: "Tools & MCP", icon: Wrench },
-  { id: "safety",    label: "Safety",      icon: Shield },
-  { id: "review",    label: "Review",      icon: CheckCircle2 },
+  { id: "identity",   label: "Identity",    icon: Bot },
+  { id: "behavior",   label: "Behavior",    icon: Sparkles },
+  { id: "skills",     label: "Skills",      icon: Zap },
+  { id: "tools-mcp",  label: "Tools & MCP", icon: Wrench },
+  { id: "knowledge",  label: "Knowledge",   icon: BookOpen },
+  { id: "safety",     label: "Safety",      icon: Shield },
+  { id: "review",     label: "Review",      icon: CheckCircle2 },
 ] as const;
 
 type StepId = typeof STEPS[number]["id"];
@@ -387,6 +388,88 @@ function StepToolsMCP({
   );
 }
 
+function StepKnowledge({
+  selectedKGs,
+  onToggleKG,
+  availableGraphs,
+  kgLoading,
+}: {
+  selectedKGs: string[];
+  onToggleKG: (id: string) => void;
+  availableGraphs: KGGraph[];
+  kgLoading: boolean;
+}) {
+  const selectedSet = new Set(selectedKGs);
+  return (
+    <div className="space-y-4">
+      <div>
+        <p className="text-sm font-semibold mb-0.5">Knowledge Graphs</p>
+        <p className="text-xs text-muted-foreground">
+          Attached graphs are semantically searched at runtime — relevant chunks are injected into the agent's context automatically.
+        </p>
+      </div>
+
+      {selectedKGs.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {selectedKGs.map((id) => {
+            const g = availableGraphs.find((x) => x.id === id);
+            return (
+              <SelectedChip key={id} label={g?.name ?? id} onRemove={() => onToggleKG(id)} />
+            );
+          })}
+        </div>
+      )}
+
+      {kgLoading && <p className="text-xs text-muted-foreground">Loading knowledge graphs…</p>}
+      {!kgLoading && availableGraphs.length === 0 && (
+        <div className="rounded-lg border border-dashed border-border p-6 text-center">
+          <BookOpen className="h-6 w-6 text-muted-foreground mx-auto mb-2" />
+          <p className="text-xs text-muted-foreground">No knowledge graphs available.</p>
+          <p className="text-[10px] text-muted-foreground mt-0.5">
+            Create one under <span className="font-medium">Connect → Knowledge Graphs</span>.
+          </p>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 gap-2 max-h-72 overflow-y-auto pr-1">
+        {availableGraphs.map((graph) => {
+          const selected = selectedSet.has(graph.id);
+          return (
+            <button
+              key={graph.id}
+              type="button"
+              onClick={() => onToggleKG(graph.id)}
+              className={`text-left rounded-lg border px-3 py-2.5 transition-all ${
+                selected
+                  ? "border-violet-500/50 bg-violet-500/10"
+                  : "border-border hover:border-violet-500/30 hover:bg-muted/30"
+              }`}
+            >
+              <div className="flex items-center gap-2.5">
+                <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded ${
+                  selected ? "bg-violet-500 text-white" : "bg-muted text-muted-foreground"
+                }`}>
+                  {selected ? <Check className="h-3.5 w-3.5" /> : <BookOpen className="h-3.5 w-3.5" />}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-medium">{graph.name}</p>
+                  {graph.description && (
+                    <p className="text-[10px] text-muted-foreground truncate">{graph.description}</p>
+                  )}
+                  {graph.domain && (
+                    <p className="text-[10px] text-muted-foreground">Domain: {graph.domain}</p>
+                  )}
+                </div>
+                <Badge variant="outline" className="text-[10px] shrink-0 capitalize">{graph.scope}</Badge>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function StepSafety({
   selectedGuardrails, onToggleGuardrail, selectedHooks, onToggleHook,
   guardrails, hooks, safetyLoading,
@@ -512,17 +595,20 @@ function StepSafety({
   );
 }
 
-function StepReview({ form, selectedGuardrails, selectedHooks, availableMCP, guardrails, hooks }: {
+function StepReview({ form, selectedGuardrails, selectedHooks, availableMCP, guardrails, hooks, selectedKGs, availableGraphs }: {
   form: AgentForm;
   selectedGuardrails: string[];
   selectedHooks: string[];
   availableMCP: MCPServer[];
   guardrails: PlatformGuardrail[];
   hooks: PlatformHook[];
+  selectedKGs: string[];
+  availableGraphs: KGGraph[];
 }) {
   // Only show what the user explicitly selected — no auto-include of admin items
   const enabledGuardrails = guardrails.filter((g) => selectedGuardrails.includes(g.id));
   const enabledHooks = hooks.filter((h) => selectedHooks.includes(h.id));
+  const attachedGraphs = availableGraphs.filter((g) => selectedKGs.includes(g.id));
   const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
     <div className="rounded-xl border border-border bg-muted/20 p-4 space-y-2">
       <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{title}</p>
@@ -576,6 +662,14 @@ function StepReview({ form, selectedGuardrails, selectedHooks, availableMCP, gua
           }
         </Section>
       </div>
+      <Section title={`Knowledge Graphs (${attachedGraphs.length})`}>
+        {attachedGraphs.length === 0
+          ? <p className="text-xs text-muted-foreground">No knowledge graphs attached</p>
+          : <div className="flex flex-wrap gap-1">{attachedGraphs.map((g) => (
+              <span key={g.id} className="text-xs bg-muted rounded px-2 py-0.5">{g.name}</span>
+            ))}</div>
+        }
+      </Section>
       <div className="grid grid-cols-2 gap-3">
         <Section title={`Guardrails (${enabledGuardrails.length})`}>
           <div className="flex flex-wrap gap-1">{enabledGuardrails.map((g) => (
@@ -601,9 +695,10 @@ function EditAgentSheet({ agent, onUpdated }: { agent: AgentRecord; onUpdated: (
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState<StepId>("identity");
   const [showAssistant, setShowAssistant] = useState(false);
-  const [selectedGuardrails, setSelectedGuardrails] = useState<string[]>([]);
-  const [selectedHooks, setSelectedHooks] = useState<string[]>(["hook-audit-log"]);
+  const [selectedGuardrails, setSelectedGuardrails] = useState<string[]>(agent.guardrail_ids ?? []);
+  const [selectedHooks, setSelectedHooks] = useState<string[]>(agent.hook_ids ?? ["hook-audit-log"]);
   const [selectedMCPServers, setSelectedMCPServers] = useState<string[]>(agent.mcp_servers ?? []);
+  const [selectedKGs, setSelectedKGs] = useState<string[]>(agent.knowledge_graph_ids ?? []);
 
   const { register, handleSubmit, control, setValue, watch, reset, formState: { errors } } = useForm<AgentForm>({
     resolver: zodResolver(agentSchema),
@@ -652,6 +747,11 @@ function EditAgentSheet({ agent, onUpdated }: { agent: AgentRecord; onUpdated: (
     queryFn: () => platformApi.listHooks(),
     enabled: open,
   });
+  const { data: kgData, isLoading: kgLoading } = useQuery({
+    queryKey: ["knowledge-graphs"],
+    queryFn: () => kgApi.listGraphs(),
+    enabled: open,
+  });
 
   const availableModels = modelsData?.models ?? [];
   const availableSkills = activeSkills ?? [];
@@ -659,10 +759,17 @@ function EditAgentSheet({ agent, onUpdated }: { agent: AgentRecord; onUpdated: (
   const availableMCP = mcpData?.servers ?? [];
   const availableGuardrails = guardrailsData ?? [];
   const availableHooks = hooksData ?? [];
+  const availableGraphs: KGGraph[] = kgData ?? [];
 
   const mutation = useMutation({
     mutationFn: (data: AgentForm) =>
-      agentsApi.update(agent.id, { ...data, mcp_servers: selectedMCPServers }),
+      agentsApi.update(agent.id, {
+        ...data,
+        mcp_servers: selectedMCPServers,
+        guardrail_ids: selectedGuardrails,
+        hook_ids: selectedHooks,
+        knowledge_graph_ids: selectedKGs,
+      }),
     onSuccess: () => { setOpen(false); onUpdated(); },
   });
 
@@ -682,6 +789,10 @@ function EditAgentSheet({ agent, onUpdated }: { agent: AgentRecord; onUpdated: (
 
   function toggleMCP(id: string) {
     setSelectedMCPServers((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
+  }
+
+  function toggleKG(id: string) {
+    setSelectedKGs((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
   }
 
   const stepIdx = STEPS.findIndex((s) => s.id === step);
@@ -741,6 +852,14 @@ function EditAgentSheet({ agent, onUpdated }: { agent: AgentRecord; onUpdated: (
                   mcpLoading={mcpLoading}
                 />
               )}
+              {step === "knowledge" && (
+                <StepKnowledge
+                  selectedKGs={selectedKGs}
+                  onToggleKG={toggleKG}
+                  availableGraphs={availableGraphs}
+                  kgLoading={kgLoading}
+                />
+              )}
               {step === "safety" && (
                 <StepSafety
                   selectedGuardrails={selectedGuardrails}
@@ -760,6 +879,8 @@ function EditAgentSheet({ agent, onUpdated }: { agent: AgentRecord; onUpdated: (
                   availableMCP={availableMCP}
                   guardrails={availableGuardrails}
                   hooks={availableHooks}
+                  selectedKGs={selectedKGs}
+                  availableGraphs={availableGraphs}
                 />
               )}
               {mutation.error && (

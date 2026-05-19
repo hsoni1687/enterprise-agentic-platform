@@ -35,6 +35,7 @@ func (s *PostgresStore) Create(ctx context.Context, rec *AgentRecord) error {
 	tags, _ := json.Marshal(rec.Tags)
 	guardrailIDs, _ := json.Marshal(rec.GuardrailIDs)
 	hookIDs, _ := json.Marshal(rec.HookIDs)
+	kgIDs, _ := json.Marshal(rec.KnowledgeGraphIDs)
 
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO agents
@@ -42,13 +43,13 @@ func (s *PostgresStore) Create(ctx context.Context, rec *AgentRecord) error {
 			 skills, tools, mcp_servers, model,
 			 max_iterations, memory_budget_mb, status, created_at,
 			 tier, autonomy_level, execution_config,
-			 tags, template_id, guardrail_ids, hook_ids)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
+			 tags, template_id, guardrail_ids, hook_ids, knowledge_graph_ids)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
 		rec.ID, rec.TenantID, rec.Name, rec.Version, rec.Description, rec.SystemPrompt,
 		skills, tools, mcpServers, rec.Model,
 		rec.MaxIterations, rec.MemoryBudgetMB, string(rec.Status), rec.CreatedAt,
 		string(rec.Tier), string(rec.AutonomyLevel), execConfig,
-		tags, nullableString(rec.TemplateID), guardrailIDs, hookIDs,
+		tags, nullableString(rec.TemplateID), guardrailIDs, hookIDs, kgIDs,
 	)
 	return err
 }
@@ -59,7 +60,7 @@ func (s *PostgresStore) GetByID(ctx context.Context, id, tenantID string) (*Agen
 		       skills, tools, mcp_servers, model,
 		       max_iterations, memory_budget_mb, status, created_at,
 		       tier, autonomy_level, execution_config,
-		       tags, template_id, guardrail_ids, hook_ids
+		       tags, template_id, guardrail_ids, hook_ids, knowledge_graph_ids
 		FROM agents
 		WHERE id = $1 AND tenant_id = $2`, id, tenantID)
 	return scanAgent(row)
@@ -70,7 +71,7 @@ func (s *PostgresStore) List(ctx context.Context, f ListFilter) ([]*AgentRecord,
 		         skills, tools, mcp_servers, model,
 		         max_iterations, memory_budget_mb, status, created_at,
 		         tier, autonomy_level, execution_config,
-		         tags, template_id, guardrail_ids, hook_ids
+		         tags, template_id, guardrail_ids, hook_ids, knowledge_graph_ids
 		  FROM agents WHERE tenant_id = $1`
 	args := []any{f.TenantID}
 	if f.Status != "" {
@@ -111,6 +112,7 @@ func (s *PostgresStore) Update(ctx context.Context, rec *AgentRecord) error {
 	tags, _ := json.Marshal(rec.Tags)
 	guardrailIDs, _ := json.Marshal(rec.GuardrailIDs)
 	hookIDs, _ := json.Marshal(rec.HookIDs)
+	kgIDs, _ := json.Marshal(rec.KnowledgeGraphIDs)
 
 	res, err := s.db.ExecContext(ctx, `
 		UPDATE agents
@@ -118,13 +120,14 @@ func (s *PostgresStore) Update(ctx context.Context, rec *AgentRecord) error {
 		    skills=$5, tools=$6, mcp_servers=$7, model=$8,
 		    max_iterations=$9, memory_budget_mb=$10, status=$11,
 		    tier=$12, autonomy_level=$13, execution_config=$14,
-		    tags=$15, template_id=$16, guardrail_ids=$17, hook_ids=$18
-		WHERE id=$19 AND tenant_id=$20`,
+		    tags=$15, template_id=$16, guardrail_ids=$17, hook_ids=$18,
+		    knowledge_graph_ids=$19
+		WHERE id=$20 AND tenant_id=$21`,
 		rec.Name, rec.Version, rec.Description, rec.SystemPrompt,
 		skills, tools, mcpServers, rec.Model,
 		rec.MaxIterations, rec.MemoryBudgetMB, string(rec.Status),
 		string(rec.Tier), string(rec.AutonomyLevel), execConfig,
-		tags, nullableString(rec.TemplateID), guardrailIDs, hookIDs,
+		tags, nullableString(rec.TemplateID), guardrailIDs, hookIDs, kgIDs,
 		rec.ID, rec.TenantID,
 	)
 	if err != nil {
@@ -198,6 +201,7 @@ func scanAgent(s scanner) (*AgentRecord, error) {
 		skills, tools, mcpServers []byte
 		execConfig, tags          []byte
 		guardrailIDs, hookIDs     []byte
+		kgIDs                     []byte
 		tier, autonomyLevel       string
 		templateID                sql.NullString
 		description               sql.NullString
@@ -208,7 +212,7 @@ func scanAgent(s scanner) (*AgentRecord, error) {
 		&skills, &tools, &mcpServers, &rec.Model,
 		&rec.MaxIterations, &rec.MemoryBudgetMB, &rec.Status, &rec.CreatedAt,
 		&tier, &autonomyLevel, &execConfig,
-		&tags, &templateID, &guardrailIDs, &hookIDs,
+		&tags, &templateID, &guardrailIDs, &hookIDs, &kgIDs,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -233,6 +237,7 @@ func scanAgent(s scanner) (*AgentRecord, error) {
 	json.Unmarshal(tags, &rec.Tags)
 	json.Unmarshal(guardrailIDs, &rec.GuardrailIDs)
 	json.Unmarshal(hookIDs, &rec.HookIDs)
+	json.Unmarshal(kgIDs, &rec.KnowledgeGraphIDs)
 
 	return &rec, nil
 }

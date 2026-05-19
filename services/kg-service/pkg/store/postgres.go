@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/lib/pq"
 	"github.com/pgvector/pgvector-go"
@@ -456,6 +457,85 @@ func (ps *PostgresStore) SearchNodesByEmbedding(ctx context.Context, tenantID, g
 			tenantID, embedding, limit,
 		)
 	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var nodes []*Node
+	for rows.Next() {
+		n := &Node{}
+		var propsBytes []byte
+		if err := rows.Scan(&n.ID, &n.GraphID, &n.TenantID, &n.NodeType, &n.Label, &propsBytes, &n.Embedding, &n.CreatedAt, &n.UpdatedAt); err != nil {
+			return nil, err
+		}
+		json.Unmarshal(propsBytes, &n.Properties)
+		nodes = append(nodes, n)
+	}
+	return nodes, rows.Err()
+}
+
+// stopWords is a small set of common English words not useful for entity lookup.
+var stopWords = map[string]bool{
+	"the": true, "a": true, "an": true, "is": true, "are": true, "was": true,
+	"who": true, "what": true, "how": true, "why": true, "when": true, "where": true,
+	"in": true, "on": true, "at": true, "to": true, "of": true, "for": true,
+	"and": true, "or": true, "but": true, "with": true, "by": true, "from": true,
+	"me": true, "my": true, "tell": true, "about": true, "does": true, "do": true,
+}
+
+// nonAlpha strips non-alphanumeric characters from a word so punctuation
+// at word boundaries ("Kabir?", "trust.") doesn't break ILIKE patterns.
+func nonAlpha(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// SearchNodesByKeyword searches nodes whose label or description contains any of the
+// whitespace-separated words in query (case-insensitive). Used as a hybrid fallback
+// alongside semantic search so named entities are always found by name.
+func (ps *PostgresStore) SearchNodesByKeyword(ctx context.Context, tenantID, graphID, query string, limit int) ([]*Node, error) {
+	// Build a pattern for each word: label ILIKE '%word%' OR description ILIKE '%word%'
+	rawWords := strings.Fields(query)
+	if len(rawWords) == 0 {
+		return nil, nil
+	}
+
+	// Build WHERE clause dynamically
+	conditions := make([]string, 0, len(rawWords))
+	args := []interface{}{tenantID, graphID}
+	for _, w := range rawWords {
+		w = nonAlpha(w) // strip punctuation
+		if len(w) < 3 { // skip very short words
+			continue
+		}
+		if stopWords[strings.ToLower(w)] {
+			continue
+		}
+		idx := len(args) + 1
+		args = append(args, "%"+w+"%")
+		conditions = append(conditions, fmt.Sprintf(
+			`(label ILIKE $%d OR properties->>'description' ILIKE $%d)`, idx, idx,
+		))
+	}
+	if len(conditions) == 0 {
+		return nil, nil
+	}
+
+	q := fmt.Sprintf(`
+		SELECT id, graph_id, tenant_id, node_type, label, properties, embedding, created_at, updated_at
+		FROM kg_nodes
+		WHERE tenant_id = $1 AND graph_id = $2 AND (%s)
+		LIMIT %d`,
+		strings.Join(conditions, " OR "), limit,
+	)
+
+	rows, err := ps.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
