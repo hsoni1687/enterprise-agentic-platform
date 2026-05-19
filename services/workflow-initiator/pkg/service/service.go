@@ -32,7 +32,7 @@ var (
 			IdleConnTimeout:     90 * time.Second,
 		},
 	}
-	manifestTTL = 5 * time.Minute
+	manifestTTL = 30 * time.Second
 )
 
 // EncodedQueryValue wraps a Temporal query result so it can be decoded into a Go value.

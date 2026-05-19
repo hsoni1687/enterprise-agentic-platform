@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useCallback, useEffect, useRef, useState } from "react";
+import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import {
@@ -152,22 +152,29 @@ function ToolCallBlock({ event }: { event: ChatEvent }) {
   );
 }
 
-function ThinkingBlock({ content }: { content: string }) {
-  const [expanded, setExpanded] = useState(false);
+function ThinkingBlock({ content, streaming }: { content: string; streaming?: boolean }) {
+  const [expanded, setExpanded] = useState(true);
   return (
     <div className="my-1 rounded-lg border border-border/30 bg-muted/20 text-xs overflow-hidden">
       <button
         onClick={() => setExpanded((v) => !v)}
         className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-muted/40 transition-colors"
       >
-        <Terminal className="h-3 w-3 text-muted-foreground shrink-0" />
-        <span className="text-muted-foreground">Reasoning</span>
+        <Terminal className="h-3 w-3 text-violet-400 shrink-0" />
+        <span className="text-violet-400 font-medium">Thinking</span>
+        {streaming && (
+          <span className="ml-1 inline-flex gap-0.5">
+            <span className="w-1 h-1 rounded-full bg-violet-400 animate-bounce [animation-delay:0ms]" />
+            <span className="w-1 h-1 rounded-full bg-violet-400 animate-bounce [animation-delay:150ms]" />
+            <span className="w-1 h-1 rounded-full bg-violet-400 animate-bounce [animation-delay:300ms]" />
+          </span>
+        )}
         <span className="ml-auto text-muted-foreground/60">
           {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
         </span>
       </button>
       {expanded && (
-        <div className="border-t border-border/30 px-3 py-2 font-mono text-muted-foreground whitespace-pre-wrap">
+        <div className="border-t border-border/30 px-3 py-2 text-muted-foreground/80 whitespace-pre-wrap leading-relaxed">
           {content}
         </div>
       )}
@@ -177,8 +184,30 @@ function ThinkingBlock({ content }: { content: string }) {
 
 // ── Message renderers ─────────────────────────────────────────────────────────
 
+function mergeEvents(events: ChatEvent[]): ChatEvent[] {
+  const merged: ChatEvent[] = [];
+  for (const ev of events) {
+    if (ev.type === "tool_call") {
+      const argsKey = JSON.stringify(ev.tool_args ?? {});
+      const existing = merged.findIndex(
+        e => e.type === "tool_call" &&
+             e.tool_name === ev.tool_name &&
+             JSON.stringify(e.tool_args ?? {}) === argsKey &&
+             e.tool_result === undefined
+      );
+      if (existing >= 0 && ev.tool_result !== undefined) {
+        merged[existing] = { ...merged[existing], tool_result: ev.tool_result };
+        continue;
+      }
+    }
+    merged.push(ev);
+  }
+  return merged;
+}
+
 function AssistantMessage({ message, tenantId }: { message: Message; tenantId: string }) {
   const hasError = message.content?.startsWith("Error:");
+  const mergedEvents = useMemo(() => mergeEvents(message.events ?? []), [message.events]);
 
   return (
     <div className="group py-4 border-b border-border/20 last:border-0">
@@ -193,11 +222,9 @@ function AssistantMessage({ message, tenantId }: { message: Message; tenantId: s
           }
         </div>
         <div className="flex-1 min-w-0 text-sm leading-relaxed">
-          {message.events?.map((ev, i) => {
-            // Only show reasoning while the message is still streaming — hide it once done
+          {mergedEvents.map((ev, i) => {
             if (ev.type === "thinking" && ev.content) {
-              if (!message.streaming) return null;
-              return <ThinkingBlock key={i} content={ev.content} />;
+              return <ThinkingBlock key={i} content={ev.content} streaming={message.streaming} />;
             }
             if (ev.type === "tool_call") return <ToolCallBlock key={i} event={ev} />;
             if (ev.type === "approval") return <ApprovalBlock key={i} event={ev} tenantId={tenantId} />;

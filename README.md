@@ -1,10 +1,36 @@
-# A1 Agent Engine
+# A1 Agent Platform
 
-**Enterprise Agentic PaaS** — A production-grade platform for building, deploying, and orchestrating AI-driven agent workflows with durable execution, multi-tenancy, domain-oriented knowledge graphs, and comprehensive observability.
+**Enterprise Agentic Platform** — Build, deploy, and operate production-grade AI agents in minutes. Define skills, wire tools, set guardrails — all from a clean visual interface. No boilerplate. No glue code. Just agents that work.
 
-## 🎯 Platform Vision
+---
 
-A1 Agent Engine transforms how enterprises build and operate AI-driven automation. It provides a **full-stack agentic solution factory** for vertical domains—enabling organizations to deploy sophisticated multi-agent systems in hours rather than weeks.
+## Assemble Your Agent in Minutes
+
+Creating a powerful AI agent on A1 is a five-step wizard — not a multi-week engineering project.
+
+```
+① Pick a tier      →  ② Name your agent  →  ③ Attach skills
+④ Set guardrails   →  ⑤ Deploy & chat
+```
+
+That's it. The platform handles routing, durable execution, multi-tenancy, tool security, and observability automatically. You focus on what your agent should *do*.
+
+### What you configure with a few clicks
+
+| What | How easy |
+|------|----------|
+| **Skills** | Browse the catalog → click Attach. Each skill bundles the right tools, SOPs, and approval policies. |
+| **Tools** | Fill a name + JSON schema form. Tools go through `draft → staged → active` lifecycle automatically. |
+| **Guardrails** | Toggle on/off: PII detection, harmful content filter, prompt injection protection, custom checks. |
+| **Hooks** | Checkboxes: audit log, cost meter, HITL intercept, rate limit. Applied to every tool call. |
+| **Model** | Pick any model from your LiteLLM config. Swap anytime — no code changes. |
+| **System prompt** | Write your own or click **AI Assist** and describe what your agent should do in plain English. |
+
+---
+
+## Platform Overview
+
+A1 Agent Platform is a **full-stack agentic PaaS** purpose-built for enterprise operations. It gives organizations a production-grade foundation — durable execution, multi-tenancy, domain knowledge graphs, and end-to-end observability — so teams can ship AI agents without building the infrastructure from scratch.
 
 ### Three-Layer Architecture
 
@@ -17,7 +43,7 @@ A1 Agent Engine transforms how enterprises build and operate AI-driven automatio
 │  • KG ontology           • KG ontology        • KG ontology        │
 │  • MCP recommendations   • MCP recs           • MCP recs           │
 │  • Seed data             • Seed data          • Seed data          │
-│  → Deploy production-ready agents in minutes                       │
+│  → Deploy production-ready agents in under 2 hours                 │
 └─────────────────────────────────────────────────────────────────────┘
                               │
                               ▼ (architect customizes cookbook)
@@ -48,7 +74,7 @@ A1 Agent Engine transforms how enterprises build and operate AI-driven automatio
 
 ## ⚡ Agent Tiers
 
-Every agent in A1 is classified into one of three **execution tiers**. The tier controls the runtime engine used, the latency budget, tool call depth, and compliance level.
+Pick the tier that matches your use case. The platform routes execution automatically — your frontend and API calls never change.
 
 | Property | ⚡ Lite | 🔗 Workflow | 🧠 Deep |
 |---|---|---|---|
@@ -66,9 +92,25 @@ Every agent in A1 is classified into one of three **execution tiers**. The tier 
 | **Durable execution** | ✗ | ✓ | ✓ |
 | **Best for** | FAQ bots, classifiers, quick lookups | Multi-step pipelines, approvals, DAG flows | Long-horizon reasoning, research, planning |
 
+```
+┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐
+│ ⚡ Lite           │  │ 🔗 Workflow       │  │ 🧠 Deep           │
+│ Instant response │  │ Durable pipeline │  │ Autonomous agent │
+│ < 2 s            │  │ Seconds–minutes  │  │ Minutes–hours    │
+│                  │  │                  │  │                  │
+│ • FAQ bots       │  │ • Support router │  │ • Incident resp. │
+│ • Classifiers    │  │ • Data pipeline  │  │ • Research agent │
+│ • Quick lookups  │  │ • Approval flow  │  │ • Code review    │
+│                  │  │                  │  │                  │
+│ Speed  ████░░░   │  │ Speed  ██░░░░░   │  │ Speed  █░░░░░░   │
+│ Cost   █░░░░░░   │  │ Cost   ███░░░░   │  │ Cost   ██████░   │
+│ Power  ██░░░░░   │  │ Power  █████░    │  │ Power  ███████   │
+└──────────────────┘  └──────────────────┘  └──────────────────┘
+```
+
 ### ⚡ Lite — Zero-latency agents
 
-Lite agents run entirely inside the **workflow-initiator** service with no Temporal dependency. They are ideal for chat assistants, classifiers, and simple question-answering agents that need fast responses.
+Run entirely inside the workflow-initiator service — no Temporal overhead. Ideal for chat assistants, classifiers, and simple Q&A.
 
 ```
 POST /api/v1/sessions
@@ -83,29 +125,24 @@ HandleLiteSession
        ├─ Executes ≤ maxToolCalls via Skill Dispatcher
        ├─ Appends events: thinking → tool_call → text → done
        └─ Marks session COMPLETED/FAILED
-
-GET /api/v1/sessions/{id}/poll
-  ↓
-Checks IsLiteSession() → returns events from liteStore
-  (compatible with the exact same poll loop as Temporal sessions)
 ```
 
 ### 🔗 Workflow — Durable pipelines
 
-Workflow agents run as `WorkflowAgentRun` in Temporal. They support:
-- **Static DAGs**: Ordered steps with `depends_on` lists and topological execution
+Run as `WorkflowAgentRun` in Temporal. Support static DAGs with ordered steps, HITL intercepts on mutating operations, and condition branching.
+
 - **Step types**: `llm`, `tool`, `skill`, `condition`, `approval`, `loop`
-- **HITL intercepts**: Mutating steps are automatically gated behind human approval signals
+- **HITL intercepts**: Mutating steps automatically gate behind human approval signals
 - **Condition branching**: `contains:`, `regex:`, `eq:`, `llm:` evaluation strategies
 
 ### 🧠 Deep — Autonomous agents
 
-Deep agents run as `AgentWorkflow` in Temporal — the full PydanticAI ReAct loop with:
+Run as `AgentWorkflow` in Temporal — a full ReAct loop with:
 - **Dynamic planning**: LLM decomposes goals into sub-plans at runtime
 - **Self-correction**: Retries with updated context on failures
 - **Cross-session memory**: pgvector recall from previous sessions
 - **Unconstrained tool use**: No per-run tool call limit
-- **Multi-agent teams**: Can delegate to sub-agents and synthesize results
+- **Multi-agent teams**: Delegates to sub-agents and synthesizes results
 
 ---
 
@@ -155,16 +192,17 @@ cd apps/admin-console && npm install && npm run dev
 # → http://localhost:3001  (key: dev-admin-key)
 ```
 
-### 3 · Create your first agent (3 min)
+### 3 · Build your first agent (3 min, no code)
 
 1. Open **http://localhost:3000**
 2. Click **Agents → Create Agent**
-3. Choose **⚡ Lite** tier (fast, no Temporal needed)
-4. Fill in: Name = `FAQ Bot`, Model = `gpt-4o-mini`, System Prompt = `You are a helpful assistant.`
-5. Click **Create**
-6. Open the agent and click **Chat** — send any message
+3. Choose **⚡ Lite** tier
+4. Fill in: Name, Model, System Prompt
+5. Optionally click **AI Assist** — describe your agent in plain English and let the platform generate the prompt and recommend skills
+6. Click **Create**
+7. Open the agent → **Chat** — send any message
 
-The agent responds in < 2 seconds via the in-process goroutine path.
+The agent responds in < 2 seconds.
 
 ---
 
@@ -176,7 +214,7 @@ The agent responds in < 2 seconds via the in-process goroutine path.
 |---------|------|----------|------|
 | **API Gateway** | 8080 | Go | Entry point; HMAC validation; SSE proxy |
 | **Workflow Initiator** | 8081 | Go | Tier routing; Temporal dispatcher; lite runner |
-| **Agent Workers** | — | Python | Temporal workers; PydanticAI ReAct loop |
+| **Agent Workers** | — | Python | Temporal workers; ReAct loop |
 | **LiteLLM Proxy** | 4000 | Python | Unified LLM provider gateway (OpenAI-compatible) |
 | **Agent Registry** | 8088 | Go | Agent manifest storage and versioning |
 | **Tool Registry** | 8086 | Go | Tool registration, versioning, security review |
@@ -195,22 +233,6 @@ The agent responds in < 2 seconds via the in-process goroutine path.
 | **PostgreSQL** | 5433 | — | Primary store; KG tables; pgvector; RLS |
 | **Redis** | 6379 | — | Session cache; rate limiting |
 
-### Agent Event Stream (SSE)
-
-All agent executions emit a structured event stream, consumed by Agent Studio's chat UI:
-
-```
-thinking    → "Processing your request..."
-plan        → "Breaking into N sub-tasks..."
-task_start  → {step_id, step_name}
-tool_call   → {tool_name, tool_args}
-tool_result → {tool_name, tool_result}
-approval    → {approval_id, reason}   ← HITL gate; workflow pauses
-text        → "Final response text"
-done        → session terminal event
-error       → {message}
-```
-
 ### Execution Flow
 
 ```
@@ -228,7 +250,7 @@ User/Webhook ──────▶│ API Gateway │
          ▼          │  ▼              │              ▼
    In-process   Temporal          Temporal      Temporal
    goroutine    WorkflowAgentRun  WorkflowAgentRun  AgentWorkflow
-   (liteStore)  (static DAG)      (static DAG)  (PydanticAI ReAct)
+   (liteStore)  (static DAG)      (static DAG)  (ReAct loop)
          │          │              │              │
          └──────────┴──────────────┴──────────────┘
                            │
@@ -241,6 +263,21 @@ User/Webhook ──────▶│ API Gateway │
               ▼            ▼            ▼
          Tool Registry  KG Service  MCP Registry
          (custom tools) (kg-query)  (PagerDuty, etc.)
+```
+
+### Agent Event Stream (SSE)
+
+All agent executions emit a structured event stream consumed by Agent Studio's chat UI:
+
+```
+thinking    → Model's live reasoning (shown as Thinking block)
+plan        → "Breaking into N sub-tasks..."
+task_start  → {step_id, step_name}
+tool_call   → {tool_name, tool_args, tool_result}
+approval    → {approval_id, reason}   ← HITL gate; workflow pauses
+text        → Final response text
+done        → Session terminal event
+error       → {message}
 ```
 
 ### Four-Tier Capability Hierarchy
@@ -257,59 +294,79 @@ Agent Teams — Orchestration, goal decomposition, result synthesis
 
 ---
 
-## 📋 Platform Walkthrough
+## 🔑 Key Platform Features
 
-### Building an Agent (Agent Studio)
+### Click-to-Create Skills
 
-#### Step 1 — Choose your tier
+Skills are the primary unit of agent capability. Each skill is a named bundle of tools with a built-in SOP. Create one from the catalog UI:
 
-When creating an agent, the **Tier Picker** presents all three tiers with visual comparison cards showing speed, cost, and power indicators, example use-cases, and recommended defaults.
+1. **Tools section** → Register a tool (name + JSON schema, 30 seconds)
+2. **Skills section** → Create skill → pick tools → write SOP
+3. **Agent wizard** → Attach skill → done
 
-```
-┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐
-│ ⚡ Lite           │  │ 🔗 Workflow       │  │ 🧠 Deep           │
-│ Instant response │  │ Durable pipeline │  │ Autonomous agent │
-│ < 2 s            │  │ Seconds–minutes  │  │ Minutes–hours    │
-│                  │  │                  │  │                  │
-│ • FAQ bots       │  │ • Support router │  │ • Incident resp. │
-│ • Classifiers    │  │ • Data pipeline  │  │ • Research agent │
-│ • Quick lookups  │  │ • Approval flow  │  │ • Code review    │
-│                  │  │                  │  │                  │
-│ Speed  ████░░░   │  │ Speed  ██░░░░░   │  │ Speed  █░░░░░░   │
-│ Cost   █░░░░░░   │  │ Cost   ███░░░░   │  │ Cost   ██████░   │
-│ Power  ██░░░░░   │  │ Power  █████░    │  │ Power  ███████   │
-└──────────────────┘  └──────────────────┘  └──────────────────┘
-```
+The same skill can be reused across any number of agents. Version it, stage it, promote it — all through the UI.
 
-#### Step 2 — Fill in identity
+### Click-to-Toggle Guardrails
 
-- **Name** and **description**
-- **Tags** (for search and filtering)
-- **Model** (any model available in your LiteLLM config)
-- **System prompt** (or use the AI Manifest Assistant to generate one)
+Every agent has a **Safety** tab with individually toggleable guardrails:
 
-#### Step 3 — Attach skills
+- **PII Detection & Redaction** — strips sensitive data before it leaves the platform
+- **Harmful Content Filter** — LLM-based check on all inputs and outputs
+- **Prompt Injection Protection** — catches adversarial instruction injection
+- **Custom Checks** — regex or LLM-based rules you define
 
-Skills are pre-composed tool bundles with defined SOPs. Attach from the tenant catalog or system catalog. Each skill has a description, tool list, mutating flag, and approval policy.
+Admin-managed guardrails are marked with a badge and cannot be disabled by tenant users.
 
-#### Step 4 — Configure safety
+### Durable Execution
 
-- **Guardrails**: Select platform-provided content filters and compliance checks. All guardrails are individually toggleable; admin-managed ones are marked with a badge.
-- **Hooks**: Attach pre/post-execution hooks (audit_log, cost_meter, hitl_intercept, rate_limit).
+All workflow and deep agent runs are backed by Temporal — resumable from the last checkpoint after crashes, deployments, or network partitions. Lite agents trade durability for zero latency.
 
-#### Step 5 — Review & create
+### Human-in-the-Loop (HITL)
 
-Final summary shows tier badge, attached skills, guardrails, and execution limits. One click to create.
+Workflow and deep agents automatically pause on mutating tool calls and emit an `approval` event. Approve or reject via:
+- Agent Studio UI (real-time approval widget)
+- Webhook integration (programmatic approval)
+- Temporal signal (`approve_step` / `reject_step`)
+
+### Multi-Tenancy
+
+- **PostgreSQL RLS**: Row-level security via `SET LOCAL app.tenant_id` — no cross-tenant leakage
+- **Redis Namespacing**: Per-tenant key prefixes for session and rate limit caches
+- **Temporal Task Queues**: Per-tenant queues for isolation and independent scaling
+- **Vector DB Partitioning**: Per-tenant pgvector embeddings
+
+### AI-Assisted Agent Design (Manifest Assistant)
+
+Embedded in the Create Agent wizard:
+1. Reads your tenant's live skill and tool catalog
+2. Accepts a plain-English description of what your agent should do
+3. Recommends a system prompt, relevant skills, and highlights capability gaps
+4. Streams results via SSE — one click applies recommendations to the form
+
+### MCP Integration
+
+Connect external data sources as Model Context Protocol servers:
+- Register per-tenant MCP endpoints (PagerDuty, GitHub, Jira, Datadog, Bloomberg)
+- MCP Registry auto-discovers available tools from each server
+- Agents call MCP tools identically to platform tools — same Skill Dispatcher path
+- Platform MCP Server (port 8091) exposes platform capabilities to external MCP clients
+
+### Enterprise Security
+
+- **HMAC Webhook Validation**: SHA-256 signed inbound events
+- **OIDC Token Issuance**: Industry-standard identity federation
+- **JIT Credential Fetching**: Credentials retrieved at activity time, never stored at rest
+- **Tenant Isolation**: Every resource scoped to a tenant; RLS enforced at database layer
 
 ---
 
 ## 🧠 Knowledge Graph Workspace
 
-The **Knowledge Graphs** section in Agent Studio lets domain architects design, visualize, and manage their tenant's knowledge graphs — the structural context that agents query during reasoning.
+The **Knowledge Graphs** section lets domain architects design, visualize, and manage their tenant's knowledge graphs — structural context that agents query during reasoning.
 
 ### KG Builder (AI-Assisted)
 
-Describe your domain in plain English and the **KG-Architect system agent** builds the graph:
+Describe your domain in plain English and the KG-Architect system agent builds the graph:
 
 ```
 You: "We have 3 services. api-gateway depends on both
@@ -330,23 +387,11 @@ KG-Architect:
 Done! 4 nodes, 4 edges. Graph preview updated →
 ```
 
-Real-time graph preview updates as each tool call executes.
-
 ### KG Visualizer
 
-Interactive graph canvas with:
-- Pan / zoom / node drag
-- Node colors by entity type
-- Edge labels for relationship types
-- Click any node → inspect properties and connections
-- "Traverse" button → expand N-hop subgraph
-- Search entities by name, type, or property value
-- Statistics panel: node counts, relationship distribution, densest nodes
-- Export as JSON or PNG
+Interactive graph canvas: pan, zoom, drag nodes, click to inspect, traverse N-hop subgraphs, search by name/type/property, export as JSON or PNG.
 
 ### Agent-Callable KG Tools
-
-Five system tools make KG data available to every agent:
 
 | Tool | Description |
 |------|-------------|
@@ -358,98 +403,56 @@ Five system tools make KG data available to every agent:
 
 ---
 
+## 🍳 Domain Cookbook System
+
+Import a vertical solution in one click and have production-ready agents running in under 2 hours:
+
+1. **Agent Studio → Cookbooks**
+2. Select vertical (DevOps/SRE, Fintech, Healthcare)
+3. One-click import → agent templates, skills, KG schema, seed KG created in your tenant
+4. Customize system prompts and attach your MCP credentials
+5. Deploy
+
+Each cookbook ships with pre-built agent manifests, domain skill bundles, KG ontology, MCP recommendations, and a starter knowledge graph with common entities pre-populated.
+
+---
+
 ## 💡 Examples
 
-### Example 1 — FAQ Bot (Lite tier)
-
-A fast customer-facing assistant with no tool use.
+### FAQ Bot (Lite tier)
 
 ```bash
-# Create agent
-curl -X POST http://localhost:8088/api/v1/agents \
-  -H "Content-Type: application/json" \
-  -H "X-Tenant-ID: acme-corp" \
-  -d '{
-    "name": "FAQ Bot",
-    "tier": "lite",
-    "model": "gpt-4o-mini",
-    "system_prompt": "You are a helpful customer support assistant for ACME Corp. Answer questions about our products concisely.",
-    "skills": [],
-    "execution_config": {
-      "max_duration_seconds": 10,
-      "max_tool_calls": 0,
-      "max_tokens": 500,
-      "max_cost_usd": 0.01
-    }
-  }'
-
-# Chat with it via API Gateway
 curl -X POST http://localhost:8080/api/v1/sessions \
   -H "Content-Type: application/json" \
   -H "X-Tenant-ID: acme-corp" \
-  -d '{
-    "agent_id": "<agent-id>",
-    "prompt": "What is your return policy?"
-  }'
+  -d '{"agent_id": "<agent-id>", "prompt": "What is your return policy?"}'
 # Returns: {"workflow_id":"lite-wf-...", "status":"RUNNING"}
 # Poll: GET /api/v1/sessions/{id}/poll
 ```
 
-### Example 2 — Support Ticket Router (Workflow tier)
-
-Routes tickets through a multi-step pipeline with an approval gate.
+### Support Ticket Router (Workflow tier)
 
 ```json
 {
   "name": "Support Router",
   "tier": "workflow",
   "model": "gpt-4o",
-  "system_prompt": "You are a support ticket routing agent.",
-  "skills": [
-    {"name": "ticket-classifier", "version": "1.0"},
-    {"name": "crm-updater", "version": "2.1"}
-  ],
+  "skills": ["ticket-classifier", "crm-updater"],
   "execution_config": {
-    "max_duration_seconds": 300,
-    "max_tool_calls": 20,
     "hitl_on_mutating": true,
     "steps": [
-      {"id": "s1", "name": "Classify", "type": "skill", "skill_id": "ticket-classifier"},
-      {"id": "s2", "name": "Approve Routing", "type": "approval",
-       "approval_message": "Route this ticket to Tier 2?", "depends_on": ["s1"]},
-      {"id": "s3", "name": "Update CRM", "type": "skill",
-       "skill_id": "crm-updater", "depends_on": ["s2"]}
+      {"id": "s1", "type": "skill", "skill_id": "ticket-classifier"},
+      {"id": "s2", "type": "approval", "approval_message": "Route to Tier 2?", "depends_on": ["s1"]},
+      {"id": "s3", "type": "skill", "skill_id": "crm-updater", "depends_on": ["s2"]}
     ]
   }
 }
 ```
 
-### Example 3 — Incident Response Agent (Deep tier)
+### Incident Response Agent (Deep tier)
 
-Autonomous SRE agent that queries KG topology and live MCP data.
+Autonomous SRE agent — triggered by a PagerDuty P1 alert:
 
-```json
-{
-  "name": "SRE Incident Responder",
-  "tier": "deep",
-  "model": "gpt-4o",
-  "system_prompt": "You are an autonomous SRE agent. When given an alert, use kg-query to understand service dependencies, then check MCP tools for live metrics. Synthesize root cause and recommend remediation.",
-  "skills": [
-    {"name": "incident-triage", "version": "1.0"},
-    {"name": "k8s-remediation", "version": "1.2"}
-  ],
-  "execution_config": {
-    "max_duration_seconds": 3600,
-    "max_tool_calls": null,
-    "planning_mode": "dynamic",
-    "self_correction": true,
-    "memory_cross_session": true,
-    "hitl_on_mutating": true
-  }
-}
-```
-
-**Flow when triggered by a PagerDuty P1 alert:**
 ```
 1. kg-query(api-gateway, depth=2)
    → [user-service, product-service, shared-postgres]
@@ -469,30 +472,7 @@ Autonomous SRE agent that queries KG topology and live MCP data.
 6. k8s-remediation skill executes
 ```
 
-### Example 4 — Knowledge Graph Topology Query
-
-Using the KG-Architect to build a fintech domain graph:
-
-```
-Architect: "We track portfolios. Each portfolio contains positions.
-            Each position is in a security. Securities have a risk_score."
-
-KG-Architect builds:
-  • Entities: Portfolio, Position, Security
-  • Relationships: contains (Portfolio→Position), held_in (Position→Security)
-  • Properties: Security.risk_score, Portfolio.total_value
-
-Agents can now call:
-  kg-query(portfolio-id="P123", depth=3)
-  → Returns full portfolio → position → security topology
-
-  kg-search("high risk securities")
-  → Vector search returns securities with risk_score > 8.0
-```
-
-### Example 5 — Multi-Agent Team
-
-A team of specialized deep agents working in parallel:
+### Multi-Agent Team
 
 ```
 Goal: "Analyze Q3 performance across sales, engineering, and support"
@@ -505,93 +485,6 @@ Team Orchestrator decomposes:
 All three run in parallel (Temporal child workflows).
 Orchestrator synthesizes: "Q3 synthesis report across all three domains."
 ```
-
----
-
-## 🍳 Domain Cookbook System
-
-Cookbooks are pre-built solution templates for vertical industries. Each cookbook contains:
-
-```
-infra/platform/cookbooks/<vertical>/
-├── manifest.yaml              # Cookbook metadata and version
-├── kg-schema.yaml             # Domain ontology (entity + relationship types)
-├── agents/                    # Pre-built agent manifest templates
-│   ├── manifest-sre-agent.yaml
-│   └── manifest-oncall-agent.yaml
-├── skills/                    # Domain-specific skill bundles
-│   ├── incident-triage.yaml
-│   └── k8s-remediation.yaml
-├── mcp-recommendations.yaml   # Suggested external integrations
-└── seed-kg.yaml               # Starter KG (common entities pre-populated)
-```
-
-**Import a cookbook (no-code):**
-1. Agent Studio → Cookbooks
-2. Select vertical (DevOps/SRE, Fintech, Healthcare)
-3. One-click import → agent templates, skills, KG schema, seed KG created in your tenant
-4. Customize system prompts and attach your MCP credentials
-5. Deploy in < 2 hours
-
----
-
-## 🔑 Key Features
-
-### Durable Execution
-All workflow and deep agent runs are backed by Temporal — resumable from last checkpoint after crashes, deployments, or network partitions. Lite agents trade durability for zero latency.
-
-### Multi-Tenancy
-- **PostgreSQL RLS**: Row-level security via `SET LOCAL app.tenant_id` — no cross-tenant data leakage
-- **Redis Namespacing**: Per-tenant key prefixes for session and rate limit caches
-- **Temporal Task Queues**: Per-tenant queues for isolation and independent scaling
-- **Vector DB Partitioning**: Per-tenant pgvector embeddings
-
-### Human-in-the-Loop (HITL)
-Workflow and deep tier agents automatically pause execution on mutating tool calls and emit an `approval` event. Approved or rejected via:
-- Agent Studio UI (real-time approval widget)
-- Webhook integration (programmatic approval)
-- Temporal signal (direct `approve_step` / `reject_step` signals)
-
-### Guardrails & Hooks
-
-**Guardrails** — Content and compliance filters configurable per agent:
-- PII detection and redaction
-- Harmful content filtering
-- Prompt injection protection
-- Custom regex/LLM-based checks
-
-**Hooks** — Pre/post-execution middleware:
-- `audit_log` — Immutable audit trail of every tool call and LLM invocation
-- `cost_meter` — Per-agent, per-skill token and cost tracking
-- `hitl_intercept` — Gate mutating operations behind human approval
-- `rate_limit` — Per-tenant, per-agent request throttling
-
-### AI-Assisted Agent Design (Manifest Assistant)
-
-The **Manifest Assistant** is a platform system agent embedded in the Create Agent wizard. It:
-1. Reads your tenant's live skill and tool catalog
-2. Accepts a natural-language description of what your agent should do
-3. Recommends a system prompt, relevant skills, and highlights capability gaps
-4. Streams results via SSE; one-click applies to the form
-
-### MCP Integration
-
-Connect external data sources as Model Context Protocol (MCP) servers:
-- Register per-tenant MCP endpoints (PagerDuty, GitHub, Jira, Datadog, Bloomberg)
-- MCP Registry auto-discovers available tools from each server
-- Agents call MCP tools exactly like platform tools — same Skill Dispatcher path
-- Platform MCP Server (port 8091) exposes platform capabilities to external MCP clients
-
-### Real-Time Streaming
-- **Server-Sent Events**: `GET /api/v1/sessions/{id}/poll` streams thinking → tool_call → text → done events
-- **WebSocket**: Full-duplex agent communication for interactive sessions
-- Lite sessions and Temporal sessions share identical poll API — frontend unchanged
-
-### Enterprise Security
-- **HMAC Webhook Validation**: SHA-256 signed inbound events (disable with `WEBHOOK_HMAC_DISABLED=true` locally)
-- **OIDC Token Issuance**: Industry-standard identity federation
-- **JIT Credential Fetching**: Credentials retrieved at activity time, never stored at rest
-- **Tenant Isolation**: Every resource scoped to a tenant; RLS enforced at database layer
 
 ---
 
@@ -622,7 +515,7 @@ enterprise-agentic-platform/
 ├── services/                     # Core microservices (Go/Python)
 │   ├── api-gateway/              # Entry point; HMAC validation; SSE proxy       :8080
 │   ├── workflow-initiator/       # Tier routing; Temporal dispatcher; lite runner :8081
-│   ├── agent-workers/            # Temporal workers; PydanticAI ReAct loop
+│   ├── agent-workers/            # Temporal workers; ReAct loop
 │   │   ├── workflows_agent.py    # AgentWorkflow (deep tier)
 │   │   ├── workflows_workflow_agent.py  # WorkflowAgentRun (workflow tier)
 │   │   ├── activities_agent.py   # Deep tier activities
@@ -773,11 +666,7 @@ curl http://localhost:8089/health    # Admin API
 
 ### Temporal UI
 
-Open **http://localhost:8233** to:
-- Browse workflow executions by status
-- Inspect event histories step by step
-- Check task queue depths
-- Signal workflows (e.g., `approve_step`)
+Open **http://localhost:8233** to browse workflow executions, inspect event histories step by step, check task queue depths, and signal workflows (e.g., `approve_step`).
 
 ### Postgres (with RLS)
 
@@ -800,20 +689,6 @@ docker compose logs -f temporal
 docker compose logs -f litellm
 ```
 
-### LiteLLM Debug
-
-```bash
-# Check what models are configured
-curl http://localhost:4000/v1/models \
-  -H "Authorization: Bearer sk-litellm-dev"
-
-# Test embedding
-curl http://localhost:4000/v1/embeddings \
-  -H "Authorization: Bearer sk-litellm-dev" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"local-embedding","input":"knowledge graph search"}'
-```
-
 ---
 
 ## 🏗️ Technology Stack
@@ -822,21 +697,21 @@ curl http://localhost:4000/v1/embeddings \
 |-------|-----------|
 | **Workflow orchestration** | Temporal (durable execution, HITL signals, task queues) |
 | **LLM gateway** | LiteLLM (OpenAI-compatible; routes to any provider) |
-| **Agent reasoning** | PydanticAI (deep/workflow tier ReAct loop) |
+| **Agent reasoning** | ReAct loop (deep/workflow tier) with native Ollama support |
 | **Backend services** | Go 1.22 (microservices, HTTP APIs) |
-| **Agent workers** | Python 3.11 (Temporal SDK, PydanticAI, AsyncOpenAI) |
+| **Agent workers** | Python 3.11 (Temporal SDK, AsyncOpenAI) |
 | **Frontend** | Next.js 14, React, Tailwind CSS, shadcn/ui |
 | **Primary database** | PostgreSQL 15 + pgvector (state, KG, embeddings, RLS) |
 | **Cache** | Redis 7 (session cache, rate limiting) |
 | **Container runtime** | Docker Compose (local), Kubernetes/Helm (production) |
 | **Observability** | Temporal UI, Streamlit dashboard, structured JSON logging |
-| **Local models** | Ollama (llama3.1:8b, nomic-embed-text) |
+| **Local models** | Ollama (llama3.1:8b, qwen3, nomic-embed-text) |
 
 ---
 
 ## 🔒 Multi-Tenancy & Security
 
-Every resource in A1 is **tenant-scoped** with multiple isolation layers:
+Every resource in A1 Agent Platform is **tenant-scoped** with multiple isolation layers:
 
 1. **Database**: PostgreSQL RLS with `SET LOCAL app.tenant_id` — queries automatically filtered
 2. **Cache**: Redis keys prefixed with `tenant:<id>:` — no cross-contamination
@@ -844,25 +719,6 @@ Every resource in A1 is **tenant-scoped** with multiple isolation layers:
 4. **Vectors**: pgvector rows include `tenant_id` column — semantic search never crosses tenants
 5. **API**: All requests require `X-Tenant-ID` header — validated at API Gateway
 6. **MCP Servers**: Per-tenant credentials for external integrations (PagerDuty, GitHub, etc.)
-
----
-
-## 🎨 Design Decisions
-
-### Three-Tier Agent Model
-Not all agents need Temporal's overhead. Lite tier agents respond in < 2 s by running directly in-process. The same poll API is used for all tiers, so the frontend and api-gateway are unaware of the execution engine.
-
-### Temporal as Primary Execution Engine
-Workflow and deep tier agents use Temporal for crash recovery, HITL signaling, and operational visibility. The ~200 ms scheduling overhead is negligible against LLM call latency (typically 1–10 s).
-
-### LiteLLM as Provider Gateway
-All LLM traffic routes through LiteLLM, which provides a single OpenAI-compatible endpoint regardless of actual provider (Anthropic, OpenAI, Ollama, Azure). Provider switching requires only a config change.
-
-### Skill Dispatcher as Tool Router
-Direct tool execution is prohibited. All tool calls go through the Skill Dispatcher, which applies pre/post hooks (audit, cost, rate limit, HITL) consistently regardless of which agent or tier invoked the tool.
-
-### pgvector for KG Semantic Search
-Knowledge graph entity search uses pgvector embeddings stored in PostgreSQL alongside the graph tables. This avoids a separate vector database service while providing semantic search capabilities (e.g., "find services that depend on the cache layer").
 
 ---
 

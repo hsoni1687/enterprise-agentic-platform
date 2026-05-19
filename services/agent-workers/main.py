@@ -17,6 +17,7 @@ try:
         execute_code, reasoning_step, invoke_skill, discover_mcp_tools, invoke_mcp_tool,
         resolve_mcp_servers, pydantic_ai_reasoning_step, fetch_system_tools,
         resolve_skill_context, invoke_direct_tool,
+        execute_react_tool,   # ReAct loop tool executor
     )
     from activities_memory import recall_memories, store_memory
     from activities_orchestration import (
@@ -85,6 +86,8 @@ async def main():
                 plan_tasks, apply_guardrails, run_hooks,
                 validate_task_result, handle_task_failure,
                 execute_single_task, synthesize_final_answer,
+                # deep-tier ReAct loop
+                execute_react_tool,
                 # workflow-tier activities
                 run_single_llm_step,
                 execute_workflow_step_tool,

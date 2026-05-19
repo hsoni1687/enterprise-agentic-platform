@@ -32,14 +32,16 @@ class AgentWorkflow:
         prompt    = request.get("prompt") or request.get("payload", {}).get("prompt", "Hello")
         manifest  = request.get("manifest") or {}
 
-        system_prompt  = manifest.get("system_prompt") or "You are a helpful assistant."
-        model          = manifest.get("model") or request.get("model", "mock-gpt-4o")
-        max_iterations = int(manifest.get("max_iterations") or 5)
-        skills         = manifest.get("skills") or []
-        direct_tools   = manifest.get("tools") or []
-        explicit_mcp   = manifest.get("mcp_servers") or []
+        system_prompt        = manifest.get("system_prompt") or "You are a helpful assistant."
+        model                = manifest.get("model") or request.get("model", "mock-gpt-4o")
+        max_iterations       = int(manifest.get("max_iterations") or 5)
+        skills               = manifest.get("skills") or []
+        direct_tools         = manifest.get("tools") or []
+        explicit_mcp         = manifest.get("mcp_servers") or []
+        autonomy_level       = manifest.get("autonomy_level", "none")
+        knowledge_graph_ids  = manifest.get("knowledge_graph_ids") or []
 
-        workflow.logger.info(f"[WORKFLOW] agent={agent_id} model={model}")
+        workflow.logger.info(f"[WORKFLOW] agent={agent_id} model={model} autonomy={autonomy_level}")
 
         # ── manifest-assistant-system: legacy path, unchanged ─────────────────
         if agent_id == "manifest-assistant-system":
@@ -52,6 +54,7 @@ class AgentWorkflow:
         return await self._orchestrated_run(
             agent_id, tenant_id, prompt, system_prompt, model,
             max_iterations, skills, direct_tools, explicit_mcp,
+            autonomy_level, knowledge_graph_ids,
         )
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -69,7 +72,11 @@ class AgentWorkflow:
         skills: list,
         direct_tools: list,
         explicit_mcp: list,
+        autonomy_level: str = "none",
+        knowledge_graph_ids: list = None,
     ) -> str:
+        if knowledge_graph_ids is None:
+            knowledge_graph_ids = []
 
         # ── Phase 1: Parallel context assembly ────────────────────────────────
         self._emit({"type": "thinking", "content": "Assembling agent context..."})
@@ -113,10 +120,29 @@ class AgentWorkflow:
             workflow.logger.warning(f"[WORKFLOW] Memory recall skipped: {e}")
             past_memories = []
 
-        mcp_servers  = await mcp_handle
-        system_tools = await tools_handle
-        guardrails   = await guardrails_handle
-        hooks        = await hooks_handle
+        try:
+            mcp_servers = await mcp_handle
+        except Exception as e:
+            workflow.logger.warning(f"[WORKFLOW] MCP server resolution skipped: {e}")
+            mcp_servers = []
+
+        try:
+            system_tools = await tools_handle
+        except Exception as e:
+            workflow.logger.warning(f"[WORKFLOW] System tools fetch skipped: {e}")
+            system_tools = []
+
+        try:
+            guardrails = await guardrails_handle
+        except Exception as e:
+            workflow.logger.warning(f"[WORKFLOW] Guardrails load skipped: {e}")
+            guardrails = []
+
+        try:
+            hooks = await hooks_handle
+        except Exception as e:
+            workflow.logger.warning(f"[WORKFLOW] Hooks load skipped: {e}")
+            hooks = []
 
         # ── Phase 1b: Dependent discoveries ───────────────────────────────────
         mcp_tool_defs = []
@@ -179,6 +205,29 @@ class AgentWorkflow:
             f"Active guardrails: {guardrail_names}\n"
             f"Agent system prompt (excerpt): {system_prompt[:400]}"
         )
+
+        # ── ReAct gate: autonomous agents bypass plan-execute, use dynamic loop ─
+        if autonomy_level == "autonomous":
+            workflow.logger.info(f"[WORKFLOW] autonomy=autonomous → entering ReAct loop")
+            tool_defs, tool_router = self._build_react_tools(
+                direct_tools, system_tools, resolved_skills, mcp_tool_defs, knowledge_graph_ids
+            )
+            return await self._react_loop(
+                agent_id=agent_id,
+                tenant_id=tenant_id,
+                prompt=prompt,
+                system_prompt=system_prompt,
+                model=model,
+                max_iterations=max_iterations,
+                tool_defs=tool_defs,
+                tool_router=tool_router,
+                guardrails=guardrails,
+                hooks=hooks,
+                agent_context={
+                    "agent_id": agent_id, "tenant_id": tenant_id,
+                    "model": model, "system_prompt": system_prompt,
+                },
+            )
 
         # ── Phase 2: Planning ─────────────────────────────────────────────────
         self._emit({"type": "thinking", "content": "Planning execution tasks..."})
@@ -472,6 +521,377 @@ class AgentWorkflow:
             )
         except Exception as e:
             workflow.logger.warning(f"[WORKFLOW] store_memory skipped: {e}")
+
+        self._emit({"type": "text", "content": final_answer})
+        self._emit({"type": "done"})
+        return f"Agent {agent_id} completed: {final_answer}"
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # ReAct loop — true agentic execution (autonomy_level = "full")
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _build_react_tools(
+        self,
+        direct_tools: list,
+        system_tools: list,
+        resolved_skills: list,
+        mcp_tool_defs: list,
+        knowledge_graph_ids: list,
+    ) -> tuple[list, dict]:
+        """
+        Convert all available resources into two structures:
+          tool_defs  — OpenAI-format list passed to the LLM so it knows what it can call
+          tool_router — serialisable dict mapping every tool_name → routing metadata
+                        consumed by the execute_react_tool activity
+        """
+        tool_defs: list  = []
+        tool_router: dict = {}
+
+        # ── MCP tools (already in OpenAI format from discover_mcp_tools) ─────
+        for td in mcp_tool_defs:
+            fn   = td.get("function", {})
+            name = fn.get("name", "")
+            meta = td.get("__mcp_meta", {})
+            if not name:
+                continue
+            tool_defs.append({"type": "function", "function": fn})
+            tool_router[name] = {
+                "type":      "mcp",
+                "server_id": meta.get("server_id", ""),
+                "tool_name": meta.get("tool_name", name.split("__")[-1]),
+            }
+
+        # ── Skills ────────────────────────────────────────────────────────────
+        for skill in resolved_skills:
+            if not isinstance(skill, dict):
+                continue
+            name = skill.get("name", "")
+            if not name:
+                continue
+            exposed_name = f"skill__{name}"
+            tool_defs.append({
+                "type": "function",
+                "function": {
+                    "name":        exposed_name,
+                    "description": skill.get("description", f"Skill: {name}"),
+                    "parameters":  skill.get("parameters") or {"type": "object", "properties": {}},
+                },
+            })
+            tool_router[exposed_name] = {"type": "skill", "name": name}
+
+        # ── Direct / system tools ─────────────────────────────────────────────
+        for tool in (direct_tools or []) + (system_tools or []):
+            if not isinstance(tool, dict):
+                continue
+            name = tool.get("name", "")
+            if not name:
+                continue
+            exposed_name = f"tool__{name}"
+            tool_defs.append({
+                "type": "function",
+                "function": {
+                    "name":        exposed_name,
+                    "description": tool.get("description", f"Tool: {name}"),
+                    "parameters":  tool.get("parameters") or {"type": "object", "properties": {}},
+                },
+            })
+            tool_router[exposed_name] = {"type": "tool", "name": name}
+
+        # ── Knowledge-graph search (added automatically if KGs are attached) ──
+        if knowledge_graph_ids:
+            tool_defs.append({
+                "type": "function",
+                "function": {
+                    "name":        "kg_search",
+                    "description": (
+                        "Search the agent's attached knowledge graphs for entities, "
+                        "facts, or relationships relevant to a query."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type":        "string",
+                                "description": "Natural-language search query",
+                            },
+                            "top_k": {
+                                "type":        "integer",
+                                "description": "Max number of results (default 5)",
+                            },
+                        },
+                        "required": ["query"],
+                    },
+                },
+            })
+            tool_router["kg_search"] = {"type": "kg", "graph_ids": knowledge_graph_ids}
+
+        return tool_defs, tool_router
+
+    async def _react_loop(
+        self,
+        agent_id: str,
+        tenant_id: str,
+        prompt: str,
+        system_prompt: str,
+        model: str,
+        max_iterations: int,
+        tool_defs: list,
+        tool_router: dict,
+        guardrails: list,
+        hooks: list,
+        agent_context: dict,
+    ) -> str:
+        """
+        True ReAct (Reason → Act → Observe) loop.
+
+        The LLM is told WHAT to achieve (the user prompt + system prompt).
+        It decides HOW — which tools to call, in what order, and when to stop.
+        Every tool result is fed back into the conversation before the next
+        reasoning step, so the agent can change course based on observations.
+
+        Loop terminates when:
+          • The LLM responds without a tool call (it has a final answer), OR
+          • max_iterations is reached (safety ceiling), OR
+          • A critical guardrail blocks execution.
+        """
+        # Augment system prompt with ReAct behavioural instructions
+        react_system = system_prompt + """
+
+You are an autonomous agent with access to tools. Use them when you need real data.
+
+Your job:
+1. If the user asks for live data (account info, balances, transactions, customer records) — use the relevant tool. Do NOT make up or refuse this data.
+2. Call ONE tool at a time. After each result, decide if you have enough to answer.
+3. Stop calling tools as soon as you have enough information.
+4. Provide a clear, helpful final answer in plain language addressed directly to the user.
+
+Rules:
+- If a tool exists that can answer the question, USE IT. Never say you cannot access data when a tool can fetch it.
+- Call each tool at most ONCE. Do not repeat the same call.
+- If a tool returns an error, report what you found and acknowledge the limitation.
+- Your final answer must be in plain language, never raw JSON.
+"""
+
+        messages = [
+            {"role": "system", "content": react_system},
+            {"role": "user",   "content": prompt},
+        ]
+
+        final_answer: Optional[str] = None
+        tools_arg = tool_defs if tool_defs else None   # None → LLM has no tools
+
+        # Deduplication: cache tool results so repeated identical calls reuse the result
+        # and the LLM is nudged to stop looping and synthesise.
+        tool_result_cache: dict[str, str] = {}
+        consecutive_repeats = 0
+        # Force synthesis threshold: after this many steps, remove tools so the LLM must answer.
+        # Use half of max_iterations so we get at least half the steps as pure reasoning time,
+        # rather than waiting until the last 2 steps.
+        force_synthesis_after = max(2, max_iterations // 2)
+
+        self._emit({"type": "thinking", "content": f"Starting ReAct loop (max {max_iterations} steps)..."})
+
+        for step in range(max_iterations):
+            workflow.logger.info(f"[REACT] step={step + 1}/{max_iterations} agent={agent_id}")
+            self._emit({"type": "thinking", "content": f"Reasoning step {step + 1}..."})
+
+            # ── Forced synthesis: past threshold, remove tools so LLM must answer ──
+            if step >= force_synthesis_after and tools_arg is not None:
+                tools_arg = None   # no more tools → LLM is forced to synthesise
+                workflow.logger.info(
+                    f"[REACT] agent={agent_id} forced-synthesis at step {step + 1} "
+                    f"(threshold={force_synthesis_after})"
+                )
+                messages.append({
+                    "role":    "user",
+                    "content": (
+                        "You have gathered sufficient information from your tool calls. "
+                        "Now synthesise everything you have learned and provide a clear, "
+                        "complete final answer to the original question. "
+                        "Do NOT call any more tools."
+                    ),
+                })
+
+            # ── REASON: ask LLM what to do next ──────────────────────────────
+            decision = await workflow.execute_activity(
+                "reasoning_step",
+                args=[messages, model, tools_arg],
+                start_to_close_timeout=timedelta(seconds=90),
+                retry_policy=RetryPolicy(maximum_attempts=2),
+            )
+
+            content          = decision.get("content") or ""
+            thinking_content = decision.get("thinking_content") or ""
+            tool_calls       = decision.get("tool_calls") or []
+
+            # No tool calls → LLM has its final answer
+            if not tool_calls:
+                final_answer = content
+                workflow.logger.info(f"[REACT] agent={agent_id} reached final answer at step {step + 1}")
+                # Still emit the thinking block for the final answer step if present
+                if thinking_content:
+                    self._emit({"type": "thinking", "content": thinking_content})
+                break
+
+            # Emit thinking: prefer the model's own reasoning (thinking_content from Ollama),
+            # fall back to its content text, and last resort synthesise from tool names.
+            if thinking_content:
+                self._emit({"type": "thinking", "content": thinking_content})
+            elif content:
+                self._emit({"type": "thinking", "content": content})
+            else:
+                tool_names = [tc.get("function", {}).get("name", "") for tc in tool_calls]
+                tool_args_list = []
+                for tc in tool_calls:
+                    try:
+                        args = json.loads(tc.get("function", {}).get("arguments", "{}"))
+                        if args:
+                            args_str = ", ".join(f"{k}={v}" for k, v in list(args.items())[:2])
+                            tool_args_list.append(args_str)
+                    except Exception:
+                        pass
+                desc = f"Calling **{', '.join(tool_names)}**"
+                if tool_args_list:
+                    desc += f" with {' | '.join(tool_args_list)}"
+                self._emit({"type": "thinking", "content": desc})
+
+            # Append assistant message with tool calls to history
+            messages.append({
+                "role":       "assistant",
+                "content":    content or None,
+                "tool_calls": [
+                    {
+                        "id":   tc.get("id", f"call_{step}_{i}"),
+                        "type": "function",
+                        "function": {
+                            "name":      tc.get("function", {}).get("name", ""),
+                            "arguments": tc.get("function", {}).get("arguments", "{}"),
+                        },
+                    }
+                    for i, tc in enumerate(tool_calls)
+                ],
+            })
+
+            # ── ACT + OBSERVE: execute each tool, append result ───────────────
+            for tc in tool_calls:
+                tool_id   = tc.get("id", f"call_{step}")
+                fn        = tc.get("function", {})
+                tool_name = fn.get("name", "")
+                try:
+                    tool_args = json.loads(fn.get("arguments", "{}"))
+                except Exception:
+                    tool_args = {}
+
+                # Dedup key: tool + args fingerprint
+                cache_key = f"{tool_name}::{json.dumps(tool_args, sort_keys=True)}"
+                cached = tool_result_cache.get(cache_key)
+
+                # Guardrail check on tool inputs
+                tool_result = None
+                if cached is not None:
+                    # Repeated identical call — serve from cache silently (no UI event emitted).
+                    # The user already saw this call; showing it again would be noisy.
+                    tool_result = cached
+                    consecutive_repeats += 1
+                    workflow.logger.info(
+                        f"[REACT] cache hit for {tool_name} (repeat #{consecutive_repeats})"
+                    )
+                    if consecutive_repeats >= 3:
+                        # Model is stuck in a hard loop and ignoring nudges — force exit now.
+                        # Synthesise from whatever we have in the conversation history.
+                        workflow.logger.info(
+                            f"[REACT] agent={agent_id} hard-break: model ignored nudge "
+                            f"{consecutive_repeats} times, forcing final answer"
+                        )
+                        # Collect all tool results observed so far as context
+                        tool_observations = [
+                            m["content"] for m in messages
+                            if m.get("role") == "tool" and m.get("content")
+                        ]
+                        summary = "\n".join(tool_observations[-3:]) if tool_observations else "No data retrieved."
+                        final_answer = (
+                            f"Based on the information retrieved:\n\n{summary}\n\n"
+                            "I was unable to find a more specific answer with the available tools."
+                        )
+                        break
+                    # After 1 repeat inject a nudge
+                    if consecutive_repeats >= 1:
+                        messages.append({
+                            "role":    "user",
+                            "content": (
+                                "You have already retrieved this information. "
+                                "You now have everything you need. "
+                                "Please provide your final answer to the user directly, "
+                                "without calling any more tools."
+                            ),
+                        })
+                elif guardrails:
+                    guard = await workflow.execute_activity(
+                        "apply_guardrails",
+                        args=[json.dumps(tool_args), guardrails, "input"],
+                        start_to_close_timeout=timedelta(seconds=10),
+                        retry_policy=RetryPolicy(maximum_attempts=1),
+                    )
+                    if guard.get("blocked"):
+                        tool_result = f"[Blocked by guardrail: {guard.get('block_reason')}]"
+
+                # Execute tool (skip if already resolved via cache/guardrail)
+                if tool_result is None:
+                    # Emit "before" event only for fresh (non-cached) tool calls
+                    self._emit({"type": "tool_call", "tool_name": tool_name, "tool_args": tool_args})
+                    try:
+                        tool_result = await workflow.execute_activity(
+                            "execute_react_tool",
+                            args=[tool_name, tool_args, agent_id, tenant_id, tool_router],
+                            start_to_close_timeout=timedelta(seconds=60),
+                            retry_policy=RetryPolicy(maximum_attempts=2),
+                        )
+                        consecutive_repeats = 0
+                        tool_result_cache[cache_key] = str(tool_result)
+                    except Exception as e:
+                        tool_result = f"Tool '{tool_name}' failed: {e}"
+                        workflow.logger.error(f"[REACT] tool={tool_name} error={e}")
+
+                    # Emit "after" event with result — only for fresh calls
+                    self._emit({
+                        "type":        "tool_call",
+                        "tool_name":   tool_name,
+                        "tool_args":   tool_args,
+                        "tool_result": str(tool_result)[:500],
+                    })
+
+                # OBSERVE: give the result back to the LLM
+                messages.append({
+                    "role":         "tool",
+                    "tool_call_id": tool_id,
+                    "content":      str(tool_result),
+                })
+
+                workflow.logger.info(
+                    f"[REACT] step={step + 1} tool={tool_name} "
+                    f"result_len={len(str(tool_result))}"
+                )
+
+            # If hard-break was triggered inside the inner loop, exit the outer loop too
+            if final_answer is not None:
+                break
+
+        # Safety fallback if we exhausted max_iterations
+        if final_answer is None:
+            final_answer = (
+                "I reached my maximum reasoning steps without completing the task. "
+                "Here is what I found so far:\n\n" + (content or "No conclusion reached.")
+            )
+
+        # ── Store to memory (fire-and-forget) ─────────────────────────────────
+        try:
+            workflow.start_activity(
+                "store_memory",
+                args=[f"Observation for '{prompt[:100]}': {final_answer[:300]}", agent_id],
+                start_to_close_timeout=timedelta(seconds=10),
+            )
+        except Exception as e:
+            workflow.logger.warning(f"[REACT] store_memory skipped: {e}")
 
         self._emit({"type": "text", "content": final_answer})
         self._emit({"type": "done"})

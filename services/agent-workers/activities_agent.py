@@ -238,26 +238,119 @@ async def resolve_mcp_servers(tenant_id: str, explicit_server_ids: list[str]) ->
 
 @activity.defn
 async def reasoning_step(messages: list[dict], model: str, tool_defs: Optional[list[dict]] = None) -> dict:
-    """Executes a single LLM reasoning step via the LLM Gateway."""
-    logging.info(f"[REASONING_STEP] Called with model={model}")
-    logging.info(f"[REASONING_STEP] LLM_GATEWAY_URL={os.getenv('LLM_GATEWAY_URL')}")
+    """Executes a single LLM reasoning step via the LLM Gateway.
 
-    gateway_url = os.getenv("LLM_GATEWAY_URL", "http://localhost:4000/v1")
-    api_key = os.getenv("OPENAI_API_KEY") or os.getenv("LITELLM_MASTER_KEY", "sk-litellm-dev")
-    client = AsyncOpenAI(base_url=gateway_url, api_key=api_key)
+    For Ollama models, calls the native Ollama API with think=True so the
+    model's internal reasoning is captured and returned as 'thinking_content'.
+    All other models go through LiteLLM as before.
+    """
+    logging.info(f"[REASONING_STEP] Called with model={model}")
 
     tools = tool_defs if tool_defs is not None else [_default_execute_code_tool()]
-
     logging.info(f"Calling LLM (model={model}, tools={[t['function']['name'] for t in tools]})")
     logging.info(f"[DEBUG] Messages structure: {json.dumps(messages, indent=2, default=str)}")
-    response = await client.chat.completions.create(
+
+    # ── Ollama native path — captures thinking field ──────────────────────────
+    if model.startswith("ollama/"):
+        ollama_model = model[len("ollama/"):]
+        ollama_base  = os.getenv("OLLAMA_API_BASE", "http://host.docker.internal:11434")
+
+        # Convert OpenAI-format messages → Ollama native format.
+        # Key differences:
+        #   - tool_calls[].function.arguments: OpenAI = JSON string, Ollama = dict
+        #   - tool_calls[].id / .type: not needed by Ollama
+        #   - tool result messages: Ollama doesn't use tool_call_id
+        #   - content: null not accepted by Ollama, use ""
+        def _to_ollama_messages(msgs: list[dict]) -> list[dict]:
+            out = []
+            for m in msgs:
+                role = m.get("role", "user")
+                if role == "assistant":
+                    tcs = m.get("tool_calls") or []
+                    ollama_msg: dict = {"role": "assistant", "content": m.get("content") or ""}
+                    if tcs:
+                        ollama_tcs = []
+                        for tc in tcs:
+                            fn = tc.get("function", {})
+                            args = fn.get("arguments", "{}")
+                            if isinstance(args, str):
+                                try:
+                                    args = json.loads(args)
+                                except Exception:
+                                    args = {}
+                            ollama_tcs.append({
+                                "function": {"name": fn.get("name", ""), "arguments": args}
+                            })
+                        ollama_msg["tool_calls"] = ollama_tcs
+                    out.append(ollama_msg)
+                elif role == "tool":
+                    # Ollama tool result — drop tool_call_id
+                    out.append({"role": "tool", "content": m.get("content") or ""})
+                else:
+                    out.append({"role": role, "content": m.get("content") or ""})
+            return out
+
+        # Convert OpenAI tool_defs format → Ollama tools format
+        ollama_tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name":        t["function"]["name"],
+                    "description": t["function"].get("description", ""),
+                    "parameters":  t["function"].get("parameters", {}),
+                },
+            }
+            for t in tools
+        ] if tools else []
+
+        payload: dict = {
+            "model":    ollama_model,
+            "messages": _to_ollama_messages(messages),
+            "stream":   False,
+            "think":    True,
+        }
+        if ollama_tools:
+            payload["tools"] = ollama_tools
+
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            resp = await client.post(f"{ollama_base}/api/chat", json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+
+        msg_data       = data.get("message", {})
+        content        = msg_data.get("content") or ""
+        thinking       = msg_data.get("thinking") or ""
+        raw_tool_calls = msg_data.get("tool_calls") or []
+
+        logging.info(f"[OLLAMA] thinking_len={len(thinking)} content_len={len(content)} tool_calls={len(raw_tool_calls)}")
+
+        result: dict = {"content": content, "thinking_content": thinking, "tool_calls": None}
+        if raw_tool_calls:
+            result["tool_calls"] = [
+                {
+                    "id": f"call_{i}",
+                    "function": {
+                        "name":      tc.get("function", {}).get("name", ""),
+                        "arguments": json.dumps(tc.get("function", {}).get("arguments", {})),
+                    },
+                }
+                for i, tc in enumerate(raw_tool_calls)
+            ]
+        return result
+
+    # ── LiteLLM path (non-Ollama models) ─────────────────────────────────────
+    gateway_url = os.getenv("LLM_GATEWAY_URL", "http://localhost:4000/v1")
+    api_key = os.getenv("OPENAI_API_KEY") or os.getenv("LITELLM_MASTER_KEY", "sk-litellm-dev")
+    openai_client = AsyncOpenAI(base_url=gateway_url, api_key=api_key)
+
+    response = await openai_client.chat.completions.create(
         model=model,
         messages=messages,
         tools=tools,
     )
 
     msg = response.choices[0].message
-    result = {"content": msg.content, "tool_calls": None}
+    result = {"content": msg.content, "thinking_content": "", "tool_calls": None}
     if msg.tool_calls:
         result["tool_calls"] = [
             {
@@ -433,3 +526,121 @@ async def pydantic_ai_reasoning_step(
             "continue_loop": False,
             "error": str(e),
         }
+
+
+# ─── ReAct tool executor ──────────────────────────────────────────────────────
+
+@activity.defn
+async def execute_react_tool(
+    tool_name: str,
+    tool_args: dict,
+    agent_id: str,
+    tenant_id: str,
+    tool_router: dict,
+) -> str:
+    """
+    Route and execute a tool call from the ReAct loop.
+
+    tool_router maps each tool name exposed to the LLM → routing metadata:
+      {"type": "mcp",   "server_id": "...", "tool_name": "actual_name"}
+      {"type": "skill", "name": "skill_name"}
+      {"type": "tool",  "name": "tool_name"}
+      {"type": "kg",    "graph_ids": ["..."]}
+
+    Returns the result as a plain string so the LLM can read it.
+    """
+    logging.info(f"[REACT_TOOL] tool={tool_name} agent={agent_id}")
+
+    route = tool_router.get(tool_name)
+    if not route:
+        return f"Tool '{tool_name}' is not available. Choose from: {list(tool_router.keys())}"
+
+    rtype = route.get("type", "")
+
+    # ── MCP tool ──────────────────────────────────────────────────────────────
+    if rtype == "mcp":
+        server_id       = route["server_id"]
+        actual_tool     = route["tool_name"]
+        mcp_url         = os.getenv("MCP_REGISTRY_URL", "http://mcp-registry:8090")
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    f"{mcp_url}/api/v1/mcp/servers/{server_id}/call",
+                    json={"tool_name": actual_tool, "args": tool_args},
+                    headers={"X-Tenant-ID": tenant_id},
+                    timeout=60.0,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                result = data.get("result", data)
+                return json.dumps(result) if not isinstance(result, str) else result
+        except Exception as e:
+            logging.error(f"[REACT_TOOL] MCP call failed: {e}")
+            return f"MCP tool '{actual_tool}' failed: {e}"
+
+    # ── Skill ─────────────────────────────────────────────────────────────────
+    if rtype == "skill":
+        skill_name      = route["name"]
+        dispatcher_url  = os.getenv("SKILL_DISPATCHER_URL", "http://skill-dispatcher:8085")
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    f"{dispatcher_url}/api/v1/skills/{skill_name}/invoke",
+                    json={"args": tool_args, "agent_id": agent_id},
+                    headers={"X-Tenant-ID": tenant_id},
+                    timeout=30.0,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                result = data.get("result", data)
+                return json.dumps(result) if not isinstance(result, str) else result
+        except Exception as e:
+            logging.error(f"[REACT_TOOL] Skill call failed: {e}")
+            return f"Skill '{skill_name}' failed: {e}"
+
+    # ── Direct platform tool ──────────────────────────────────────────────────
+    if rtype == "tool":
+        tool_n          = route["name"]
+        dispatcher_url  = os.getenv("SKILL_DISPATCHER_URL", "http://skill-dispatcher:8085")
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    f"{dispatcher_url}/api/v1/tools/invoke",
+                    json={"tool": {"name": tool_n, "version": "latest"},
+                          "args": tool_args, "agent_id": agent_id, "mutating": False},
+                    headers={"X-Tenant-ID": tenant_id},
+                    timeout=30.0,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                result = data.get("result", data)
+                return json.dumps(result) if not isinstance(result, str) else result
+        except Exception as e:
+            logging.error(f"[REACT_TOOL] Tool call failed: {e}")
+            return f"Tool '{tool_n}' failed: {e}"
+
+    # ── Knowledge-graph search ────────────────────────────────────────────────
+    if rtype == "kg":
+        graph_ids   = route.get("graph_ids", [])
+        kg_url      = os.getenv("KG_SERVICE_URL", "http://kg-service:8093")
+        query       = tool_args.get("query", tool_args.get("question", ""))
+        top_k       = int(tool_args.get("top_k", 5))
+        parts: list[str] = []
+        async with httpx.AsyncClient() as client:
+            for gid in graph_ids:
+                try:
+                    resp = await client.post(
+                        f"{kg_url}/graph/context",
+                        json={"graph_id": gid, "question": query, "top_k": top_k},
+                        headers={"X-Tenant-ID": tenant_id},
+                        timeout=30.0,
+                    )
+                    if resp.status_code == 200:
+                        ctx = resp.json().get("context", "")
+                        if ctx and ctx != "(No relevant entities found)":
+                            parts.append(ctx[:1500])
+                except Exception as e:
+                    parts.append(f"KG search failed for graph {gid}: {e}")
+        return "\n\n".join(parts) if parts else "No relevant knowledge graph results found."
+
+    return f"Unknown route type '{rtype}' for tool '{tool_name}'"
