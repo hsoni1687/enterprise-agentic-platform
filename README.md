@@ -230,7 +230,7 @@ The agent responds in < 2 seconds.
 | **Admin Console** | 3001 | Next.js | Platform administration UI |
 | **Dashboard** | 8501 | Streamlit | SRE observability |
 | **Temporal** | 7233/8233 | — | Durable workflow engine |
-| **PostgreSQL** | 5433 | — | Primary store; KG tables; pgvector; RLS |
+| **PostgreSQL** | 5433 | — | Two databases: `agentplatform` (platform) · `litellm` (LiteLLM isolated) |
 | **Redis** | 6379 | — | Session cache; rate limiting |
 
 ### Execution Flow
@@ -581,17 +581,30 @@ python main.py                          # Temporal worker
 
 ### Database Migrations
 
-```bash
-# Migrations run automatically on first docker compose up
-# To apply a new migration manually:
-psql -h localhost -p 5433 -U postgres -d agentplatform \
-  -f infra/postgres/migrations/023_agent_tiers.sql
+Migrations run automatically on every `docker compose up` via the `migrate` service.
+The runner (`infra/postgres/migrate.sh`) tracks applied files in a `_migration_history` table using SHA-256 checksums — it only runs new files, skips already-applied ones, and **fails loudly** if an applied file is modified (fix forward with a new file).
 
-# Inspect with tenant context
+```bash
+# Migrations apply automatically — nothing to do manually.
+# To write a new migration, add a file to infra/postgres/migrations/:
+#   025_my_change.sql   ← next number in sequence
+
+# To reset and reapply everything from scratch:
+docker compose down -v postgres && docker compose up -d
+
+# Inspect the platform DB with tenant context:
 psql -h localhost -p 5433 -U postgres -d agentplatform
 SET LOCAL app.tenant_id = 'default-tenant';
-SELECT id, name, tier, status FROM agents;
+SELECT id, name, status FROM agents;
+
+# Load demo seed data (break-glass — normally seeded automatically):
+psql -h localhost -p 5433 -U postgres -d agentplatform \
+  -f infra/postgres/seed_demo.sql
 ```
+
+> **Two databases on the same Postgres instance:**
+> - `agentplatform` — all platform tables (agents, skills, tools, KG, etc.)
+> - `litellm` — LiteLLM's internal Prisma tables (virtual keys, spend tracking). Kept separate so LiteLLM's migrations never touch platform data.
 
 ### Adding a Tool
 

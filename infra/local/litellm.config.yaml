@@ -57,31 +57,67 @@ model_list:
       api_base: os.environ/OLLAMA_API_BASE
 
   # --- Anthropic / Claude ---
-  - model_name: claude-opus-4-7
+  # api_base is optional: leave unset to use api.anthropic.com directly,
+  # or set ANTHROPIC_BASE_URL in infra/local/.env to route through a corporate
+  # proxy / Bedrock gateway (e.g. https://llm-inference.internal.example.com/).
+  - model_name: claude-sonnet-4-5
     litellm_params:
-      model: anthropic/claude-opus-4-7
+      model: anthropic/claude-sonnet-4-5
       api_key: os.environ/ANTHROPIC_API_KEY
+      api_base: os.environ/ANTHROPIC_BASE_URL
 
-  - model_name: claude-sonnet-4-6
+  - model_name: claude-opus-4-5
     litellm_params:
-      model: anthropic/claude-sonnet-4-6
+      model: anthropic/claude-opus-4-5
       api_key: os.environ/ANTHROPIC_API_KEY
+      api_base: os.environ/ANTHROPIC_BASE_URL
 
-  - model_name: claude-haiku-4-5-20251001
+  - model_name: claude-3-7-sonnet-20250219
     litellm_params:
-      model: anthropic/claude-haiku-4-5-20251001
+      model: anthropic/claude-3-7-sonnet-20250219
       api_key: os.environ/ANTHROPIC_API_KEY
+      api_base: os.environ/ANTHROPIC_BASE_URL
 
-  # Legacy short aliases (used in some agent manifests)
+  - model_name: claude-3-5-sonnet-20241022
+    litellm_params:
+      model: anthropic/claude-3-5-sonnet-20241022
+      api_key: os.environ/ANTHROPIC_API_KEY
+      api_base: os.environ/ANTHROPIC_BASE_URL
+
+  - model_name: claude-3-5-haiku-20241022
+    litellm_params:
+      model: anthropic/claude-3-5-haiku-20241022
+      api_key: os.environ/ANTHROPIC_API_KEY
+      api_base: os.environ/ANTHROPIC_BASE_URL
+
+  # Short aliases used in agent manifests
   - model_name: claude-sonnet
     litellm_params:
-      model: anthropic/claude-sonnet-4-6
+      model: anthropic/claude-sonnet-4-5
       api_key: os.environ/ANTHROPIC_API_KEY
+      api_base: os.environ/ANTHROPIC_BASE_URL
 
   - model_name: claude-haiku
     litellm_params:
-      model: anthropic/claude-haiku-4-5-20251001
+      model: anthropic/claude-3-5-haiku-20241022
       api_key: os.environ/ANTHROPIC_API_KEY
+      api_base: os.environ/ANTHROPIC_BASE_URL
+
+  # Compatibility aliases — map old/fictional model names that may be cached
+  # in agent manifests or browser localStorage to real deployed models.
+  # These never appear in the UI model selector (not db_model) but silently
+  # rescue requests that would otherwise 404 at the Anthropic API.
+  - model_name: claude-sonnet-4-6
+    litellm_params:
+      model: anthropic/claude-sonnet-4-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+      api_base: os.environ/ANTHROPIC_BASE_URL
+
+  - model_name: claude-opus-4-7
+    litellm_params:
+      model: anthropic/claude-opus-4-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+      api_base: os.environ/ANTHROPIC_BASE_URL
 
   # --- OpenAI ---
   - model_name: gpt-4o
@@ -103,12 +139,14 @@ model_list:
 litellm_settings:
   drop_params: true
   request_timeout: 120
-  # Enables per-request spend tracking in LiteLLM's internal DB
+  # Corporate networks with SSL inspection present a self-signed cert that the
+  # LiteLLM container (Alpine-based) cannot verify — disable peer verification.
+  # When ANTHROPIC_BASE_URL points to an internal proxy this is a non-issue anyway.
+  ssl_verify: false
   success_callback: []
   failure_callback: []
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
-  # To enable spend tracking and virtual keys (NFR6), uncomment:
-  # database_url: os.environ/DATABASE_URL
-  # store_model_in_db: true
+  database_url: os.environ/DATABASE_URL
+  store_model_in_db: true

@@ -54,7 +54,7 @@ create_and_activate_agent() {
   local agent_name="$2"
   local agent_version="$3"
   local system_prompt="$4"
-  local model="${5:-claude-sonnet-4-6}"
+  local model="${5:-claude-sonnet-4-5}"
   local max_iterations="${6:-10}"
   local memory_budget_mb="${7:-128}"
 
@@ -254,7 +254,7 @@ for yaml_file in yaml_files:
 
             agent_version = agent_data.get('version', '1.0.0')
             system_prompt = agent_data.get('system_prompt', '')
-            model = agent_data.get('model', 'claude-sonnet-4-6')
+            model = agent_data.get('model', 'claude-sonnet-4-5')
             max_iterations = agent_data.get('max_iterations', 10)
             memory_budget_mb = agent_data.get('memory_budget_mb', 128)
 

@@ -2,7 +2,7 @@ id: code-reviewer
 name: Code Reviewer
 version: "1.0.0"
 description: Reviews code for quality, security, performance, and best practices
-model: claude-sonnet-4-6
+model: claude-sonnet-4-5
 max_iterations: 12
 memory_budget_mb: 512
 system_prompt: |

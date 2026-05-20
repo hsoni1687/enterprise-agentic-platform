@@ -2,7 +2,7 @@ id: documentation-generator
 name: Documentation Generator
 version: "1.0.0"
 description: Generates comprehensive API documentation, guides, and specifications from code and requirements
-model: claude-sonnet-4-6
+model: claude-sonnet-4-5
 max_iterations: 8
 memory_budget_mb: 256
 system_prompt: |

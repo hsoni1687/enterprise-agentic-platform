@@ -8,7 +8,7 @@ description: |
   and operational queries. Uses the Knowledge Graph to provide infrastructure insights
   and integrates with deployment tools.
 
-model: "claude-opus-4-7"
+model: "claude-opus-4-5"
 max_iterations: 20
 memory_budget_mb: 256
 

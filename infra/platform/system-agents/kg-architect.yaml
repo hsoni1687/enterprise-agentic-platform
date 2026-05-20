@@ -2,7 +2,7 @@ id: kg-architect
 name: KG Architect
 version: "1.0.0"
 description: Builds domain knowledge graphs from natural language descriptions using kg-* tools
-model: claude-sonnet-4-6
+model: claude-sonnet-4-5
 max_iterations: 30
 memory_budget_mb: 256
 system_prompt: |

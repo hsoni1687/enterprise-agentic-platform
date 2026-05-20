@@ -45,19 +45,27 @@ services:
     networks:
       - agent-net
 
-  # Run all migrations once, then exit.
+  # ------------------------------------
+  # Schema Migrations (runs on every up, exits when done)
+  # Uses a _migration_history table to track applied files.
+  # Only runs NEW migration files — never re-runs applied ones.
+  # Fails loudly if an applied file is modified (edit-after-apply protection).
+  # ------------------------------------
   migrate:
     image: pgvector/pgvector:pg16
-    container_name: migrate
+    # No container_name — lets Docker Compose create a fresh container on every
+    # `docker compose up`, guaranteeing the current migrate.sh is always executed.
+    # A fixed container_name causes Docker to reuse the exited container and skip
+    # the run entirely when condition: service_completed_successfully is cached.
     depends_on:
       postgres:
         condition: service_healthy
     volumes:
-      - ../postgres/migrations:/migrations
-      - ../postgres/migrate.sh:/migrate.sh
+      - ../postgres/migrations:/migrations:ro
+      - ../postgres/migrate.sh:/migrate.sh:ro
     environment:
       - POSTGRES_URL=postgresql://postgres:postgres@postgres:5432/agentplatform?sslmode=disable
-    entrypoint: ["bash", "/migrate.sh"]
+    entrypoint: ["bash", "/migrate.sh", "/migrations"]
     networks:
       - agent-net
 
@@ -76,11 +84,13 @@ services:
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-litellm-dev}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-https://api.anthropic.com}
       - OLLAMA_API_BASE=${OLLAMA_API_BASE:-http://host.docker.internal:11434}
       - OLLAMA_CHAT_MODEL=${OLLAMA_CHAT_MODEL:-ollama/qwen8b:latest}
       - OLLAMA_QWEN_MODEL=${OLLAMA_QWEN_MODEL:-ollama/qwen8b:latest}
       - OLLAMA_GEMMA_MODEL=${OLLAMA_GEMMA_MODEL:-ollama/gemma4:latest}
       - OLLAMA_EMBEDDING_MODEL=${OLLAMA_EMBEDDING_MODEL:-ollama/nomic-embed-text}
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/litellm
     volumes:
       - ./litellm.config.yaml:/app/config.yaml:ro
     depends_on:
@@ -369,44 +379,6 @@ services:
       - agent-net
 
   # ------------------------------------
-  # System Agent Seeder (one-shot)
-  # ------------------------------------
-  seed-system-agents:
-    image: curlimages/curl:latest
-    container_name: seed-system-agents
-    depends_on:
-      agent-registry:
-        condition: service_started
-    volumes:
-      - ./seed_system_agents.sh:/seed.sh:ro
-      - ../platform/system-agents:/system-agents:ro
-    entrypoint: ["bash", "/seed.sh", "/system-agents"]
-    environment:
-      - AGENT_REGISTRY_URL=http://agent-registry:8088
-    networks:
-      - agent-net
-
-  # ------------------------------------
-  # System Tools Seeder (one-shot)
-  # ------------------------------------
-  seed-system-tools:
-    image: curlimages/curl:latest
-    container_name: seed-system-tools
-    depends_on:
-      admin-api:
-        condition: service_started
-    volumes:
-      - ./seed_system_tools.sh:/seed.sh:ro
-      - ../platform/system-tools.yaml:/system-tools.yaml:ro
-    environment:
-      - ADMIN_API_URL=http://admin-api:8089
-      - ADMIN_API_KEY=dev-admin-key
-      - TOOLS_YAML=/system-tools.yaml
-    entrypoint: ["sh", "/seed.sh"]
-    networks:
-      - agent-net
-
-  # ------------------------------------
   # MCP Registry (port 8090) - MCP Client Hub
   # ------------------------------------
   mcp-registry:
@@ -478,6 +450,68 @@ services:
         condition: service_started
       litellm:
         condition: service_healthy
+    networks:
+      - agent-net
+
+  # ------------------------------------
+  # System + Demo Seeder (runs once on every startup)
+  #
+  # Seeds idempotently (safe to re-run):
+  #   • system tools & skills  → platform-system tenant (via admin-api)
+  #   • system agents          → platform-system tenant (via agent-registry)
+  #   • demo agents & KG       → default-tenant (via agent-registry + kg-service)
+  #
+  # Image: python:3.11-alpine + curl — needed because seed scripts use python3.
+  # ------------------------------------
+  seeder:
+    image: python:3.11-alpine
+    # No container_name — Docker creates a fresh container on every `docker compose up`
+    # so seeding always re-runs (scripts are idempotent — safe to run repeatedly).
+    restart: "no"
+    volumes:
+      - ./seed_system_tools.sh:/seed_system_tools.sh:ro
+      - ./seed_system_skills.sh:/seed_system_skills.sh:ro
+      - ./seed_system_agents.sh:/seed_system_agents.sh:ro
+      - ./seed_demo_data.sh:/seed_demo_data.sh:ro
+      - ../platform:/infra/platform:ro
+    environment:
+      - ADMIN_API_URL=http://admin-api:8089
+      - ADMIN_API_KEY=dev-admin-key
+      - AGENT_REGISTRY_URL=http://agent-registry:8088
+      - KG_SERVICE_URL=http://kg-service:8093
+    entrypoint:
+      - sh
+      - -c
+      - |
+        # Install runtime deps (cached in layer on repeated runs within the same compose up)
+        pip install --quiet pyyaml requests 2>&1 | tail -1
+        apk add --quiet curl bash 2>/dev/null || true
+
+        echo "=== Seeder: waiting for admin-api ==="
+        until curl -sf http://admin-api:8089/health > /dev/null 2>&1; do
+          echo "  waiting for admin-api..."; sleep 3;
+        done
+
+        echo "=== Seeder: seeding system tools ==="
+        TOOLS_YAML=/infra/platform/system-tools.yaml bash /seed_system_tools.sh || echo "  tools seed non-fatal error"
+
+        echo "=== Seeder: seeding system skills ==="
+        bash /seed_system_skills.sh || echo "  skills seed non-fatal error"
+
+        echo "=== Seeder: seeding system agents ==="
+        AGENTS_SOURCE=/infra/platform/system-agents bash /seed_system_agents.sh /infra/platform/system-agents || echo "  system agents seed non-fatal error"
+
+        echo "=== Seeder: seeding demo data ==="
+        bash /seed_demo_data.sh || echo "  demo data seed non-fatal error"
+
+        echo "=== Seeder: all done ==="
+    depends_on:
+      admin-api:
+        condition: service_started
+      agent-registry:
+        condition: service_started
+      kg-service:
+        condition: service_started
     networks:
       - agent-net
 

@@ -2,7 +2,7 @@ id: manifest-assistant
 name: Manifest Assistant
 version: "1.0.0"
 description: Helps users design comprehensive agent system prompts and recommend appropriate skills
-model: claude-sonnet-4-6
+model: claude-sonnet-4-5
 max_iterations: 10
 memory_budget_mb: 128
 system_prompt: |

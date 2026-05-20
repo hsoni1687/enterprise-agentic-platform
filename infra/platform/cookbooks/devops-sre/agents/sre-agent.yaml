@@ -8,7 +8,7 @@ description: |
   Integrates with PagerDuty for incident management, Prometheus for metrics,
   and the Knowledge Graph for blast radius analysis.
 
-model: "claude-sonnet-4-6"
+model: "claude-sonnet-4-5"
 max_iterations: 30
 memory_budget_mb: 512
 
