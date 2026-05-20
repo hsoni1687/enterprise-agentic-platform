@@ -28,73 +28,73 @@ ON CONFLICT (tenant_id, model_id) DO NOTHING;
 -- ---------------------------------------------------------------------------
 -- System Tools  (platform-system tenant)
 -- ---------------------------------------------------------------------------
-INSERT INTO tools (id, tenant_id, name, version, description, auth_level, sandbox_required, input_schema, status, registered_by)
+INSERT INTO tools (id, tenant_id, name, version, description, auth_level, sandbox_required, input_schema, status, registered_by, scope)
 VALUES
     ('system-tool-web-search', 'platform-system', 'web-search', '1.0.0',
      'Search the web for information and retrieve results',
      'read', false,
      '{"type":"object","properties":{"query":{"type":"string"},"max_results":{"type":"integer","default":10}},"required":["query"]}',
-     'approved', 'platform-admin'),
+     'approved', 'platform-admin', 'system'),
 
     ('system-tool-code-executor', 'platform-system', 'code-executor', '1.0.0',
      'Execute code snippets in a sandboxed environment (Python, JavaScript, Bash)',
      'mutating', true,
      '{"type":"object","properties":{"language":{"type":"string","enum":["python","javascript","bash"]},"code":{"type":"string"},"timeout_seconds":{"type":"integer","default":30}},"required":["language","code"]}',
-     'approved', 'platform-admin'),
+     'approved', 'platform-admin', 'system'),
 
     ('system-tool-http-request', 'platform-system', 'http-request', '1.0.0',
      'Make HTTP requests to external APIs and endpoints',
      'mutating', false,
      '{"type":"object","properties":{"method":{"type":"string","enum":["GET","POST","PUT","PATCH","DELETE"]},"url":{"type":"string"},"headers":{"type":"object"},"body":{"type":"string"}},"required":["method","url"]}',
-     'approved', 'platform-admin'),
+     'approved', 'platform-admin', 'system'),
 
     ('system-tool-text-processing', 'platform-system', 'text-processing', '1.0.0',
      'Advanced text processing operations (regex, parsing, transformation)',
      'read', false,
      '{"type":"object","properties":{"operation":{"type":"string","enum":["regex_match","regex_replace","parse_json","parse_csv","extract_urls","extract_emails"]},"text":{"type":"string"},"pattern":{"type":"string"}},"required":["operation","text"]}',
-     'approved', 'platform-admin'),
+     'approved', 'platform-admin', 'system'),
 
     ('system-tool-data-validation', 'platform-system', 'data-validation', '1.0.0',
      'Validate data against schemas (JSON Schema, type checking, format validation)',
      'read', false,
      '{"type":"object","properties":{"schema_type":{"type":"string","enum":["json_schema","email","url","phone","uuid"]},"data":{"type":"string"}},"required":["schema_type","data"]}',
-     'approved', 'platform-admin'),
+     'approved', 'platform-admin', 'system'),
 
     ('system-tool-bash', 'platform-system', 'bash', '1.0.0',
      'Execute bash commands with streaming output and signal handling',
      'mutating', true,
      '{"type":"object","properties":{"script":{"type":"string"},"timeout_seconds":{"type":"integer","default":300},"environment":{"type":"object"},"working_dir":{"type":"string"}},"required":["script"]}',
-     'approved', 'platform-admin'),
+     'approved', 'platform-admin', 'system'),
 
     ('system-tool-kg-create-graph', 'platform-system', 'kg-create-graph', '1.0.0',
      'Create a new knowledge graph for a domain',
      'mutating', false,
      '{"type":"object","properties":{"name":{"type":"string"},"domain":{"type":"string"},"description":{"type":"string"},"scope":{"type":"string","enum":["private","shared","global"],"default":"private"}},"required":["name","domain"]}',
-     'approved', 'platform-admin'),
+     'approved', 'platform-admin', 'system'),
 
     ('system-tool-kg-add-node', 'platform-system', 'kg-add-node', '1.0.0',
      'Add a node (entity) to a knowledge graph',
      'mutating', false,
      '{"type":"object","properties":{"graph_id":{"type":"string"},"node_type":{"type":"string"},"label":{"type":"string"},"properties":{"type":"object"}},"required":["graph_id","node_type","label"]}',
-     'approved', 'platform-admin'),
+     'approved', 'platform-admin', 'system'),
 
     ('system-tool-kg-add-edge', 'platform-system', 'kg-add-edge', '1.0.0',
      'Add an edge (relationship) between two nodes in a knowledge graph',
      'mutating', false,
      '{"type":"object","properties":{"graph_id":{"type":"string"},"from_node_id":{"type":"string"},"to_node_id":{"type":"string"},"relationship_type":{"type":"string"}},"required":["graph_id","from_node_id","to_node_id","relationship_type"]}',
-     'approved', 'platform-admin'),
+     'approved', 'platform-admin', 'system'),
 
     ('system-tool-kg-query', 'platform-system', 'kg-query', '1.0.0',
      'Query a knowledge graph to find related nodes and edges via BFS traversal',
      'read', false,
      '{"type":"object","properties":{"graph_id":{"type":"string"},"start_node_id":{"type":"string"},"max_depth":{"type":"integer","default":3}},"required":["graph_id","start_node_id"]}',
-     'approved', 'platform-admin'),
+     'approved', 'platform-admin', 'system'),
 
     ('system-tool-kg-search', 'platform-system', 'kg-search', '1.0.0',
      'Search knowledge graph nodes by type or semantic similarity',
      'read', false,
      '{"type":"object","properties":{"graph_id":{"type":"string"},"search_type":{"type":"string","enum":["by_type","by_embedding"]},"node_type":{"type":"string"},"limit":{"type":"integer","default":100}},"required":["graph_id","search_type"]}',
-     'approved', 'platform-admin')
+     'approved', 'platform-admin', 'system')
 ON CONFLICT (id) DO NOTHING;
 
 -- Demo tools (default-tenant)

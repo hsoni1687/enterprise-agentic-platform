@@ -99,7 +99,7 @@ const MOCK_LOGS: LogEntry[] = [
     source_id: "summarize-tickets", message: "Skill execution completed",
     tenant_id: "default-tenant", agent_id: "agent-support", skill_id: "summarize-tickets",
     duration_ms: 891,
-    details: { invocation_id: "inv-def456", tokens_used: 1204, model: "claude-sonnet-4-6" },
+    details: { invocation_id: "inv-def456", tokens_used: 1204, model: "claude-sonnet-4-5" },
   },
   {
     id: genId(), timestamp: offsetDate(300), level: "warn", source: "system",

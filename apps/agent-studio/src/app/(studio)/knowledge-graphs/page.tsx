@@ -4,19 +4,21 @@ import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTenant } from "@/contexts/tenant-context";
-import { setRuntimeTenant, modelsApi } from "@/lib/api";
+import { useModel } from "@/contexts/model-context";
+import { setRuntimeTenant } from "@/lib/api";
 import { kgApi } from "@/lib/api";
 import { KGGraph } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Trash2, Eye, Pencil, Loader2, X, Link, Upload, FileText, ChevronDown } from "lucide-react";
+import { Plus, Trash2, Eye, Pencil, Loader2, X, Link, Upload, FileText } from "lucide-react";
 
 export default function KnowledgeGraphsPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { tenantId } = useTenant();
+  const { model: activeModel } = useModel();
 
   // Update runtime tenant when it changes
   useEffect(() => {
@@ -35,20 +37,12 @@ export default function KnowledgeGraphsPage() {
   const [urlInput, setUrlInput] = useState("");
   const [pendingURLs, setPendingURLs] = useState<string[]>([]);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
-  const [extractionModel, setExtractionModel] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: graphs = [], isLoading, error: graphsError } = useQuery({
     queryKey: ["kg-graphs"],
     queryFn: () => kgApi.listGraphs(),
   });
-
-  const { data: modelsData } = useQuery({
-    queryKey: ["models-list"],
-    queryFn: () => modelsApi.list(),
-    staleTime: 60_000,
-  });
-  const availableModels = modelsData?.models ?? [];
 
   const { data: graphDetails = {} } = useQuery({
     queryKey: ["kg-graph-details"],
@@ -86,7 +80,7 @@ export default function KnowledgeGraphsPage() {
       // Entity extraction can take 30-60 s per source; waiting here would freeze the UI.
       const totalSources = pendingURLs.length + pendingFiles.length;
       if (totalSources > 0) {
-        const model = extractionModel || undefined;
+        const model = activeModel || undefined;
         const urlsToIngest = [...pendingURLs];
         const filesToIngest = [...pendingFiles];
         // Run without await — errors are logged to console only
@@ -113,7 +107,7 @@ export default function KnowledgeGraphsPage() {
       setCreateDescription("");
       setPendingURLs([]);
       setPendingFiles([]);
-      setExtractionModel("");
+      ;
             queryClient.invalidateQueries({ queryKey: ["kg-graphs"] });
 
       // Go to Visualizer if sources were queued (so user can watch nodes appear),
@@ -182,7 +176,7 @@ export default function KnowledgeGraphsPage() {
         <div className="border rounded-lg p-5 bg-muted/50 space-y-5">
           <div className="flex items-center justify-between">
             <h3 className="font-semibold">New Knowledge Graph</h3>
-            <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => { setCreateOpen(false); setPendingURLs([]); setPendingFiles([]); setExtractionModel(""); }}>
+            <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => { setCreateOpen(false); setPendingURLs([]); setPendingFiles([]); ; }}>
               <X className="h-4 w-4" />
             </Button>
           </div>
@@ -207,26 +201,10 @@ export default function KnowledgeGraphsPage() {
           <div className="space-y-3">
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Sources (optional)</p>
 
-            {/* Extraction model picker */}
-            <div className="space-y-1">
-              <Label className="text-xs">Extraction Model</Label>
-              <div className="relative">
-                <select
-                  value={extractionModel}
-                  onChange={(e) => setExtractionModel(e.target.value)}
-                  className="w-full appearance-none bg-background border border-border rounded px-2 py-1.5 text-xs pr-6 focus:outline-none focus:ring-1 focus:ring-violet-500"
-                >
-                  <option value="">Default (gemma4 — local)</option>
-                  {availableModels.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}{m.source === "local" ? " (local)" : " (cloud)"}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground pointer-events-none" />
-              </div>
-              <p className="text-[10px] text-muted-foreground">LLM used to extract entities and relationships from your sources.</p>
-            </div>
+            {/* Extraction model — picked from workspace selector */}
+            <p className="text-[11px] text-muted-foreground">
+              Extraction model: <span className="font-mono text-foreground/60">{activeModel.startsWith("ollama/") ? activeModel.slice(7) : activeModel}</span> — change in the top-right selector.
+            </p>
 
             {/* URL input */}
             <div className="space-y-1.5">
@@ -302,7 +280,7 @@ export default function KnowledgeGraphsPage() {
           </div>
 
           <div className="flex gap-2 justify-end pt-1">
-            <Button variant="outline" size="sm" onClick={() => { setCreateOpen(false); setPendingURLs([]); setPendingFiles([]); setExtractionModel(""); }}>
+            <Button variant="outline" size="sm" onClick={() => { setCreateOpen(false); setPendingURLs([]); setPendingFiles([]); ; }}>
               Cancel
             </Button>
             <Button size="sm" onClick={handleCreate} disabled={creating || !createName.trim()} className="gap-1.5">

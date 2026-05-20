@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useForm, Controller } from "react-hook-form";
+import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import {
@@ -13,7 +13,8 @@ import {
   AlertTriangle, Ban, EyeOff, BookOpen,
 } from "lucide-react";
 import Link from "next/link";
-import { agentsApi, skillsApi, toolsApi, modelsApi, mcpApi, platformApi, kgApi, ModelInfo, PlatformGuardrail, PlatformHook } from "@/lib/api";
+import { agentsApi, skillsApi, toolsApi, mcpApi, platformApi, kgApi, setRuntimeTenant, PlatformGuardrail, PlatformHook } from "@/lib/api";
+import { useTenant } from "@/contexts/tenant-context";
 import { ManifestAssistantPanel, AssistantDraft } from "@/components/manifest-assistant-panel";
 import { AgentRecord, SkillManifest, ToolSpec, MCPServer, AgentTier, TIER_DEFAULTS, TIER_AUTONOMY, KGGraph } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -34,23 +35,28 @@ import {
   SheetContent,
   SheetHeader,
   SheetTitle,
-  SheetTrigger,
 } from "@/components/ui/sheet";
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 // ── Schema ────────────────────────────────────────────────────────────────────
 
 const agentSchema = z.object({
-  id: z.string().min(1, "Required"),
   name: z.string().min(1, "Required"),
-  version: z.string().regex(/^\d+\.\d+\.\d+$/, "Must be x.y.z"),
   system_prompt: z.string().min(10, "System prompt too short"),
-  model: z.string().min(1, "Required"),
   max_iterations: z.number().int().min(1).max(100),
   memory_budget_mb: z.number().int().min(64),
   skills: z.array(z.object({ id: z.string().optional(), name: z.string().min(1), version: z.string().min(1) })),
   tools: z.array(z.object({ name: z.string().min(1), version: z.string().min(1) })).optional(),
   mcp_servers: z.array(z.string()).optional(),
 });
+
+function slugify(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "agent";
+}
 
 type AgentForm = z.infer<typeof agentSchema>;
 
@@ -82,19 +88,6 @@ type StepId = typeof STEPS[number]["id"];
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
-function ModelLabel({ model }: { model: ModelInfo }) {
-  const label = model.id.startsWith("ollama/") ? model.id.slice(7) : model.id;
-  return (
-    <span className="flex items-center gap-2">
-      {label}
-      <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
-        model.source === "local" ? "bg-green-500/15 text-green-400" : "bg-blue-500/15 text-blue-400"
-      }`}>
-        {model.source === "local" ? "Local" : "Cloud"}
-      </span>
-    </span>
-  );
-}
 
 function StepIndicator({ current }: { current: StepId }) {
   const currentIdx = STEPS.findIndex((s) => s.id === current);
@@ -141,58 +134,38 @@ function SelectedChip({ label, onRemove }: { label: string; onRemove: () => void
 
 // ── Wizard steps content ──────────────────────────────────────────────────────
 
-function StepIdentity({ register, errors, control, availableModels }: {
+function StepIdentity({ register, errors, watchedName }: {
   register: ReturnType<typeof useForm<AgentForm>>["register"];
   errors: ReturnType<typeof useForm<AgentForm>>["formState"]["errors"];
-  control: ReturnType<typeof useForm<AgentForm>>["control"];
-  availableModels: ModelInfo[];
+  watchedName: string;
 }) {
+  const autoId = watchedName ? slugify(watchedName) : "";
   return (
     <div className="space-y-5">
       <div>
         <p className="text-sm font-semibold mb-0.5">Agent Identity</p>
-        <p className="text-xs text-muted-foreground">Set the unique identifier, name, and version for this agent.</p>
-      </div>
-      <div className="grid grid-cols-2 gap-4">
-        <div className="flex flex-col gap-1.5">
-          <Label>Agent ID <span className="text-destructive">*</span></Label>
-          <Input placeholder="incident-responder" {...register("id")} />
-          {errors.id && <p className="text-xs text-destructive">{errors.id.message}</p>}
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <Label>Version <span className="text-destructive">*</span></Label>
-          <Input placeholder="1.0.0" {...register("version")} />
-          {errors.version && <p className="text-xs text-destructive">{errors.version.message}</p>}
-        </div>
+        <p className="text-xs text-muted-foreground">Give your agent a name. Model is picked from the workspace selector at runtime.</p>
       </div>
       <div className="flex flex-col gap-1.5">
         <Label>Name <span className="text-destructive">*</span></Label>
         <Input placeholder="Incident Responder" {...register("name")} />
         {errors.name && <p className="text-xs text-destructive">{errors.name.message}</p>}
+        {autoId && (
+          <p className="text-[11px] text-muted-foreground">
+            ID will be auto-assigned: <span className="font-mono text-foreground/60">{autoId}</span>
+          </p>
+        )}
       </div>
-      <div className="flex flex-col gap-1.5">
-        <Label>Model <span className="text-destructive">*</span></Label>
-        <Controller
-          name="model"
-          control={control}
-          render={({ field }) => (
-            <Select value={field.value} onValueChange={field.onChange}>
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder="Select a model" />
-              </SelectTrigger>
-              <SelectContent>
-                {availableModels.length === 0 && (
-                  <div className="px-2 py-1.5 text-xs text-muted-foreground">Loading models…</div>
-                )}
-                {availableModels.map((m) => (
-                  <SelectItem key={m.id} value={m.id}>
-                    <ModelLabel model={m} />
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
-        />
+      <div className="rounded-lg border border-border bg-muted/20 px-3 py-2.5 flex items-center gap-2.5 mt-2">
+        <div className="flex h-6 w-6 items-center justify-center rounded bg-violet-500/10 shrink-0">
+          <span className="text-[11px]">🎛</span>
+        </div>
+        <div>
+          <p className="text-xs font-medium">Model is a workspace setting</p>
+          <p className="text-[11px] text-muted-foreground mt-0.5">
+            Switch the active model anytime from the top-right selector. Every execution picks it up automatically.
+          </p>
+        </div>
       </div>
     </div>
   );
@@ -736,15 +709,11 @@ function StepReview({
 
       <Section title="Identity">
         <div className="grid grid-cols-3 gap-2 text-xs">
-          <div><p className="text-muted-foreground">ID</p><p className="font-mono font-medium">{form.id || "—"}</p></div>
           <div><p className="text-muted-foreground">Name</p><p className="font-medium">{form.name || "—"}</p></div>
-          <div><p className="text-muted-foreground">Version</p><p className="font-mono">{form.version}</p></div>
+          <div><p className="text-muted-foreground">Max Iterations</p><p>{form.max_iterations}</p></div>
+          <div><p className="text-muted-foreground">Memory Budget</p><p>{form.memory_budget_mb} MB</p></div>
         </div>
-        <div className="grid grid-cols-3 gap-2 text-xs mt-1">
-          <div><p className="text-muted-foreground">Model</p><p className="font-mono truncate">{form.model}</p></div>
-          <div><p className="text-muted-foreground">Max Iter</p><p>{form.max_iterations}</p></div>
-          <div><p className="text-muted-foreground">Memory</p><p>{form.memory_budget_mb} MB</p></div>
-        </div>
+        <p className="text-[10px] text-muted-foreground mt-1.5">Model: picked from workspace selector at execution time</p>
       </Section>
 
       <Section title="System Prompt">
@@ -923,15 +892,14 @@ function TierPicker({ onSelect }: { onSelect: (tier: AgentTier) => void }) {
   );
 }
 
-// ── CreateAgentSheet (wizard) ─────────────────────────────────────────────────
+// ── CreateAgentDialog (wizard) ────────────────────────────────────────────────
 
-function CreateAgentSheet({ onCreated }: { onCreated: () => void }) {
+function CreateAgentDialog({ onCreated }: { onCreated: () => void }) {
   const [open, setOpen] = useState(false);
   const [tier, setTier] = useState<AgentTier | null>(null);
   const [step, setStep] = useState<StepId>("identity");
   const [showAssistant, setShowAssistant] = useState(false);
 
-  // Extra state not in the form schema
   const [selectedGuardrails, setSelectedGuardrails] = useState<string[]>([]);
   const [selectedHooks, setSelectedHooks] = useState<string[]>(["hook-audit-log"]);
   const [selectedMCPServers, setSelectedMCPServers] = useState<string[]>([]);
@@ -940,10 +908,8 @@ function CreateAgentSheet({ onCreated }: { onCreated: () => void }) {
   const { register, handleSubmit, reset, control, setValue, watch, formState: { errors } } = useForm<AgentForm>({
     resolver: zodResolver(agentSchema),
     defaultValues: {
-      model: "local-chat",
       max_iterations: 20,
       memory_budget_mb: 256,
-      version: "1.0.0",
       skills: [],
       tools: [],
       mcp_servers: [],
@@ -952,7 +918,6 @@ function CreateAgentSheet({ onCreated }: { onCreated: () => void }) {
 
   const formValues = watch();
 
-  // Data queries
   const { data: activeSkills, isLoading: skillsLoading } = useQuery({
     queryKey: ["skills", "active", "available"],
     queryFn: () => skillsApi.available("active"),
@@ -961,11 +926,6 @@ function CreateAgentSheet({ onCreated }: { onCreated: () => void }) {
   const { data: approvedTools, isLoading: toolsLoading } = useQuery({
     queryKey: ["tools", "approved"],
     queryFn: () => toolsApi.list("approved"),
-    enabled: open,
-  });
-  const { data: modelsData } = useQuery({
-    queryKey: ["models"],
-    queryFn: () => modelsApi.list(),
     enabled: open,
   });
   const { data: mcpData, isLoading: mcpLoading } = useQuery({
@@ -989,7 +949,6 @@ function CreateAgentSheet({ onCreated }: { onCreated: () => void }) {
     enabled: open,
   });
 
-  const availableModels = modelsData?.models ?? [];
   const availableSkills = activeSkills ?? [];
   const availableTools = approvedTools ?? [];
   const availableMCP = mcpData?.servers ?? [];
@@ -998,16 +957,19 @@ function CreateAgentSheet({ onCreated }: { onCreated: () => void }) {
   const availableGraphs: KGGraph[] = kgData ?? [];
 
   const mutation = useMutation({
-    mutationFn: (data: AgentForm) =>
-      agentsApi.create({
+    mutationFn: (data: AgentForm) => {
+      const autoId = slugify(data.name);
+      return agentsApi.create({
         ...data,
+        id: autoId,
+        version: "1.0.0",
         mcp_servers: selectedMCPServers,
         knowledge_graph_ids: selectedKGs,
-        // Tier fields
         tier: tier ?? "deep",
         autonomy_level: TIER_AUTONOMY[tier ?? "deep"],
         execution_config: TIER_DEFAULTS[tier ?? "deep"] as import("@/lib/types").ExecutionConfig,
-      }),
+      });
+    },
     onSuccess: () => {
       reset();
       setStep("identity");
@@ -1021,36 +983,24 @@ function CreateAgentSheet({ onCreated }: { onCreated: () => void }) {
     },
   });
 
-  // Skill toggle
   function toggleSkill(skill: SkillManifest) {
     const current = formValues.skills ?? [];
     const exists = current.findIndex((s) => s.name === skill.name);
-    if (exists >= 0) {
-      setValue("skills", current.filter((_, i) => i !== exists));
-    } else {
-      setValue("skills", [...current, { id: skill.id, name: skill.name, version: skill.version }]);
-    }
+    if (exists >= 0) setValue("skills", current.filter((_, i) => i !== exists));
+    else setValue("skills", [...current, { id: skill.id, name: skill.name, version: skill.version }]);
   }
 
-  // Tool toggle
   function toggleTool(tool: ToolSpec) {
     const current = formValues.tools ?? [];
     const exists = current.findIndex((t) => t.name === tool.name);
-    if (exists >= 0) {
-      setValue("tools", current.filter((_, i) => i !== exists));
-    } else {
-      setValue("tools", [...current, { name: tool.name, version: tool.version }]);
-    }
+    if (exists >= 0) setValue("tools", current.filter((_, i) => i !== exists));
+    else setValue("tools", [...current, { name: tool.name, version: tool.version }]);
   }
 
-  // MCP toggle
   function toggleMCP(id: string) {
-    setSelectedMCPServers((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
-    );
+    setSelectedMCPServers((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
   }
 
-  // KG toggle
   function toggleKG(id: string) {
     setSelectedKGs((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
   }
@@ -1059,189 +1009,211 @@ function CreateAgentSheet({ onCreated }: { onCreated: () => void }) {
   const isFirst = stepIdx === 0;
   const isLast = step === "review";
 
-  function goNext() {
-    const nextStep = STEPS[stepIdx + 1];
-    if (nextStep) setStep(nextStep.id);
-  }
-  function goPrev() {
-    const prevStep = STEPS[stepIdx - 1];
-    if (prevStep) setStep(prevStep.id);
-  }
+  function goNext() { const s = STEPS[stepIdx + 1]; if (s) setStep(s.id); }
+  function goPrev() { const s = STEPS[stepIdx - 1]; if (s) setStep(s.id); }
 
-  const handleApplyAssistantDraft = (draft: AssistantDraft) => {
+  function handleApplyAssistantDraft(draft: AssistantDraft) {
     if (draft.system_prompt) setValue("system_prompt", draft.system_prompt);
     if (draft.skills?.length) setValue("skills", draft.skills);
-  };
+  }
 
   function handleOpenChange(v: boolean) {
     setOpen(v);
-    if (!v) { reset(); setStep("identity"); setTier(null); }
+    if (!v) { reset(); setStep("identity"); setTier(null); setShowAssistant(false); }
   }
 
   function handleTierSelect(selectedTier: AgentTier) {
     setTier(selectedTier);
-    // Pre-fill iteration limits based on tier
-    const defaults = TIER_DEFAULTS[selectedTier];
     if (selectedTier === "lite") setValue("max_iterations", 1);
     else if (selectedTier === "workflow") setValue("max_iterations", 20);
     else setValue("max_iterations", 100);
   }
 
   return (
-    <Sheet open={open} onOpenChange={handleOpenChange}>
-      <SheetTrigger render={<Button size="sm" className="gap-1.5" />}>
+    <>
+      <Button size="sm" className="gap-1.5" onClick={() => setOpen(true)}>
         <Plus className="h-4 w-4" />
         New Agent
-      </SheetTrigger>
+      </Button>
 
-      <SheetContent className="sm:max-w-[680px] overflow-hidden flex flex-col p-0">
-        {/* Header */}
-        <SheetHeader className="border-b border-border px-6 py-3 flex flex-row items-center justify-between shrink-0">
-          <div className="flex items-center gap-2">
-            <SheetTitle className="text-base font-semibold">
-              {tier ? `New ${TIER_META[tier].label}` : "Create Agent"}
-            </SheetTitle>
-            {tier && (
-              <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${TIER_META[tier].badge}`}>
-                {TIER_META[tier].icon} {tier}
-              </span>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            {tier && (
-              <Button type="button" variant="ghost" size="sm" onClick={() => setTier(null)} className="h-7 text-xs text-muted-foreground">
-                ← Change type
-              </Button>
-            )}
-            {tier && (
-              <Button type="button" variant="outline" size="sm" onClick={() => setShowAssistant(!showAssistant)} className="gap-2 h-7 text-xs">
-                <Sparkles size={13} />
-                {showAssistant ? "Hide" : "AI"} Assistant
-              </Button>
-            )}
-          </div>
-        </SheetHeader>
-
-        {/* Tier picker OR step indicator */}
-        {!tier ? null : (
-          <div className="shrink-0 border-b border-border pb-3">
-            <StepIndicator current={step} />
-          </div>
-        )}
-
-        {/* Content */}
-        <div className="flex flex-1 overflow-hidden">
-          {/* Tier picker — shown when no tier selected yet */}
-          {!tier && (
-            <div className="flex-1 overflow-y-auto">
-              <TierPicker onSelect={handleTierSelect} />
+      <Dialog open={open} onOpenChange={handleOpenChange}>
+        <DialogContent
+          showCloseButton
+          className="w-[92vw] max-w-[900px] h-[88vh] max-h-[820px]"
+        >
+          {/* ── Header ── */}
+          <div className="shrink-0 flex items-center justify-between border-b border-border px-6 py-3.5">
+            <div className="flex items-center gap-2.5">
+              <DialogTitle className="text-base">
+                {tier ? `New ${TIER_META[tier].label}` : "Create Agent"}
+              </DialogTitle>
+              {tier && (
+                <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${TIER_META[tier].badge}`}>
+                  {TIER_META[tier].icon} {tier}
+                </span>
+              )}
             </div>
-          )}
-
-          {/* Form area — shown once tier is selected */}
-          {tier && <form
-            onSubmit={handleSubmit((d) => mutation.mutate(d))}
-            className="flex flex-col flex-1 overflow-hidden"
-          >
-            <div className="flex-1 overflow-y-auto px-6 py-5">
-              {step === "identity" && (
-                <StepIdentity register={register} errors={errors} control={control} availableModels={availableModels} />
-              )}
-              {step === "behavior" && (
-                <StepBehavior register={register} errors={errors} />
-              )}
-              {step === "skills" && (
-                <StepSkills
-                  selectedSkills={formValues.skills ?? []}
-                  onToggle={toggleSkill}
-                  availableSkills={availableSkills}
-                  isLoading={skillsLoading}
-                />
-              )}
-              {step === "tools-mcp" && (
-                <StepToolsMCP
-                  selectedTools={formValues.tools ?? []}
-                  onToggleTool={toggleTool}
-                  selectedMCPServers={selectedMCPServers}
-                  onToggleMCP={toggleMCP}
-                  availableTools={availableTools}
-                  availableMCP={availableMCP}
-                  toolsLoading={toolsLoading}
-                  mcpLoading={mcpLoading}
-                />
-              )}
-              {step === "knowledge" && (
-                <StepKnowledge
-                  selectedKGs={selectedKGs}
-                  onToggleKG={toggleKG}
-                  availableGraphs={availableGraphs}
-                  kgLoading={kgLoading}
-                />
-              )}
-              {step === "safety" && (
-                <StepSafety
-                  selectedGuardrails={selectedGuardrails}
-                  onToggleGuardrail={(id) => setSelectedGuardrails((p) => p.includes(id) ? p.filter((x) => x !== id) : [...p, id])}
-                  selectedHooks={selectedHooks}
-                  onToggleHook={(id) => setSelectedHooks((p) => p.includes(id) ? p.filter((x) => x !== id) : [...p, id])}
-                  catalogGuardrails={catalogGuardrails}
-                  catalogHooks={catalogHooks}
-                />
-              )}
-              {step === "review" && (
-                <StepReview
-                  form={formValues}
-                  selectedGuardrails={selectedGuardrails}
-                  selectedHooks={selectedHooks}
-                  availableMCP={availableMCP}
-                  catalogGuardrails={catalogGuardrails}
-                  catalogHooks={catalogHooks}
-                  selectedKGs={selectedKGs}
-                  availableGraphs={availableGraphs}
-                />
-              )}
-              {mutation.error && <p className="text-xs text-destructive mt-3">{String(mutation.error)}</p>}
-            </div>
-
-            {/* Footer nav */}
-            <div className="shrink-0 border-t border-border px-6 py-3 flex items-center justify-between">
-              <Button type="button" variant="outline" size="sm" onClick={goPrev} disabled={isFirst} className="gap-1.5">
-                <ChevronLeft className="h-4 w-4" />Back
-              </Button>
-              <span className="text-xs text-muted-foreground">{stepIdx + 1} / {STEPS.length}</span>
-              {isLast ? (
-                <Button type="submit" size="sm" disabled={mutation.isPending} className="gap-1.5">
-                  {mutation.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                  <CheckCircle2 className="h-3.5 w-3.5" />
-                  Create Agent
+            <div className="flex items-center gap-2 mr-8">
+              {tier && (
+                <Button type="button" variant="ghost" size="sm" onClick={() => { setTier(null); setStep("identity"); }} className="h-7 text-xs text-muted-foreground gap-1">
+                  <ChevronLeft className="h-3 w-3" /> Change type
                 </Button>
-              ) : (
-                <Button type="button" size="sm" onClick={goNext} className="gap-1.5">
-                  Next<ChevronRight className="h-4 w-4" />
+              )}
+              {tier && (
+                <Button type="button" variant="outline" size="sm" onClick={() => setShowAssistant(!showAssistant)} className="gap-1.5 h-7 text-xs">
+                  <Sparkles size={12} />
+                  {showAssistant ? "Hide" : "AI"} Assistant
                 </Button>
               )}
             </div>
-          </form>}
+          </div>
 
-          {/* AI Assistant panel */}
-          {tier && showAssistant && (
-            <div className="w-64 border-l border-border flex flex-col shrink-0">
-              <div className="px-4 py-3 border-b border-border flex items-center gap-2">
-                <Sparkles size={14} className="text-violet-400" />
-                <p className="text-xs font-medium">Manifest Assistant</p>
+          {/* ── Body ── */}
+          <div className="flex flex-1 overflow-hidden min-h-0">
+
+            {/* Tier picker */}
+            {!tier && (
+              <div className="flex-1 overflow-y-auto">
+                <TierPicker onSelect={handleTierSelect} />
               </div>
-              <div className="flex-1 overflow-hidden">
-                <ManifestAssistantPanel
-                  availableSkills={availableSkills}
-                  availableTools={availableTools}
-                  onApply={handleApplyAssistantDraft}
-                />
-              </div>
-            </div>
-          )}
-        </div>
-      </SheetContent>
-    </Sheet>
+            )}
+
+            {/* Step sidebar + content */}
+            {tier && (
+              <>
+                {/* Left: step nav */}
+                <nav className="w-44 shrink-0 border-r border-border overflow-y-auto py-4 flex flex-col gap-0.5 px-2">
+                  {STEPS.map((s, i) => {
+                    const done = i < stepIdx;
+                    const active = s.id === step;
+                    const Icon = s.icon;
+                    return (
+                      <button
+                        key={s.id}
+                        type="button"
+                        onClick={() => setStep(s.id)}
+                        className={`w-full flex items-center gap-2.5 rounded-lg px-3 py-2 text-xs transition-colors text-left ${
+                          active
+                            ? "bg-violet-500/15 text-violet-400 font-medium"
+                            : done
+                            ? "text-foreground/70 hover:bg-muted/50"
+                            : "text-muted-foreground hover:bg-muted/40"
+                        }`}
+                      >
+                        <div className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] ${
+                          done
+                            ? "bg-violet-500 text-white"
+                            : active
+                            ? "bg-violet-500/20 text-violet-400 ring-1 ring-violet-500/40"
+                            : "bg-muted text-muted-foreground"
+                        }`}>
+                          {done ? <Check className="h-3 w-3" /> : <Icon className="h-3 w-3" />}
+                        </div>
+                        {s.label}
+                      </button>
+                    );
+                  })}
+                </nav>
+
+                {/* Right: step content + optional assistant */}
+                <div className="flex flex-1 overflow-hidden min-w-0">
+                  <form
+                    onSubmit={handleSubmit((d) => mutation.mutate(d))}
+                    className="flex flex-col flex-1 overflow-hidden min-w-0"
+                  >
+                    <div className="flex-1 overflow-y-auto px-7 py-6">
+                      {step === "identity" && (
+                        <StepIdentity register={register} errors={errors} watchedName={formValues.name ?? ""} />
+                      )}
+                      {step === "behavior" && (
+                        <StepBehavior register={register} errors={errors} />
+                      )}
+                      {step === "skills" && (
+                        <StepSkills selectedSkills={formValues.skills ?? []} onToggle={toggleSkill} availableSkills={availableSkills} isLoading={skillsLoading} />
+                      )}
+                      {step === "tools-mcp" && (
+                        <StepToolsMCP
+                          selectedTools={formValues.tools ?? []}
+                          onToggleTool={toggleTool}
+                          selectedMCPServers={selectedMCPServers}
+                          onToggleMCP={toggleMCP}
+                          availableTools={availableTools}
+                          availableMCP={availableMCP}
+                          toolsLoading={toolsLoading}
+                          mcpLoading={mcpLoading}
+                        />
+                      )}
+                      {step === "knowledge" && (
+                        <StepKnowledge selectedKGs={selectedKGs} onToggleKG={toggleKG} availableGraphs={availableGraphs} kgLoading={kgLoading} />
+                      )}
+                      {step === "safety" && (
+                        <StepSafety
+                          selectedGuardrails={selectedGuardrails}
+                          onToggleGuardrail={(id) => setSelectedGuardrails((p) => p.includes(id) ? p.filter((x) => x !== id) : [...p, id])}
+                          selectedHooks={selectedHooks}
+                          onToggleHook={(id) => setSelectedHooks((p) => p.includes(id) ? p.filter((x) => x !== id) : [...p, id])}
+                          catalogGuardrails={catalogGuardrails}
+                          catalogHooks={catalogHooks}
+                        />
+                      )}
+                      {step === "review" && (
+                        <StepReview
+                          form={formValues}
+                          selectedGuardrails={selectedGuardrails}
+                          selectedHooks={selectedHooks}
+                          availableMCP={availableMCP}
+                          catalogGuardrails={catalogGuardrails}
+                          catalogHooks={catalogHooks}
+                          selectedKGs={selectedKGs}
+                          availableGraphs={availableGraphs}
+                        />
+                      )}
+                      {mutation.error && <p className="text-xs text-destructive mt-3">{String(mutation.error)}</p>}
+                    </div>
+
+                    {/* Footer */}
+                    <div className="shrink-0 border-t border-border px-7 py-3.5 flex items-center justify-between bg-muted/10">
+                      <Button type="button" variant="outline" size="sm" onClick={goPrev} disabled={isFirst} className="gap-1.5">
+                        <ChevronLeft className="h-4 w-4" /> Back
+                      </Button>
+                      <span className="text-xs text-muted-foreground">{stepIdx + 1} of {STEPS.length}</span>
+                      {isLast ? (
+                        <Button type="submit" size="sm" disabled={mutation.isPending} className="gap-1.5">
+                          {mutation.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                          <CheckCircle2 className="h-3.5 w-3.5" />
+                          Create Agent
+                        </Button>
+                      ) : (
+                        <Button type="button" size="sm" onClick={goNext} className="gap-1.5">
+                          Next <ChevronRight className="h-4 w-4" />
+                        </Button>
+                      )}
+                    </div>
+                  </form>
+
+                  {/* AI Assistant panel */}
+                  {showAssistant && (
+                    <div className="w-60 border-l border-border flex flex-col shrink-0">
+                      <div className="px-4 py-3 border-b border-border flex items-center gap-2">
+                        <Sparkles size={13} className="text-violet-400" />
+                        <p className="text-xs font-medium">Manifest Assistant</p>
+                      </div>
+                      <div className="flex-1 overflow-hidden">
+                        <ManifestAssistantPanel
+                          availableSkills={availableSkills}
+                          availableTools={availableTools}
+                          onApply={handleApplyAssistantDraft}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
@@ -1260,8 +1232,16 @@ const STATUS_COLORS: Record<string, string> = {
 export default function AgentsPage() {
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const qc = useQueryClient();
+  const { tenantId } = useTenant();
+
+  // Keep the runtime tenant in sync whenever the workspace tenant selector changes
+  useEffect(() => {
+    setRuntimeTenant(tenantId);
+    qc.invalidateQueries({ queryKey: ["agents"] });
+  }, [tenantId, qc]);
+
   const { data: allAgents, isLoading, isError } = useQuery({
-    queryKey: ["agents"],
+    queryKey: ["agents", tenantId],
     queryFn: () => agentsApi.list(),
   });
 
@@ -1294,7 +1274,7 @@ export default function AgentsPage() {
           </div>
           <p className="text-sm text-muted-foreground">Autonomous agents composed from skills, tools, and safety policies.</p>
         </div>
-        <CreateAgentSheet onCreated={() => qc.invalidateQueries({ queryKey: ["agents"] })} />
+        <CreateAgentDialog onCreated={() => qc.invalidateQueries({ queryKey: ["agents"] })} />
       </div>
 
       <Separator className="mb-6" />

@@ -16,6 +16,7 @@ import {
   Shield,
   Webhook,
   Cable,
+  Cpu,
 } from "lucide-react";
 import {
   Sidebar,
@@ -32,6 +33,7 @@ import {
 } from "@/components/ui/sidebar";
 import { Separator } from "@/components/ui/separator";
 import { TenantSelector } from "@/components/tenant-selector";
+import { ModelSelector } from "@/components/model-selector";
 
 const navGroups = [
   {
@@ -67,6 +69,7 @@ const navGroups = [
   {
     label: "Platform",
     items: [
+      { href: "/models", label: "Models", icon: Cpu },
       { href: "/cookbooks", label: "Cookbooks", icon: BookOpen },
       { href: "/settings", label: "Settings", icon: Settings },
     ],
@@ -139,7 +142,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <Separator orientation="vertical" className="h-4 mr-3" />
               <BreadcrumbNav />
             </div>
-            <div>
+            <div className="flex items-center gap-2">
+              <ModelSelector />
+              <Separator orientation="vertical" className="h-4" />
               <TenantSelector />
             </div>
           </header>

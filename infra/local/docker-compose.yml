@@ -313,6 +313,8 @@ services:
       dockerfile: services/agent-workers/Dockerfile
     container_name: agent-workers
     restart: on-failure
+    ports:
+      - "8094:8094"   # Tool API (playground + agent direct invocation)
     environment:
       - TEMPORAL_HOSTPORT=temporal:7233
       - LLM_GATEWAY_URL=http://litellm:4000/v1
@@ -328,6 +330,9 @@ services:
       - SKILL_CATALOG_URL=http://skill-catalog:8087
       - TOOL_REGISTRY_URL=http://tool-registry:8086
       - POSTGRES_URL=postgresql://postgres:postgres@postgres:5432/agentplatform?sslmode=disable
+      - BASH_EXECUTOR_URL=http://bash-executor:8092
+      - AGENT_WORKSPACE=/tmp/agent-workspace
+      - TOOL_API_PORT=8094
     depends_on:
       temporal:
         condition: service_started

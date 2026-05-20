@@ -41,3 +41,9 @@ Thumbs.db
 # Logs
 *.log
 zscaler.pem
+
+# Compiled binaries (platform-specific builds)
+kg-service-linux
+
+# Temporal dev SQLite DB (changes on every run)
+infra/local/temporal_data/

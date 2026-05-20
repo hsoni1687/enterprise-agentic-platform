@@ -24,6 +24,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { useTenant } from "@/contexts/tenant-context";
+import { useModel } from "@/contexts/model-context";
 
 const API_GATEWAY = process.env.NEXT_PUBLIC_API_GATEWAY_URL ?? "http://localhost:8080";
 const WORKFLOW_INITIATOR = "http://localhost:8081";
@@ -36,9 +37,13 @@ function friendlyError(raw: string): string {
   if (r.includes("TIMEOUT") || r.includes("DEADLINE"))
     return "The agent timed out while processing your request. Try a simpler prompt or check that the LLM is reachable.";
   if (r.includes("401") || r.includes("UNAUTHORIZED"))
-    return "Unauthorized. Check your API key configuration.";
-  if (r.includes("404") || r.includes("NOT FOUND"))
-    return "Agent not found or not deployed. Deploy the agent first.";
+    return "Unauthorized — invalid or missing API key. Open Models → Connect Provider and re-enter your key.";
+  // LLM-level 404: model not found in the provider's catalog
+  if (r.includes("LLM API ERROR 404") || r.includes("NOTFOUNDERROR") || r.includes("NOT_FOUND_ERROR") || (r.includes("404") && r.includes("LLM")))
+    return "Model not found at the AI provider. The model ID may be incorrect or not available in your account. Go to Models → Connect Provider and re-add the model with its correct ID.";
+  // Agent-registry 404 (gateway returns 502 wrapping initiator's 404 body)
+  if (r.includes("AGENT_ID") && r.includes("NOT FOUND"))
+    return "Agent not found. It may have been deleted — go back to the Agents list.";
   return raw || "An unknown error occurred.";
 }
 
@@ -187,6 +192,17 @@ function ThinkingBlock({ content, streaming }: { content: string; streaming?: bo
 function mergeEvents(events: ChatEvent[]): ChatEvent[] {
   const merged: ChatEvent[] = [];
   for (const ev of events) {
+    if (ev.type === "thinking") {
+      // Always fold ALL thinking events into the single thinking block (first occurrence)
+      const thinkingIdx = merged.findIndex(e => e.type === "thinking");
+      if (thinkingIdx >= 0) {
+        merged[thinkingIdx] = {
+          ...merged[thinkingIdx],
+          content: (merged[thinkingIdx].content ?? "") + "\n" + (ev.content ?? ""),
+        };
+        continue;
+      }
+    }
     if (ev.type === "tool_call") {
       const argsKey = JSON.stringify(ev.tool_args ?? {});
       const existing = merged.findIndex(
@@ -268,6 +284,7 @@ export default function ChatPage({
 }) {
   const { id } = use(params);
   const { tenantId } = useTenant();
+  const { model: activeModel } = useModel();
   const [messages, setMessages] = useState<Message[]>(() => getSession(id));
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -358,7 +375,14 @@ export default function ChatPage({
     fetch(`${API_GATEWAY}/api/v1/agents/${id}/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-Tenant-ID": tenantId },
-      body: JSON.stringify({ message: enrichedText, tenant_id: tenantId }),
+      body: JSON.stringify({
+        message: enrichedText,
+        tenant_id: tenantId,
+        // Only send model_override when a model is actually selected.
+        // An empty string means the list hasn't loaded or no model is configured —
+        // let the agent fall back to its own model field.
+        ...(activeModel ? { model_override: activeModel } : {}),
+      }),
       signal: abort.signal,
     })
       .then((resp) => {
@@ -388,7 +412,21 @@ export default function ChatPage({
                         if (m.id !== assistantId) return m;
                         if (event.type === "text" && event.content)
                           return { ...m, content: m.content + event.content };
-                        if (event.type === "thinking" || event.type === "tool_call" || event.type === "approval")
+                        if (event.type === "thinking") {
+                          const events = m.events ?? [];
+                          // Always append to the single existing thinking block, wherever it is
+                          const thinkingIdx = events.findIndex(e => e.type === "thinking");
+                          if (thinkingIdx >= 0) {
+                            const updated = [...events];
+                            updated[thinkingIdx] = {
+                              ...updated[thinkingIdx],
+                              content: (updated[thinkingIdx].content ?? "") + "\n" + (event.content ?? ""),
+                            };
+                            return { ...m, events: updated };
+                          }
+                          return { ...m, events: [...events, event] };
+                        }
+                        if (event.type === "tool_call" || event.type === "approval")
                           return { ...m, events: [...(m.events ?? []), event] };
                         if (event.type === "done")
                           return { ...m, streaming: false };
@@ -471,11 +509,9 @@ export default function ChatPage({
           </div>
           <span className="text-sm font-semibold truncate">{agent?.name ?? id}</span>
           {isActive && <span className="h-2 w-2 rounded-full bg-green-400 shrink-0" />}
-          {agent && (
-            <span className="text-xs text-muted-foreground font-mono hidden sm:block">
-              {agent.model}
-            </span>
-          )}
+          <span className="text-xs text-muted-foreground font-mono hidden sm:block">
+            {activeModel.startsWith("ollama/") ? activeModel.slice(7) : activeModel}
+          </span>
         </div>
         <Button
           variant="ghost"

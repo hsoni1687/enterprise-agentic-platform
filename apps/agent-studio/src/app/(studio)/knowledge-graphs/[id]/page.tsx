@@ -4,7 +4,8 @@ import React, { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTenant } from "@/contexts/tenant-context";
-import { setRuntimeTenant, modelsApi } from "@/lib/api";
+import { useModel } from "@/contexts/model-context";
+import { setRuntimeTenant } from "@/lib/api";
 import { kgApi } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,7 +13,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   ChevronLeft,
-  ChevronDown,
   Loader2,
   Plus,
   Link,
@@ -62,12 +62,7 @@ export default function KnowledgeGraphDetailPage({
     enabled: !!graphId,
   });
 
-  const { data: modelsData } = useQuery({
-    queryKey: ["models-list"],
-    queryFn: () => modelsApi.list(),
-    staleTime: 60_000,
-  });
-  const availableModels = modelsData?.models ?? [];
+  const { model: activeModel } = useModel();
 
   if (!graphId) {
     return (
@@ -170,7 +165,7 @@ export default function KnowledgeGraphDetailPage({
         {tab === "builder" && (
           <IngestTab
             graphId={graphId}
-            availableModels={availableModels}
+            activeModel={activeModel}
             onIngestComplete={() => {
               queryClient.invalidateQueries({ queryKey: ["kg-nodes", graphId] });
               queryClient.invalidateQueries({ queryKey: ["kg-edges", graphId] });
@@ -186,21 +181,18 @@ export default function KnowledgeGraphDetailPage({
 
 // ── Ingest tab ────────────────────────────────────────────────────────────────
 
-interface ModelInfo { id: string; name: string; source: string }
-
 function IngestTab({
   graphId,
-  availableModels,
+  activeModel,
   onIngestComplete,
 }: {
   graphId: string;
-  availableModels: ModelInfo[];
+  activeModel: string;
   onIngestComplete: () => void;
 }) {
   const [urlInput, setUrlInput] = useState("");
   const [pendingURLs, setPendingURLs] = useState<string[]>([]);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
-  const [extractionModel, setExtractionModel] = useState("");
   const [ingesting, setIngesting] = useState(false);
   const [status, setStatus] = useState<{
     done: number;
@@ -215,7 +207,7 @@ function IngestTab({
     setIngesting(true);
     setStatus({ done: 0, total, results: [] });
 
-    const model = extractionModel || undefined;
+    const model = activeModel || undefined;
     const results: Array<{ label: string; nodes: number; edges: number; error?: string }> = [];
     let done = 0;
 
@@ -259,29 +251,10 @@ function IngestTab({
         </p>
       </div>
 
-      {/* Model picker */}
-      <div className="space-y-1.5">
-        <Label className="text-xs">Extraction Model</Label>
-        <div className="relative">
-          <select
-            value={extractionModel}
-            onChange={(e) => setExtractionModel(e.target.value)}
-            disabled={ingesting}
-            className="w-full appearance-none bg-background border border-border rounded px-3 py-2 text-sm pr-8 focus:outline-none focus:ring-1 focus:ring-violet-500 disabled:opacity-50"
-          >
-            <option value="">Default (gemma4 — local)</option>
-            {availableModels.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name}{m.source === "local" ? " (local)" : " (cloud)"}
-              </option>
-            ))}
-          </select>
-          <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
-        </div>
-        <p className="text-[11px] text-muted-foreground">
-          LLM used to extract entities and relationships. Local models are free; cloud models require API keys.
-        </p>
-      </div>
+      {/* Extraction model — from workspace selector */}
+      <p className="text-[11px] text-muted-foreground -mt-2">
+        Extraction model: <span className="font-mono text-foreground/60">{activeModel.startsWith("ollama/") ? activeModel.slice(7) : activeModel}</span> — change in the top-right selector.
+      </p>
 
       {/* URL input */}
       <div className="space-y-2">
