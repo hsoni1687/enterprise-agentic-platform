@@ -882,3 +882,97 @@ export const platformApi = {
   listHooks: () =>
     req<PlatformHook[]>(ADMIN_API, "/api/v1/platform/hooks"),
 };
+
+// ── Agent Run Event Logs ──────────────────────────────────────────────────────
+
+export type LogLevel  = "info" | "warn" | "error" | "success";
+export type LogSource = "agent" | "skill" | "tool" | "guardrail" | "hook" | "llm" | "system";
+
+export interface RunEvent {
+  id: string;
+  workflow_id: string;
+  run_id: string;
+  tenant_id: string;
+  agent_id: string;
+  event_type: string;
+  level: LogLevel;
+  source: LogSource;
+  source_id: string;
+  message: string;
+  duration_ms?: number;
+  details?: Record<string, unknown>;
+  timestamp: string;   // ISO8601 created_at from DB
+}
+
+export interface LogsResponse {
+  events: RunEvent[];
+  count: number;
+  limit: number;
+  offset: number;
+}
+
+export interface LogsFilter {
+  level?: string;
+  source?: string;
+  agent_id?: string;
+  workflow_id?: string;
+  q?: string;
+  from?: string;   // ISO8601
+  to?: string;     // ISO8601
+  limit?: number;
+  offset?: number;
+}
+
+export const logsApi = {
+  list: (filter: LogsFilter = {}) => {
+    const params = new URLSearchParams();
+    if (filter.level && filter.level !== "all")   params.set("level",       filter.level);
+    if (filter.source && filter.source !== "all") params.set("source",      filter.source);
+    if (filter.agent_id)    params.set("agent_id",    filter.agent_id);
+    if (filter.workflow_id) params.set("workflow_id", filter.workflow_id);
+    if (filter.q)           params.set("q",           filter.q);
+    if (filter.from)        params.set("from",        filter.from);
+    if (filter.to)          params.set("to",          filter.to);
+    params.set("limit",  String(filter.limit  ?? 200));
+    params.set("offset", String(filter.offset ?? 0));
+    const qs = params.toString();
+    return req<LogsResponse>(ADMIN_API, `/api/v1/logs${qs ? "?" + qs : ""}`);
+  },
+};
+
+// ── Agent Runs (grouped by workflow_id) ────────────────────────────────────────
+
+export interface AgentRun {
+  workflow_id:   string;
+  agent_id:      string;
+  tenant_id:     string;
+  started_at:    string;   // ISO8601
+  last_event_at: string;   // ISO8601
+  duration_ms:   number;
+  event_count:   number;
+  llm_calls:     number;
+  tool_calls:    number;
+  status:        "success" | "error" | "running";
+}
+
+export interface RunsResponse {
+  runs:  AgentRun[];
+  count: number;
+}
+
+export const runsApi = {
+  list: (params: { agent_id?: string; from?: string; to?: string; limit?: number } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.agent_id) qs.set("agent_id", params.agent_id);
+    if (params.from)     qs.set("from",     params.from);
+    if (params.to)       qs.set("to",       params.to);
+    qs.set("limit", String(params.limit ?? 100));
+    return req<RunsResponse>(ADMIN_API, `/api/v1/logs/runs?${qs}`);
+  },
+  agents: () =>
+    req<{ agents: string[] }>(ADMIN_API, `/api/v1/logs/agents`),
+};
+
+/** URL to the self-hosted Langfuse instance — for trace deep-links */
+export const LANGFUSE_URL =
+  process.env.NEXT_PUBLIC_LANGFUSE_URL ?? "http://localhost:3002";

@@ -70,6 +70,47 @@ services:
       - agent-net
 
   # ------------------------------------
+  # Langfuse  (port 3002)
+  # Self-hosted LLM observability. Receives traces from LiteLLM callbacks
+  # and direct spans from agent-workers. Uses the langfuse Postgres database.
+  #
+  # UI:       http://localhost:3002
+  # Login:    admin@localhost / Admin1234!
+  # API keys: pk-lf-local-platform / sk-lf-local-platform (pre-seeded)
+  # ------------------------------------
+  langfuse:
+    image: langfuse/langfuse:2
+    container_name: langfuse
+    restart: on-failure
+    ports:
+      - "3002:3000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/langfuse
+      - NEXTAUTH_URL=http://localhost:3002
+      - NEXTAUTH_SECRET=changeme-nextauth-secret-32chars!!
+      - SALT=changeme-salt-dev-only-1234567
+      # 64-char hex key (32 bytes) required by Langfuse v2.90+ for encrypting
+      # stored LLM API keys. Generate a real one for prod: openssl rand -hex 32
+      - ENCRYPTION_KEY=${LANGFUSE_ENCRYPTION_KEY:-0000000000000000000000000000000000000000000000000000000000000000}
+      - TELEMETRY_ENABLED=false
+      # Pre-seed a default org, project, and API keys so LiteLLM + agent-workers
+      # can connect without manual setup on first boot.
+      - LANGFUSE_INIT_ORG_ID=default-org
+      - LANGFUSE_INIT_ORG_NAME=Agent Platform
+      - LANGFUSE_INIT_PROJECT_ID=default-project
+      - LANGFUSE_INIT_PROJECT_NAME=Agent Platform
+      - LANGFUSE_INIT_PROJECT_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-pk-lf-local-platform}
+      - LANGFUSE_INIT_PROJECT_SECRET_KEY=${LANGFUSE_SECRET_KEY:-sk-lf-local-platform}
+      - LANGFUSE_INIT_USER_EMAIL=admin@langfuse.local
+      - LANGFUSE_INIT_USER_PASSWORD=Admin1234!
+      - LANGFUSE_INIT_USER_NAME=Admin
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - agent-net
+
+  # ------------------------------------
   # LiteLLM Proxy  (port 4000)
   # Replaces the custom llm-gateway service.
   # All platform services route inference through here.
@@ -91,11 +132,17 @@ services:
       - OLLAMA_GEMMA_MODEL=${OLLAMA_GEMMA_MODEL:-ollama/gemma4:latest}
       - OLLAMA_EMBEDDING_MODEL=${OLLAMA_EMBEDDING_MODEL:-ollama/nomic-embed-text}
       - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/litellm
+      # Langfuse callback — every LLM call is traced automatically
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-pk-lf-local-platform}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-sk-lf-local-platform}
+      - LANGFUSE_HOST=http://langfuse:3000
     volumes:
       - ./litellm.config.yaml:/app/config.yaml:ro
     depends_on:
       postgres:
         condition: service_healthy
+      langfuse:
+        condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import os, urllib.request; req=urllib.request.Request('http://localhost:4000/health', headers={'Authorization': 'Bearer ' + os.environ.get('LITELLM_MASTER_KEY', 'sk-litellm-dev')}); urllib.request.urlopen(req, timeout=5).read()\""]
       interval: 10s
@@ -112,6 +159,7 @@ services:
       context: ../../
       dockerfile: services/tool-registry/Dockerfile
     container_name: tool-registry
+    restart: on-failure
     ports:
       - "8086:8086"
     environment:
@@ -131,6 +179,7 @@ services:
       context: ../../
       dockerfile: services/skill-catalog/Dockerfile
     container_name: skill-catalog
+    restart: on-failure
     ports:
       - "8087:8087"
     environment:
@@ -149,6 +198,7 @@ services:
       context: ../../
       dockerfile: services/skill-dispatcher/Dockerfile
     container_name: skill-dispatcher
+    restart: on-failure
     ports:
       - "8085:8085"
     environment:
@@ -157,6 +207,7 @@ services:
       - SANDBOX_MANAGER_URL=http://sandbox-manager:8082
       - KG_SERVICE_URL=http://kg-service:8093
       - SKILL_CATALOG_URL=http://skill-catalog:8087
+      - TOOL_WORKERS_URL=http://agent-workers:8094
     depends_on:
       - skill-catalog
       - bash-executor
@@ -173,6 +224,7 @@ services:
       context: ../../
       dockerfile: services/sub-agent-registry/Dockerfile
     container_name: sub-agent-registry
+    restart: on-failure
     ports:
       - "8084:8084"
     environment:
@@ -191,6 +243,7 @@ services:
       context: ../../
       dockerfile: services/agent-registry/Dockerfile
     container_name: agent-registry
+    restart: on-failure
     ports:
       - "8088:8088"
     environment:
@@ -209,6 +262,7 @@ services:
       context: ../../
       dockerfile: services/api-gateway/Dockerfile
     container_name: api-gateway
+    restart: on-failure
     ports:
       - "8080:8080"
     environment:
@@ -226,6 +280,7 @@ services:
       context: ../../
       dockerfile: services/workflow-initiator/Dockerfile
     container_name: workflow-initiator
+    restart: on-failure
     ports:
       - "8081:8081"
     environment:
@@ -248,6 +303,7 @@ services:
       context: ../../
       dockerfile: services/sandbox-manager/Dockerfile
     container_name: sandbox-manager
+    restart: on-failure
     ports:
       - "8082:8082"
     volumes:
@@ -270,6 +326,7 @@ services:
       context: ../../
       dockerfile: services/bash-executor/Dockerfile
     container_name: bash-executor
+    restart: on-failure
     ports:
       - "8092:8092"
     environment:
@@ -289,6 +346,7 @@ services:
       context: ../../
       dockerfile: services/kg-service/Dockerfile
     container_name: kg-service
+    restart: on-failure
     ports:
       - "8093:8093"
     environment:
@@ -306,6 +364,8 @@ services:
 
   # ------------------------------------
   # Agent Workers (Temporal Python)
+  # Rebuild after code changes: docker compose build agent-workers agent-workers-system
+  # or: make -C infra/local rebuild-workers   (uses Makefile with --build on full `up`)
   # ------------------------------------
   agent-workers:
     build:
@@ -333,6 +393,10 @@ services:
       - BASH_EXECUTOR_URL=http://bash-executor:8092
       - AGENT_WORKSPACE=/tmp/agent-workspace
       - TOOL_API_PORT=8094
+      # Langfuse — trace all agent activity
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-pk-lf-local-platform}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-sk-lf-local-platform}
+      - LANGFUSE_HOST=http://langfuse:3000
     depends_on:
       temporal:
         condition: service_started
@@ -371,6 +435,10 @@ services:
       - POSTGRES_URL=postgresql://postgres:postgres@postgres:5432/agentplatform?sslmode=disable
       - BEARTYPE_DOOR_DISABLE_CHECKER=1
       - BEARTYPE_ERROR_ON_NONFATAL_VIOLATION=0
+      # Langfuse — trace all agent activity
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY:-pk-lf-local-platform}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY:-sk-lf-local-platform}
+      - LANGFUSE_HOST=http://langfuse:3000
     depends_on:
       temporal:
         condition: service_started
@@ -391,6 +459,7 @@ services:
       context: ../../
       dockerfile: services/mcp-registry/Dockerfile
     container_name: mcp-registry
+    restart: on-failure
     ports:
       - "8090:8090"
     environment:
@@ -410,6 +479,7 @@ services:
       context: ../../
       dockerfile: services/mcp-server/Dockerfile
     container_name: mcp-server
+    restart: on-failure
     ports:
       - "8091:8091"
     environment:
@@ -435,6 +505,7 @@ services:
       context: ../../
       dockerfile: services/admin-api/Dockerfile
     container_name: admin-api
+    restart: on-failure
     ports:
       - "8089:8089"
     environment:
@@ -459,64 +530,35 @@ services:
       - agent-net
 
   # ------------------------------------
-  # System + Demo Seeder (runs once on every startup)
+  # Demo Data Seeder
   #
-  # Seeds idempotently (safe to re-run):
-  #   • system tools & skills  → platform-system tenant (via admin-api)
-  #   • system agents          → platform-system tenant (via agent-registry)
-  #   • demo agents & KG       → default-tenant (via agent-registry + kg-service)
-  #
-  # Image: python:3.11-alpine + curl — needed because seed scripts use python3.
+  # Runs seed_demo.sql directly via psql — no curl, no apk, no Alpine packages.
+  # Uses the same pgvector image as the migrate service (already pulled).
+  # Idempotent — uses ON CONFLICT DO NOTHING throughout.
+  # Runs after migrations complete so all tables exist.
   # ------------------------------------
   seeder:
-    image: python:3.11-alpine
-    # No container_name — Docker creates a fresh container on every `docker compose up`
-    # so seeding always re-runs (scripts are idempotent — safe to run repeatedly).
+    image: pgvector/pgvector:pg16
+    # No container_name — fresh container on every `docker compose up`.
     restart: "no"
     volumes:
-      - ./seed_system_tools.sh:/seed_system_tools.sh:ro
-      - ./seed_system_skills.sh:/seed_system_skills.sh:ro
-      - ./seed_system_agents.sh:/seed_system_agents.sh:ro
-      - ./seed_demo_data.sh:/seed_demo_data.sh:ro
-      - ../platform:/infra/platform:ro
+      - ../postgres/seed_demo.sql:/seed_demo.sql:ro
     environment:
-      - ADMIN_API_URL=http://admin-api:8089
-      - ADMIN_API_KEY=dev-admin-key
-      - AGENT_REGISTRY_URL=http://agent-registry:8088
-      - KG_SERVICE_URL=http://kg-service:8093
+      - PGPASSWORD=postgres
     entrypoint:
       - sh
       - -c
       - |
-        # Install runtime deps (cached in layer on repeated runs within the same compose up)
-        pip install --quiet pyyaml requests 2>&1 | tail -1
-        apk add --quiet curl bash 2>/dev/null || true
-
-        echo "=== Seeder: waiting for admin-api ==="
-        until curl -sf http://admin-api:8089/health > /dev/null 2>&1; do
-          echo "  waiting for admin-api..."; sleep 3;
+        echo "=== Seeder: waiting for postgres ==="
+        until pg_isready -h postgres -U postgres -d agentplatform; do
+          sleep 2;
         done
-
-        echo "=== Seeder: seeding system tools ==="
-        TOOLS_YAML=/infra/platform/system-tools.yaml bash /seed_system_tools.sh || echo "  tools seed non-fatal error"
-
-        echo "=== Seeder: seeding system skills ==="
-        bash /seed_system_skills.sh || echo "  skills seed non-fatal error"
-
-        echo "=== Seeder: seeding system agents ==="
-        AGENTS_SOURCE=/infra/platform/system-agents bash /seed_system_agents.sh /infra/platform/system-agents || echo "  system agents seed non-fatal error"
-
-        echo "=== Seeder: seeding demo data ==="
-        bash /seed_demo_data.sh || echo "  demo data seed non-fatal error"
-
-        echo "=== Seeder: all done ==="
+        echo "=== Seeder: applying seed_demo.sql ==="
+        psql -h postgres -U postgres -d agentplatform -f /seed_demo.sql
+        echo "=== Seeder: done ==="
     depends_on:
-      admin-api:
-        condition: service_started
-      agent-registry:
-        condition: service_started
-      kg-service:
-        condition: service_started
+      migrate:
+        condition: service_completed_successfully
     networks:
       - agent-net
 
@@ -530,6 +572,10 @@ services:
       args:
         NEXT_PUBLIC_ADMIN_API_URL: http://localhost:8089
     container_name: admin-console
+    # profiles: [prod] means this ONLY starts when you explicitly run:
+    #   docker-compose --profile prod up -d
+    # During normal dev, `docker-compose up -d` skips it — run `npm run dev` instead.
+    profiles: [prod]
     ports:
       - "3001:3001"
     environment:
@@ -560,6 +606,10 @@ services:
         NEXT_PUBLIC_TENANT_ID: default-tenant
         NEXT_PUBLIC_ADMIN_API_URL: http://localhost:8089
     container_name: agent-studio
+    # profiles: [prod] means this ONLY starts when you explicitly run:
+    #   docker-compose --profile prod up -d
+    # During normal dev, `docker-compose up -d` skips it — run `npm run dev` instead.
+    profiles: [prod]
     ports:
       - "3000:3000"
     environment:
@@ -582,6 +632,7 @@ services:
       context: ../../
       dockerfile: services/dashboard/Dockerfile
     container_name: dashboard
+    restart: on-failure
     ports:
       - "8501:8501"
     environment:

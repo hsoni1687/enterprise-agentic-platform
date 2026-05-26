@@ -14,11 +14,14 @@ import json
 import logging
 import os
 import re
+import time
 from typing import Optional
 
 import httpx
 from openai import AsyncOpenAI
 from temporalio import activity
+
+import observability as obs
 
 logger = logging.getLogger(__name__)
 
@@ -215,6 +218,10 @@ async def plan_tasks(prompt: str, context_summary: str, model: str) -> dict:
     Falls back to a single LLM reasoning task if planning fails.
     """
     logger.info(f"[PLANNER] Planning tasks for prompt: {prompt[:80]}...")
+    wf_id, run_id = obs.workflow_ctx()
+    obs.lf_trace(wf_id, name="agent_run")
+    span  = obs.lf_span(wf_id, "planning", input_data={"prompt": prompt[:200], "model": model})
+    t0 = time.monotonic()
 
     user_msg = f"""Available resources:
 {context_summary}
@@ -241,7 +248,17 @@ User prompt:
             "reasoning": "Fallback: planning did not produce tasks, executing prompt directly.",
         }
 
-    logger.info(f"[PLANNER] Plan has {len(plan['tasks'])} tasks. Reasoning: {plan.get('reasoning','')[:120]}")
+    task_count = len(plan["tasks"])
+    duration_ms = int((time.monotonic() - t0) * 1000)
+    obs.lf_end_span(span, output={"task_count": task_count, "reasoning": plan.get("reasoning", "")[:200]})
+    await obs.emit(
+        event_type="task_planned", level="info", source="agent",
+        source_id="planner", message=f"Planned {task_count} task(s) for execution",
+        workflow_id=wf_id, run_id=run_id, duration_ms=duration_ms,
+        details={"task_count": task_count, "model": model, "reasoning": plan.get("reasoning", "")[:200]},
+    )
+    obs.lf_flush()
+    logger.info(f"[PLANNER] Plan has {task_count} tasks. Reasoning: {plan.get('reasoning','')[:120]}")
     return plan
 
 
@@ -280,6 +297,17 @@ async def apply_guardrails(text: str, guardrails: list[dict], phase: str) -> dic
         violation = {"guardrail_id": gid, "guardrail_name": gname, "action": action, "category": category}
         violations.append(violation)
         logger.info(f"[GUARDRAIL] {phase.upper()} — '{gname}' triggered (action={action})")
+
+        # Emit guardrail event immediately on trigger
+        wf_id, run_id = obs.workflow_ctx()
+        emit_level = "error" if action == "block" else "warn"
+        import asyncio as _asyncio
+        _asyncio.ensure_future(obs.emit(
+            event_type="guardrail_triggered", level=emit_level, source="guardrail",
+            source_id=gname, message=f"Guardrail '{gname}' triggered ({phase}) — action: {action}",
+            workflow_id=wf_id, run_id=run_id,
+            details={"phase": phase, "action": action, "category": category, "guardrail_id": gid},
+        ))
 
         if action == "block":
             return {
@@ -659,6 +687,10 @@ Task execution results:
 
 Synthesize the final answer."""
 
+    wf_id, run_id = obs.workflow_ctx()
+    obs.lf_trace(wf_id, name="agent_run")
+    span  = obs.lf_span(wf_id, "synthesis", input_data={"tasks": len(task_statuses), "model": model})
+    t0 = time.monotonic()
     client, _ = _llm_client()
     try:
         resp = await client.chat.completions.create(
@@ -667,11 +699,30 @@ Synthesize the final answer."""
                 {"role": "system", "content": _SYNTHESIS_SYSTEM},
                 {"role": "user",   "content": user},
             ],
+            extra_body=obs.lf_metadata(wf_id, step_name="synthesis"),
         )
         answer = resp.choices[0].message.content or ""
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        succeeded_count = sum(1 for s in task_statuses.values() if s == "succeeded")
+        obs.lf_end_span(span, output={"answer_len": len(answer), "succeeded_tasks": succeeded_count})
+        await obs.emit(
+            event_type="agent_completed", level="success", source="agent",
+            source_id="synthesizer", message=f"Agent completed — {succeeded_count}/{len(task_statuses)} tasks succeeded",
+            workflow_id=wf_id, run_id=run_id, duration_ms=duration_ms,
+            details={"answer_len": len(answer), "task_statuses": task_statuses},
+        )
+        obs.lf_flush()
         logger.info(f"[SYNTHESIS] Final answer length: {len(answer)} chars")
         return answer
     except Exception as e:
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        obs.lf_end_span(span, output={"error": str(e)}, level="ERROR")
+        await obs.emit(
+            event_type="agent_completed", level="error", source="agent",
+            source_id="synthesizer", message=f"Agent synthesis failed: {e}",
+            workflow_id=wf_id, run_id=run_id, duration_ms=duration_ms,
+        )
+        obs.lf_flush()
         logger.error(f"[SYNTHESIS] Failed: {e}")
         # Fall back: concatenate succeeded results
         succeeded = {tid: task_results[tid] for tid, s in task_statuses.items() if s == "succeeded"}

@@ -1,10 +1,13 @@
 import json
 import logging
 import os
+import time
 from typing import Optional
 from temporalio import activity
 from openai import AsyncOpenAI
 import httpx
+
+import observability as obs
 
 
 @activity.defn
@@ -27,6 +30,10 @@ async def invoke_skill(skill_name: str, args: dict, tenant_id: str, agent_id: st
     """Invokes a named skill via the skill-dispatcher (runs pre/post hooks)."""
     url = os.getenv("SKILL_DISPATCHER_URL", "http://localhost:8085")
     logging.info(f"Invoking skill '{skill_name}' for agent {agent_id}")
+    wf_id, run_id = obs.workflow_ctx()
+    obs.lf_trace(wf_id, agent_id, tenant_id)
+    span  = obs.lf_span(wf_id, f"skill:{skill_name}", input_data=args)
+    t0 = time.monotonic()
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
@@ -37,8 +44,27 @@ async def invoke_skill(skill_name: str, args: dict, tenant_id: str, agent_id: st
             )
             resp.raise_for_status()
             data = resp.json()
-            return json.dumps(data.get("result", data))
+            result = json.dumps(data.get("result", data))
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        obs.lf_end_span(span, output={"result_len": len(result)})
+        await obs.emit(
+            event_type="skill_invoked", level="success", source="skill",
+            source_id=skill_name, message=f"Skill '{skill_name}' completed",
+            workflow_id=wf_id, run_id=run_id, tenant_id=tenant_id, agent_id=agent_id,
+            duration_ms=duration_ms, details={"skill_id": skill_id},
+        )
+        obs.lf_flush()
+        return result
     except Exception as e:
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        obs.lf_end_span(span, output={"error": str(e)}, level="ERROR")
+        await obs.emit(
+            event_type="skill_invoked", level="error", source="skill",
+            source_id=skill_name, message=f"Skill '{skill_name}' failed: {e}",
+            workflow_id=wf_id, run_id=run_id, tenant_id=tenant_id, agent_id=agent_id,
+            duration_ms=duration_ms,
+        )
+        obs.lf_flush()
         logging.error(f"Skill invocation failed: {e}")
         return f"Error invoking skill '{skill_name}': {e}"
 
@@ -89,7 +115,10 @@ async def invoke_mcp_tool(server_id: str, tool_name: str, args: dict, tenant_id:
     """Invokes a tool on an external MCP server."""
     mcp_registry_url = os.getenv("MCP_REGISTRY_URL", "http://localhost:8090")
     logging.info(f"Invoking MCP tool '{tool_name}' on server {server_id}")
-
+    wf_id, run_id = obs.workflow_ctx()
+    obs.lf_trace(wf_id, tenant_id=tenant_id)
+    span  = obs.lf_span(wf_id, f"mcp:{server_id}/{tool_name}", input_data=args)
+    t0 = time.monotonic()
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
@@ -100,8 +129,26 @@ async def invoke_mcp_tool(server_id: str, tool_name: str, args: dict, tenant_id:
             )
             resp.raise_for_status()
             data = resp.json()
-            return json.dumps(data.get("result", data))
+            result = json.dumps(data.get("result", data))
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        obs.lf_end_span(span, output={"result_len": len(result)})
+        await obs.emit(
+            event_type="tool_invoked", level="success", source="tool",
+            source_id=f"mcp:{tool_name}", message=f"MCP tool '{tool_name}' on '{server_id}' completed",
+            workflow_id=wf_id, run_id=run_id, tenant_id=tenant_id,
+            duration_ms=duration_ms, details={"server_id": server_id, "tool_name": tool_name},
+        )
+        obs.lf_flush()
+        return result
     except Exception as e:
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        obs.lf_end_span(span, output={"error": str(e)}, level="ERROR")
+        await obs.emit(
+            event_type="tool_invoked", level="error", source="tool",
+            source_id=f"mcp:{tool_name}", message=f"MCP tool '{tool_name}' failed: {e}",
+            workflow_id=wf_id, run_id=run_id, tenant_id=tenant_id, duration_ms=duration_ms,
+        )
+        obs.lf_flush()
         logging.error(f"MCP tool invocation failed: {e}")
         return f"Error invoking MCP tool '{tool_name}': {e}"
 
@@ -193,6 +240,10 @@ async def invoke_direct_tool(tool_name: str, tool_version: str, args: dict, tena
     """Invokes a direct tool via the skill-dispatcher."""
     skill_dispatcher_url = os.getenv("SKILL_DISPATCHER_URL", "http://localhost:8085")
     logging.info(f"Invoking direct tool '{tool_name}' for agent {agent_id}")
+    wf_id, run_id = obs.workflow_ctx()
+    obs.lf_trace(wf_id, agent_id, tenant_id)
+    span  = obs.lf_span(wf_id, f"tool:{tool_name}", input_data={"args": args, "mutating": mutating})
+    t0 = time.monotonic()
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
@@ -203,8 +254,27 @@ async def invoke_direct_tool(tool_name: str, tool_version: str, args: dict, tena
             )
             resp.raise_for_status()
             data = resp.json()
-            return json.dumps(data.get("result", data))
+            result = json.dumps(data.get("result", data))
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        obs.lf_end_span(span, output={"result_len": len(result)})
+        await obs.emit(
+            event_type="tool_invoked", level="success", source="tool",
+            source_id=tool_name, message=f"Tool '{tool_name}' completed",
+            workflow_id=wf_id, run_id=run_id, tenant_id=tenant_id, agent_id=agent_id,
+            duration_ms=duration_ms, details={"version": tool_version, "mutating": mutating},
+        )
+        obs.lf_flush()
+        return result
     except Exception as e:
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        obs.lf_end_span(span, output={"error": str(e)}, level="ERROR")
+        await obs.emit(
+            event_type="tool_invoked", level="error", source="tool",
+            source_id=tool_name, message=f"Tool '{tool_name}' failed: {e}",
+            workflow_id=wf_id, run_id=run_id, tenant_id=tenant_id, agent_id=agent_id,
+            duration_ms=duration_ms,
+        )
+        obs.lf_flush()
         logging.error(f"Direct tool invocation failed: {e}")
         return f"Error invoking tool '{tool_name}': {e}"
 
@@ -322,9 +392,53 @@ async def reasoning_step(messages: list[dict], model: str, tool_defs: Optional[l
         thinking       = msg_data.get("thinking") or ""
         raw_tool_calls = msg_data.get("tool_calls") or []
 
-        logging.info(f"[OLLAMA] thinking_len={len(thinking)} content_len={len(content)} tool_calls={len(raw_tool_calls)}")
+        # Ollama returns token counts at the top level of the response
+        tokens_in_ollama  = data.get("prompt_eval_count", 0) or 0
+        tokens_out_ollama = data.get("eval_count", 0) or 0
 
-        result: dict = {"content": content, "thinking_content": thinking, "tool_calls": None}
+        logging.info(f"[OLLAMA] thinking_len={len(thinking)} content_len={len(content)} tool_calls={len(raw_tool_calls)} tokens={tokens_in_ollama}→{tokens_out_ollama}")
+
+        # ── Emit observability (Langfuse + DB) for Ollama LLM call ──────────
+        wf_id_ollama, run_id_ollama = obs.workflow_ctx()
+
+        # Build concise input/output summaries for logging
+        last_user_msg = next(
+            (m.get("content", "") for m in reversed(messages) if m.get("role") == "user"), ""
+        )
+        llm_input_summary  = last_user_msg[:500] if last_user_msg else f"{len(messages)} messages"
+        llm_output_summary = content[:500] if content else (thinking[:300] if thinking else "")
+
+        obs.lf_generation(
+            wf_id_ollama, f"ollama:{ollama_model}",
+            model=ollama_model,
+            input_data={"messages": messages[-4:] if len(messages) > 4 else messages},  # last 4 messages
+            output_data={"content": content, "thinking": thinking[:200] if thinking else ""},
+            tokens_in=tokens_in_ollama,
+            tokens_out=tokens_out_ollama,
+            metadata={"tool_calls": len(raw_tool_calls)},
+        )
+        await obs.emit(
+            event_type="llm_call", level="info", source="llm",
+            source_id=model, message=f"Ollama reasoning step ({tokens_in_ollama}→{tokens_out_ollama} tokens, {len(raw_tool_calls)} tool calls)",
+            workflow_id=wf_id_ollama, run_id=run_id_ollama,
+            details={
+                "model":       ollama_model,
+                "tokens_in":   tokens_in_ollama,
+                "tokens_out":  tokens_out_ollama,
+                "tool_calls":  len(raw_tool_calls),
+                "input":       llm_input_summary,
+                "output":      llm_output_summary,
+            },
+        )
+        obs.lf_flush()
+
+        result: dict = {
+            "content": content,
+            "thinking_content": thinking,
+            "tool_calls": None,
+            "tokens_in": tokens_in_ollama,
+            "tokens_out": tokens_out_ollama,
+        }
         if raw_tool_calls:
             result["tool_calls"] = [
                 {
@@ -343,14 +457,58 @@ async def reasoning_step(messages: list[dict], model: str, tool_defs: Optional[l
     api_key = os.getenv("OPENAI_API_KEY") or os.getenv("LITELLM_MASTER_KEY", "sk-litellm-dev")
     openai_client = AsyncOpenAI(base_url=gateway_url, api_key=api_key)
 
+    wf_id, run_id = obs.workflow_ctx()
+    t0 = time.monotonic()
     response = await openai_client.chat.completions.create(
         model=model,
         messages=messages,
         tools=tools,
+        extra_body=obs.lf_metadata(wf_id, step_name="reasoning_step"),
     )
+    duration_ms = int((time.monotonic() - t0) * 1000)
+    usage = getattr(response, "usage", None)
+    tokens_in  = getattr(usage, "prompt_tokens", 0) if usage else 0
+    tokens_out = getattr(usage, "completion_tokens", 0) if usage else 0
 
     msg = response.choices[0].message
-    result = {"content": msg.content, "thinking_content": "", "tool_calls": None}
+
+    # Build concise input/output summaries for logging
+    last_user_msg = next(
+        (m.get("content", "") for m in reversed(messages) if m.get("role") == "user"), ""
+    )
+    llm_input_summary  = last_user_msg[:500] if last_user_msg else f"{len(messages)} messages"
+    llm_output_summary = (msg.content or "")[:500]
+
+    # Log to Langfuse as a proper generation (shows in token/cost tracking)
+    obs.lf_generation(
+        wf_id, "reasoning_step",
+        model=model,
+        input_data={"messages": messages[-4:] if len(messages) > 4 else messages},
+        output_data={"content": msg.content, "tool_calls": len(msg.tool_calls or [])},
+        tokens_in=tokens_in,
+        tokens_out=tokens_out,
+        metadata={"duration_ms": duration_ms},
+    )
+    await obs.emit(
+        event_type="llm_call", level="info", source="llm",
+        source_id=model, message=f"LLM reasoning step ({tokens_in}→{tokens_out} tokens, {duration_ms}ms)",
+        workflow_id=wf_id, run_id=run_id, duration_ms=duration_ms,
+        details={
+            "model":      model,
+            "tokens_in":  tokens_in,
+            "tokens_out": tokens_out,
+            "input":      llm_input_summary,
+            "output":     llm_output_summary,
+        },
+    )
+    obs.lf_flush()
+    result = {
+        "content": msg.content,
+        "thinking_content": "",
+        "tool_calls": None,
+        "tokens_in": tokens_in,
+        "tokens_out": tokens_out,
+    }
     if msg.tool_calls:
         result["tool_calls"] = [
             {
@@ -550,6 +708,8 @@ async def execute_react_tool(
     Returns the result as a plain string so the LLM can read it.
     """
     logging.info(f"[REACT_TOOL] tool={tool_name} agent={agent_id}")
+    wf_id, run_id = obs.workflow_ctx()
+    t0_react = time.monotonic()
 
     route = tool_router.get(tool_name)
     if not route:
@@ -573,9 +733,22 @@ async def execute_react_tool(
                 resp.raise_for_status()
                 data = resp.json()
                 result = data.get("result", data)
-                return json.dumps(result) if not isinstance(result, str) else result
+                result_str = json.dumps(result) if not isinstance(result, str) else result
+            duration_ms = int((time.monotonic() - t0_react) * 1000)
+            await obs.emit(
+                event_type="tool_invoked", level="success", source="tool",
+                source_id=f"mcp:{actual_tool}", message=f"ReAct MCP '{actual_tool}' completed",
+                workflow_id=wf_id, run_id=run_id, tenant_id=tenant_id, agent_id=agent_id,
+                duration_ms=duration_ms, details={"server_id": server_id},
+            )
+            return result_str
         except Exception as e:
             logging.error(f"[REACT_TOOL] MCP call failed: {e}")
+            await obs.emit(
+                event_type="tool_invoked", level="error", source="tool",
+                source_id=f"mcp:{actual_tool}", message=f"ReAct MCP '{actual_tool}' failed: {e}",
+                workflow_id=wf_id, run_id=run_id, tenant_id=tenant_id, agent_id=agent_id,
+            )
             return f"MCP tool '{actual_tool}' failed: {e}"
 
     # ── Skill ─────────────────────────────────────────────────────────────────
@@ -593,9 +766,22 @@ async def execute_react_tool(
                 resp.raise_for_status()
                 data = resp.json()
                 result = data.get("result", data)
-                return json.dumps(result) if not isinstance(result, str) else result
+                result_str = json.dumps(result) if not isinstance(result, str) else result
+            duration_ms = int((time.monotonic() - t0_react) * 1000)
+            await obs.emit(
+                event_type="skill_invoked", level="success", source="skill",
+                source_id=skill_name, message=f"ReAct skill '{skill_name}' completed",
+                workflow_id=wf_id, run_id=run_id, tenant_id=tenant_id, agent_id=agent_id,
+                duration_ms=duration_ms,
+            )
+            return result_str
         except Exception as e:
             logging.error(f"[REACT_TOOL] Skill call failed: {e}")
+            await obs.emit(
+                event_type="skill_invoked", level="error", source="skill",
+                source_id=skill_name, message=f"ReAct skill '{skill_name}' failed: {e}",
+                workflow_id=wf_id, run_id=run_id, tenant_id=tenant_id, agent_id=agent_id,
+            )
             return f"Skill '{skill_name}' failed: {e}"
 
     # ── Direct platform tool ──────────────────────────────────────────────────
@@ -614,9 +800,22 @@ async def execute_react_tool(
                 resp.raise_for_status()
                 data = resp.json()
                 result = data.get("result", data)
-                return json.dumps(result) if not isinstance(result, str) else result
+                result_str = json.dumps(result) if not isinstance(result, str) else result
+            duration_ms = int((time.monotonic() - t0_react) * 1000)
+            await obs.emit(
+                event_type="tool_invoked", level="success", source="tool",
+                source_id=tool_n, message=f"ReAct tool '{tool_n}' completed",
+                workflow_id=wf_id, run_id=run_id, tenant_id=tenant_id, agent_id=agent_id,
+                duration_ms=duration_ms,
+            )
+            return result_str
         except Exception as e:
             logging.error(f"[REACT_TOOL] Tool call failed: {e}")
+            await obs.emit(
+                event_type="tool_invoked", level="error", source="tool",
+                source_id=tool_n, message=f"ReAct tool '{tool_n}' failed: {e}",
+                workflow_id=wf_id, run_id=run_id, tenant_id=tenant_id, agent_id=agent_id,
+            )
             return f"Tool '{tool_n}' failed: {e}"
 
     # ── Knowledge-graph search ────────────────────────────────────────────────
@@ -641,6 +840,60 @@ async def execute_react_tool(
                             parts.append(ctx[:1500])
                 except Exception as e:
                     parts.append(f"KG search failed for graph {gid}: {e}")
-        return "\n\n".join(parts) if parts else "No relevant knowledge graph results found."
+        kg_result = "\n\n".join(parts) if parts else "No relevant knowledge graph results found."
+        duration_ms = int((time.monotonic() - t0_react) * 1000)
+        await obs.emit(
+            event_type="tool_invoked", level="success", source="tool",
+            source_id="knowledge_graph", message=f"KG search completed ({len(graph_ids)} graphs)",
+            workflow_id=wf_id, run_id=run_id, tenant_id=tenant_id, agent_id=agent_id,
+            duration_ms=duration_ms, details={"graph_ids": graph_ids, "query": query[:120]},
+        )
+        return kg_result
 
+    # emit a fallback event for unknown route type
+    await obs.emit(
+        event_type="tool_invoked", level="warn", source="tool",
+        source_id=tool_name, message=f"Unknown route type '{rtype}' for tool '{tool_name}'",
+        workflow_id=wf_id, run_id=run_id, tenant_id=tenant_id, agent_id=agent_id,
+    )
     return f"Unknown route type '{rtype}' for tool '{tool_name}'"
+
+
+# ── Workflow-level event emitter ───────────────────────────────────────────────
+
+@activity.defn
+async def emit_run_event(
+    event_type: str,
+    level: str,
+    source: str,
+    source_id: str,
+    message: str,
+    workflow_id: str = "",
+    run_id: str = "",
+    tenant_id: str = "default-tenant",
+    agent_id: str = "",
+    duration_ms: int = 0,
+    details: Optional[dict] = None,
+) -> None:
+    """
+    Thin Temporal activity wrapper around obs.emit() so that workflows can
+    write structured events to agent_run_events without doing I/O directly.
+
+    Also initialises the Langfuse trace root so every event is linked to the
+    correct trace in Langfuse.
+    """
+    obs.lf_trace(workflow_id, agent_id)
+    await obs.emit(
+        event_type=event_type,
+        level=level,
+        source=source,
+        source_id=source_id,
+        message=message,
+        workflow_id=workflow_id,
+        run_id=run_id,
+        tenant_id=tenant_id,
+        agent_id=agent_id,
+        duration_ms=duration_ms if duration_ms else None,
+        details=details,
+    )
+    obs.lf_flush()

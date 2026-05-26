@@ -680,6 +680,10 @@ Rules:
         final_answer: Optional[str] = None
         tools_arg = tool_defs if tool_defs else None   # None → LLM has no tools
 
+        # Token counters — accumulated across all reasoning steps in this loop
+        total_tokens_in  = 0
+        total_tokens_out = 0
+
         # Deduplication: cache tool results so repeated identical calls reuse the result
         # and the LLM is nudged to stop looping and synthesise.
         tool_result_cache: dict[str, str] = {}
@@ -690,6 +694,24 @@ Rules:
         force_synthesis_after = max(2, max_iterations // 2)
 
         self._emit({"type": "thinking", "content": f"Starting ReAct loop (max {max_iterations} steps)..."})
+
+        # ── Emit agent_started event ──────────────────────────────────────────
+        wf_info = workflow.info()
+        try:
+            await workflow.execute_activity(
+                "emit_run_event",
+                args=[
+                    "agent_started", "info", "agent", agent_id,
+                    f"Agent '{agent_id}' started ReAct loop",
+                    wf_info.workflow_id, wf_info.run_id,
+                    tenant_id, agent_id, 0,
+                    {"model": model, "max_iterations": max_iterations, "tools": len(tool_defs)},
+                ],
+                start_to_close_timeout=timedelta(seconds=10),
+                retry_policy=RetryPolicy(maximum_attempts=1),
+            )
+        except Exception as _e:
+            workflow.logger.warning(f"[REACT] emit agent_started skipped: {_e}")
 
         for step in range(max_iterations):
             workflow.logger.info(f"[REACT] step={step + 1}/{max_iterations} agent={agent_id}")
@@ -723,6 +745,10 @@ Rules:
             content          = decision.get("content") or ""
             thinking_content = decision.get("thinking_content") or ""
             tool_calls       = decision.get("tool_calls") or []
+
+            # Accumulate token usage from this reasoning step
+            total_tokens_in  += decision.get("tokens_in", 0) or 0
+            total_tokens_out += decision.get("tokens_out", 0) or 0
 
             # No tool calls → LLM has its final answer
             if not tool_calls:
@@ -893,8 +919,31 @@ Rules:
         except Exception as e:
             workflow.logger.warning(f"[REACT] store_memory skipped: {e}")
 
+        # ── Emit agent_completed event ────────────────────────────────────────
+        try:
+            await workflow.execute_activity(
+                "emit_run_event",
+                args=[
+                    "agent_completed", "success", "agent", agent_id,
+                    f"Agent '{agent_id}' completed ReAct loop ({step + 1} steps)",
+                    wf_info.workflow_id, wf_info.run_id,
+                    tenant_id, agent_id, 0,
+                    {"steps": step + 1, "answer_len": len(final_answer), "model": model},
+                ],
+                start_to_close_timeout=timedelta(seconds=10),
+                retry_policy=RetryPolicy(maximum_attempts=1),
+            )
+        except Exception as _e:
+            workflow.logger.warning(f"[REACT] emit agent_completed skipped: {_e}")
+
         self._emit({"type": "text", "content": final_answer})
-        self._emit({"type": "done"})
+        self._emit({
+            "type":       "done",
+            "tokens_in":  total_tokens_in,
+            "tokens_out": total_tokens_out,
+            "steps":      step + 1,
+            "model":      model,
+        })
         return f"Agent {agent_id} completed: {final_answer}"
 
     # ─────────────────────────────────────────────────────────────────────────

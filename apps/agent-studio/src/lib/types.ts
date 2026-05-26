@@ -218,6 +218,11 @@ export interface ChatEvent {
   timestamp?: string;
   approval_id?: string;
   reason?: string;
+  // Token usage — populated on "done" events from the ReAct loop
+  tokens_in?: number;
+  tokens_out?: number;
+  steps?: number;
+  model?: string;
 }
 
 export interface Message {
@@ -226,6 +231,11 @@ export interface Message {
   content: string;
   events?: ChatEvent[];
   streaming?: boolean;
+  // Token usage captured when streaming completes
+  tokensIn?: number;
+  tokensOut?: number;
+  steps?: number;
+  model?: string;
 }
 
 export interface KGGraph {

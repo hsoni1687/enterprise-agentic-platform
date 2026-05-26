@@ -18,6 +18,7 @@ try:
         resolve_mcp_servers, pydantic_ai_reasoning_step, fetch_system_tools,
         resolve_skill_context, invoke_direct_tool,
         execute_react_tool,   # ReAct loop tool executor
+        emit_run_event,       # workflow-level observability emitter
     )
     from activities_memory import recall_memories, store_memory
     from activities_orchestration import (
@@ -78,6 +79,8 @@ async def run_temporal_worker(logger: logging.Logger) -> None:
             execute_single_task, synthesize_final_answer,
             # deep-tier ReAct loop
             execute_react_tool,
+            # observability
+            emit_run_event,
             # workflow-tier activities
             run_single_llm_step,
             execute_workflow_step_tool,

@@ -384,6 +384,11 @@ type AgentEvent struct {
 	ToolResult interface{} `json:"tool_result,omitempty"` // tool_call: execution result
 	ApprovalID string      `json:"approval_id,omitempty"` // approval: approval request ID
 	Reason     string      `json:"reason,omitempty"`      // approval: why approval is needed
+	// Token usage — populated on "done" events by the ReAct loop
+	TokensIn  int    `json:"tokens_in,omitempty"`  // total prompt tokens across all reasoning steps
+	TokensOut int    `json:"tokens_out,omitempty"` // total completion tokens across all reasoning steps
+	Steps     int    `json:"steps,omitempty"`      // number of reasoning steps taken
+	Model     string `json:"model,omitempty"`      // model used for this run
 }
 
 // ChatRequest is the body for POST /api/v1/agents/{id}/chat.

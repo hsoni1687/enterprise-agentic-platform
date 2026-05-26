@@ -12,3 +12,6 @@ pgvector>=0.2.4
 beartype==0.18.5
 fastapi>=0.111.0
 uvicorn[standard]>=0.29.0
+# Observability
+langfuse>=2.0.0,<3.0.0
+asyncpg>=0.29.0

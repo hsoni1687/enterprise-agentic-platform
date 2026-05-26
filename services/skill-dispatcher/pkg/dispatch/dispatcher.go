@@ -432,11 +432,18 @@ func NewToolExecutorRouter() *ToolExecutorRouter {
 		kgServiceURL = "http://localhost:8093"
 	}
 
+	// agent-workers Tool API — serves web-search, web-fetch, and other built-in tools
+	toolWorkersURL := os.Getenv("TOOL_WORKERS_URL")
+	if toolWorkersURL == "" {
+		toolWorkersURL = "http://localhost:8094"
+	}
+
 	return &ToolExecutorRouter{
 		client: &http.Client{Timeout: 5 * time.Minute},
 		routes: map[string]string{
-			"bash": bashExecutorURL,
-			"kg":   kgServiceURL,
+			"bash":        bashExecutorURL,
+			"kg":          kgServiceURL,
+			"tool-workers": toolWorkersURL,
 		},
 		defaultURL: sandboxManagerURL,
 	}
@@ -455,6 +462,14 @@ func (r *ToolExecutorRouter) Route(ctx context.Context, tool models.ToolRef, arg
 	if len(tool.Name) > 3 && tool.Name[:3] == "kg-" {
 		log.Printf("[Route] Routing to kg-service (executeKG)")
 		return r.executeKG(ctx, tool, args)
+	}
+
+	// Route web-search and web-fetch to agent-workers Tool API (has real HTML scraping)
+	if tool.Name == "web-search" || tool.Name == "web-fetch" ||
+		tool.Name == "file-read" || tool.Name == "file-write" || tool.Name == "file-edit" ||
+		tool.Name == "glob" || tool.Name == "grep" || tool.Name == "todo" {
+		log.Printf("[Route] Routing to agent-workers tool API: %s", tool.Name)
+		return r.executeToolWorkers(ctx, tool, args)
 	}
 
 	// Route other tools to sandbox-manager
@@ -543,6 +558,53 @@ func (r *ToolExecutorRouter) executeSandbox(ctx context.Context, tool models.Too
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("decode tool response: %w", err)
 	}
+	return result, nil
+}
+
+// executeToolWorkers forwards the tool call to the agent-workers Tool API
+// (POST /api/v1/tools/{name}/invoke). This service has a real HTML-scraping
+// web-search implementation and handles file/glob/grep/todo tools too.
+func (r *ToolExecutorRouter) executeToolWorkers(ctx context.Context, tool models.ToolRef, args map[string]any) (any, error) {
+	baseURL := r.routes["tool-workers"]
+
+	// Strip internal metadata keys added by the dispatcher (prefixed with __)
+	// so they don't leak into the tool's parameter schema.
+	cleanArgs := make(map[string]any, len(args))
+	for k, v := range args {
+		if !strings.HasPrefix(k, "__") {
+			cleanArgs[k] = v
+		}
+	}
+
+	payload := map[string]any{
+		"inputs":   cleanArgs,
+		"agent_id": "",
+	}
+	body, _ := json.Marshal(payload)
+
+	url := fmt.Sprintf("%s/api/v1/tools/%s/invoke", baseURL, tool.Name)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("build tool-workers request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := r.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("execute tool %s via tool-workers: %w", tool.Name, err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("tool-workers returned %d for %s: %s", resp.StatusCode, tool.Name, string(respBody))
+	}
+
+	var result any
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("decode tool-workers response: %w", err)
+	}
+	log.Printf("[executeToolWorkers] tool=%s status=%d result_type=%T", tool.Name, resp.StatusCode, result)
 	return result, nil
 }
 
