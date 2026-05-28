@@ -49,6 +49,7 @@ func (s *InMemoryIdempotencyStore) Set(key string, entry models.IdempotencyEntry
 type GatewayHandler struct {
 	InitiatorURL     string
 	IdempotencyStore IdempotencyStore
+	ChatStore        *ChatStore // nil when Postgres is unavailable — handlers degrade gracefully
 }
 
 // HandleTriggerAgent handles triggering an agent workflow.

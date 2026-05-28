@@ -54,9 +54,18 @@ func main() {
 	)
 
 	store := service.NewInMemoryIdempotencyStore()
+
+	// Chat history store — non-fatal if Postgres is unreachable at startup.
+	chatStore, err := service.NewChatStore()
+	if err != nil {
+		log.Printf("WARNING: chat history unavailable (Postgres unreachable): %v", err)
+		chatStore = nil
+	}
+
 	h := &service.GatewayHandler{
 		InitiatorURL:     initiatorURL,
 		IdempotencyStore: store,
+		ChatStore:        chatStore,
 	}
 
 	mux := http.NewServeMux()
@@ -67,6 +76,13 @@ func main() {
 	mux.HandleFunc("GET /api/v1/agents/{id}/chat", h.HandleChatStream)
 	mux.HandleFunc("POST /api/v1/agents/{id}/chat", h.HandleChatStream)
 	mux.HandleFunc("GET /api/v1/agents/{id}/ws", h.HandleChatWS)
+
+	// Chat session history endpoints
+	mux.HandleFunc("GET /api/v1/agents/{id}/chat/sessions", h.HandleListSessions)
+	mux.HandleFunc("POST /api/v1/agents/{id}/chat/sessions", h.HandleCreateSession)
+	mux.HandleFunc("GET /api/v1/agents/{id}/chat/sessions/{sid}", h.HandleGetSession)
+	mux.HandleFunc("POST /api/v1/agents/{id}/chat/sessions/{sid}/messages", h.HandleAppendMessages)
+	mux.HandleFunc("DELETE /api/v1/agents/{id}/chat/sessions/{sid}", h.HandleDeleteSession)
 
 	log.Printf("Starting API Gateway on :8080 (Initiator: %s)", initiatorURL)
 	if err := http.ListenAndServe(":8080", withCORS(mux)); err != nil {

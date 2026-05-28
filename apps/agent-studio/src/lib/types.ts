@@ -238,6 +238,35 @@ export interface Message {
   model?: string;
 }
 
+// ── Chat Sessions ─────────────────────────────────────────────────────────────
+
+export interface ChatSessionMessage {
+  id: string;
+  session_id: string;
+  tenant_id: string;
+  agent_id: string;
+  role: "user" | "assistant";
+  content: string;
+  metadata?: {
+    tokens_in?: number;
+    tokens_out?: number;
+    steps?: number;
+    model?: string;
+    events?: ChatEvent[];
+  };
+  created_at: string;
+}
+
+export interface ChatSession {
+  id: string;
+  tenant_id: string;
+  agent_id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  messages?: ChatSessionMessage[];
+}
+
 export interface KGGraph {
   id: string;
   tenant_id: string;

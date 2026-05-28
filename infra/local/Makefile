@@ -1,5 +1,5 @@
 SHELL := /bin/bash
-.PHONY: up down restart-llm seed migrate logs ps
+.PHONY: up down restart-llm rebuild-workers seed migrate logs ps
 
 # ── Load .env so all targets see the right values ─────────────────────────────
 ifneq (,$(wildcard .env))
@@ -8,9 +8,11 @@ ifneq (,$(wildcard .env))
 endif
 
 # ── Start the full platform ────────────────────────────────────────────────────
+# --build: Docker reuses existing images by default; without this, agent-workers and
+# other built services keep running stale code after you edit the repo.
 up:
 	@echo "==> Starting platform..."
-	docker compose up -d
+	docker compose up -d --build
 	@echo "==> Running migrations..."
 	docker rm -f migrate 2>/dev/null; docker compose run --rm migrate
 	@echo "==> Waiting for services..."
@@ -28,6 +30,11 @@ down:
 # ── Restart LiteLLM only (safe — never touches postgres) ─────────────────────
 restart-llm:
 	bash restart-litellm.sh
+
+# ── Rebuild and restart only Temporal Python workers (faster than full stack rebuild)
+rebuild-workers:
+	docker compose build agent-workers agent-workers-system
+	docker compose up -d agent-workers agent-workers-system
 
 # ── Re-seed without restarting containers ────────────────────────────────────
 seed:

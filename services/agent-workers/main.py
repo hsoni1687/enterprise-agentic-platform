@@ -20,12 +20,13 @@ try:
         execute_react_tool,   # ReAct loop tool executor
         emit_run_event,       # workflow-level observability emitter
     )
-    from activities_memory import recall_memories, store_memory
+    from activities_memory import recall_memories, store_memory, reflect_on_run, propose_manifest_update
     from activities_orchestration import (
         load_active_guardrails, load_active_hooks,
         plan_tasks, apply_guardrails, run_hooks,
         validate_task_result, handle_task_failure,
         execute_single_task, synthesize_final_answer,
+        replan_remaining_tasks,
     )
     from activities_workflow_agent import (
         run_single_llm_step,
@@ -72,11 +73,13 @@ async def run_temporal_worker(logger: logging.Logger) -> None:
             invoke_skill, discover_mcp_tools, invoke_mcp_tool,
             resolve_mcp_servers, fetch_system_tools, resolve_skill_context,
             invoke_direct_tool, recall_memories, store_memory,
+            reflect_on_run, propose_manifest_update,
             # deep-tier orchestration activities
             load_active_guardrails, load_active_hooks,
             plan_tasks, apply_guardrails, run_hooks,
             validate_task_result, handle_task_failure,
             execute_single_task, synthesize_final_answer,
+            replan_remaining_tasks,
             # deep-tier ReAct loop
             execute_react_tool,
             # observability

@@ -16,10 +16,13 @@ import {
   XCircle,
   RefreshCw,
   Coins,
+  MessageSquare,
+  Plus,
+  Trash2,
 } from "lucide-react";
-import { agentsApi, kgApi } from "@/lib/api";
-import { ChatEvent, Message } from "@/lib/types";
-import { getSession, setSession, clearSession } from "@/lib/chat-session-cache";
+import { agentsApi, kgApi, chatSessionsApi } from "@/lib/api";
+import { ChatEvent, Message, ChatSession } from "@/lib/types";
+import { clearSession } from "@/lib/chat-session-cache";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
@@ -29,6 +32,16 @@ import { useModel } from "@/contexts/model-context";
 const API_GATEWAY = process.env.NEXT_PUBLIC_API_GATEWAY_URL ?? "http://localhost:8080";
 const WORKFLOW_INITIATOR = "http://localhost:8081";
 const CHAT_TIMEOUT_MS = 120_000; // 120 s — LLM + planning can take 30-60 s on local models
+
+// Sentinel key used for a brand-new chat that hasn't been saved to the DB yet.
+// When the first message is sent and a DB session is created, all state is migrated
+// from this key to the real session ID atomically.
+const SESSION_NEW = "__new__";
+
+interface SessionData {
+  messages: Message[];
+  streaming: boolean;
+}
 
 function friendlyError(raw: string): string {
   const r = raw?.toUpperCase?.() ?? "";
@@ -111,11 +124,18 @@ function ApprovalBlock({ event, tenantId }: { event: ChatEvent; tenantId: string
 
 // ── Tool call block ───────────────────────────────────────────────────────────
 
+interface ExtendedChatEvent extends ChatEvent {
+  name?: string;
+  args?: unknown;
+  result?: unknown;
+}
+
 function ToolCallBlock({ event }: { event: ChatEvent }) {
   const [expanded, setExpanded] = useState(false);
-  const toolName = event.tool_name || (event as any).name || "Unknown Tool";
-  const toolArgs = event.tool_args || (event as any).args;
-  const toolResult = event.tool_result || (event as any).result;
+  const ev = event as ExtendedChatEvent;
+  const toolName = ev.tool_name || ev.name || "Unknown Tool";
+  const toolArgs = ev.tool_args || ev.args;
+  const toolResult = ev.tool_result || ev.result;
   const hasContent = toolArgs !== undefined || toolResult !== undefined;
 
   return (
@@ -321,11 +341,43 @@ export default function ChatPage({
   const { id } = use(params);
   const { tenantId } = useTenant();
   const { model: activeModel } = useModel();
-  const [messages, setMessages] = useState<Message[]>(() => getSession(id));
+
+  // ── Per-session state ──────────────────────────────────────────────────────
+  // Each chat session (including the unsaved new one) gets its own messages +
+  // streaming flag so switching sessions never aborts an in-progress stream.
+  const [sessionData, setSessionData] = useState<Record<string, SessionData>>({
+    [SESSION_NEW]: { messages: [], streaming: false },
+  });
+
+  // Which session the user is currently viewing.
+  // null  → the brand-new, not-yet-persisted chat (SESSION_NEW key)
+  // string → a DB-backed session ID
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+
+  // Derived: what the main chat area shows right now
+  const currentKey = activeSessionId ?? SESSION_NEW;
+  const currentData = sessionData[currentKey] ?? { messages: [], streaming: false };
+  const messages = currentData.messages;
+  const streaming = currentData.streaming;
+
   const [input, setInput] = useState("");
-  const [streaming, setStreaming] = useState(false);
+  const [sessionLoading, setSessionLoading] = useState(false);
+  const [showScrollBtn, setShowScrollBtn] = useState(false);
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
+
   const scrollRef = useRef<HTMLDivElement>(null);
-  const abortRef = useRef<AbortController | null>(null);
+
+  // Per-session abort controllers and timeout IDs — keyed by session key
+  const abortMapRef = useRef(new Map<string, AbortController>());
+  const timeoutMapRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+
+  // Ref mirror of sessionData so async callbacks read latest without stale closures
+  const sessionDataRef = useRef<Record<string, SessionData>>(sessionData);
+  useEffect(() => { sessionDataRef.current = sessionData; }, [sessionData]);
+
+  // Ref mirror of current messages so sendMessage can snapshot priorMessages
+  const messagesRef = useRef<Message[]>([]);
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
 
   const { data: agent } = useQuery({
     queryKey: ["agents", id],
@@ -340,73 +392,256 @@ export default function ChatPage({
 
   useEffect(() => { scrollToBottom(); }, [messages, scrollToBottom]);
 
+  // Re-scroll when the browser tab becomes visible again
   useEffect(() => {
-    if (!streaming && messages.length > 0) setSession(id, messages);
-  }, [streaming, id, messages]);
+    const onVisible = () => { if (document.visibilityState === "visible") scrollToBottom(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [scrollToBottom]);
 
-  // Clean up on unmount
-  useEffect(() => () => abortRef.current?.abort(), []);
+  // Track whether user has scrolled up — show "↓" button when they have
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+      setShowScrollBtn(!nearBottom);
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, []);
 
+  // Abort ALL active streams on unmount
+  useEffect(() => () => {
+    abortMapRef.current.forEach(abort => abort.abort());
+    timeoutMapRef.current.forEach(timeout => clearTimeout(timeout));
+  }, []);
+
+  // ── Load session list on mount ─────────────────────────────────────────────
+  useEffect(() => {
+    chatSessionsApi.list(id).then(setSessions).catch(() => {/* non-fatal */});
+  }, [id]);
+
+  // ── Per-session state helpers ──────────────────────────────────────────────
+
+  const setSessionMsgs = useCallback((key: string, updater: (prev: Message[]) => Message[]) => {
+    setSessionData(prev => {
+      const cur = prev[key] ?? { messages: [], streaming: false };
+      return { ...prev, [key]: { ...cur, messages: updater(cur.messages) } };
+    });
+  }, []);
+
+  const setSessionStreaming = useCallback((key: string, value: boolean) => {
+    setSessionData(prev => {
+      const cur = prev[key] ?? { messages: [], streaming: false };
+      return { ...prev, [key]: { ...cur, streaming: value } };
+    });
+  }, []);
+
+  // ── Load a past session ────────────────────────────────────────────────────
+  // Does NOT abort other sessions' streams — just switches the view.
+  const loadSession = useCallback(async (session: ChatSession) => {
+    if (activeSessionId === session.id) return;
+
+    // Switch view immediately — other sessions keep streaming in the background
+    setActiveSessionId(session.id);
+
+    // Already have data for this session (migrated from SESSION_NEW or previously loaded)
+    if (session.id in sessionDataRef.current) return;
+
+    setSessionLoading(true);
+    const targetId = session.id; // capture for catch guard below
+    try {
+      const full = await chatSessionsApi.get(id, session.id);
+      const dbMessages = full.messages ?? [];
+      if (dbMessages.length === 0) {
+        setSessionMsgs(session.id, () => []);
+        return;
+      }
+      const msgs: Message[] = dbMessages.map((m) => ({
+        id: m.id,
+        role: m.role as "user" | "assistant",
+        content: m.content,
+        events: (m.metadata?.events as ChatEvent[] | undefined) ?? [],
+        streaming: false,
+        tokensIn:  m.metadata?.tokens_in,
+        tokensOut: m.metadata?.tokens_out,
+        steps:     m.metadata?.steps,
+        model:     m.metadata?.model,
+      }));
+      // Guard: if a stream was started into this session while we were fetching, keep it
+      setSessionMsgs(session.id, (prev) => prev.some((m) => m.streaming) ? prev : msgs);
+    } catch {
+      // Network error — only deselect if no other click has already changed the active session
+      setActiveSessionId(prev => (prev === targetId ? null : prev));
+    } finally {
+      setSessionLoading(false);
+    }
+  }, [id, activeSessionId, setSessionMsgs]);
+
+  // ── Delete a session ───────────────────────────────────────────────────────
+  const deleteSession = useCallback(async (e: React.MouseEvent, session: ChatSession) => {
+    e.stopPropagation();
+    e.preventDefault();
+    // Abort any in-flight stream for this session
+    const abort = abortMapRef.current.get(session.id);
+    if (abort) { abort.abort(); abortMapRef.current.delete(session.id); }
+    const timeout = timeoutMapRef.current.get(session.id);
+    if (timeout) { clearTimeout(timeout); timeoutMapRef.current.delete(session.id); }
+    try {
+      await chatSessionsApi.delete(id, session.id);
+      setSessions(prev => prev.filter(s => s.id !== session.id));
+      // Drop session data from the map
+      setSessionData(prev => {
+        const next = { ...prev };
+        delete next[session.id];
+        return next;
+      });
+      if (activeSessionId === session.id) setActiveSessionId(null);
+    } catch {
+      // non-fatal
+    }
+  }, [id, activeSessionId]);
+
+  // ── Start a brand-new chat ─────────────────────────────────────────────────
+  const startNewChat = useCallback(() => {
+    // Only abort/clear the SESSION_NEW stream — real sessions keep running
+    const newAbort = abortMapRef.current.get(SESSION_NEW);
+    if (newAbort) { newAbort.abort(); abortMapRef.current.delete(SESSION_NEW); }
+    const newTimeout = timeoutMapRef.current.get(SESSION_NEW);
+    if (newTimeout) { clearTimeout(newTimeout); timeoutMapRef.current.delete(SESSION_NEW); }
+
+    setActiveSessionId(null);
+    setSessionData(prev => ({ ...prev, [SESSION_NEW]: { messages: [], streaming: false } }));
+    clearSession(id);
+  }, [id]);
+
+  // ── Send a message ─────────────────────────────────────────────────────────
   const sendMessage = useCallback(async () => {
     const text = input.trim();
     if (!text || streaming) return;
 
+    // Capture the session key for this send cycle.
+    // keyRef is a plain mutable object (not a React ref) so that pump() always reads the
+    // latest key even after the SESSION_NEW → real-ID migration that happens mid-function.
+    const sendKey = activeSessionId ?? SESSION_NEW;
+    const keyRef = { current: sendKey };
+
+    // Snapshot history BEFORE setSessionMsgs adds the new messages.
+    // After any await, messagesRef.current would already include the new user message.
+    const priorMessages = messagesRef.current.filter((m) => !m.streaming && m.content);
+
     const userMsg: Message = { id: crypto.randomUUID(), role: "user", content: text };
     const assistantId = crypto.randomUUID();
-    const assistantMsg: Message = { id: assistantId, role: "assistant", content: "", events: [], streaming: true };
+    const assistantMsg: Message = {
+      id: assistantId, role: "assistant", content: "", events: [], streaming: true,
+    };
 
-    setMessages((prev) => [...prev, userMsg, assistantMsg]);
+    setSessionMsgs(sendKey, prev => [...prev, userMsg, assistantMsg]);
     setInput("");
-    setStreaming(true);
+    setSessionStreaming(sendKey, true);
+
+    // Ensure we have a DB session — create one on first message if needed
+    let sessionId = activeSessionId;
+    if (!sessionId) {
+      try {
+        const title = text.length > 60 ? text.slice(0, 60) + "…" : text;
+        const created = await chatSessionsApi.create(id, title, tenantId);
+        sessionId = created.id;
+
+        // Atomically migrate SESSION_NEW → real session key so the UI reflects the DB session
+        // and pump() (via keyRef) starts writing to the correct key immediately.
+        setSessionData(prev => {
+          const next = { ...prev };
+          next[sessionId!] = next[SESSION_NEW] ?? { messages: [], streaming: true };
+          delete next[SESSION_NEW];
+          return next;
+        });
+        keyRef.current = sessionId;
+        setActiveSessionId(sessionId);
+        setSessions(prev => [created, ...prev]);
+      } catch {
+        // Session creation failed — continue without DB persistence (key stays SESSION_NEW)
+      }
+    }
+
+    // Persist user message immediately (don't wait for done — agent might fail/timeout)
+    if (sessionId) {
+      chatSessionsApi.appendMessages(id, sessionId, [{
+        id: userMsg.id,
+        session_id: sessionId,
+        tenant_id: tenantId,
+        agent_id: id,
+        role: "user",
+        content: userMsg.content,
+        metadata: {},
+        created_at: new Date().toISOString(),
+      }]).catch(() => {/* non-fatal */});
+    }
 
     // Inject context from attached knowledge graphs before sending to the agent.
     let enrichedText = text;
     const kgIds: string[] = agent?.knowledge_graph_ids ?? [];
-    console.log("[KG] agent knowledge_graph_ids:", kgIds);
     if (kgIds.length > 0) {
       const contextParts: string[] = [];
       await Promise.allSettled(
         kgIds.map(async (kgId) => {
           try {
-            console.log("[KG] Fetching context for graph:", kgId, "question:", text);
             const result = await kgApi.getGraphContext(kgId, text);
-            console.log("[KG] Context result:", result?.context?.slice(0, 200));
             if (result?.context && result.context !== "(No relevant entities found)") {
-              // Cap context per graph at 1500 chars to keep the LLM prompt manageable
               const ctx = result.context.length > 1500
                 ? result.context.slice(0, 1500) + "\n…(truncated)"
                 : result.context;
               contextParts.push(ctx);
             }
-          } catch (err) {
-            console.error("[KG] Failed to fetch context for graph:", kgId, err);
+          } catch {
+            // non-fatal KG context failure
           }
         })
       );
-      console.log("[KG] contextParts count:", contextParts.length);
       if (contextParts.length > 0) {
         enrichedText =
           `--- Knowledge Graph Context ---\n${contextParts.join("\n\n")}\n--- End of Context ---\n\n` +
           text;
-        console.log("[KG] enrichedText length:", enrichedText.length, "first 300 chars:", enrichedText.slice(0, 300));
       }
     }
 
-    const abort = new AbortController();
-    abortRef.current = abort;
+    // Prepend prior conversation turns so the LLM has context from earlier in this session.
+    if (priorMessages.length > 0) {
+      const historyLines = priorMessages
+        .slice(-8)
+        .map((m) => {
+          const label = m.role === "user" ? "User" : "Assistant";
+          const body  = m.content.length > 600 ? m.content.slice(0, 600) + "…" : m.content;
+          return `${label}: ${body}`;
+        })
+        .join("\n\n");
+      enrichedText =
+        `--- Conversation History ---\n${historyLines}\n--- End History ---\n\n` +
+        enrichedText;
+    }
 
-    // Timeout: if no done/error event within CHAT_TIMEOUT_MS, surface a timeout error
+    // Set up per-session abort controller and timeout.
+    // Both are registered under keyRef.current so external callers (deleteSession,
+    // startNewChat, unmount) can cancel them by session key.
+    const abort = new AbortController();
+    abortMapRef.current.set(keyRef.current, abort);
+
     const timeoutId = setTimeout(() => {
+      const k = keyRef.current;
+      timeoutMapRef.current.delete(k);
+      abortMapRef.current.delete(k);
       abort.abort();
-      setMessages((prev) =>
-        prev.map((m) =>
+      setSessionMsgs(k, prev =>
+        prev.map(m =>
           m.id === assistantId
             ? { ...m, content: friendlyError("TIMEOUT"), streaming: false }
             : m
         )
       );
-      setStreaming(false);
+      setSessionStreaming(k, false);
     }, CHAT_TIMEOUT_MS);
+    timeoutMapRef.current.set(keyRef.current, timeoutId);
 
     fetch(`${API_GATEWAY}/api/v1/agents/${id}/chat`, {
       method: "POST",
@@ -414,9 +649,6 @@ export default function ChatPage({
       body: JSON.stringify({
         message: enrichedText,
         tenant_id: tenantId,
-        // Only send model_override when a model is actually selected.
-        // An empty string means the list hasn't loaded or no model is configured —
-        // let the agent fall back to its own model field.
         ...(activeModel ? { model_override: activeModel } : {}),
       }),
       signal: abort.signal,
@@ -427,40 +659,58 @@ export default function ChatPage({
         if (!reader) throw new Error("No response body");
 
         const decoder = new TextDecoder();
+        // Local tracking vars so we can persist final content without reading stale state
+        let assistantContent = "";
+        const assistantEvents: ChatEvent[] = [];
 
         const pump = async () => {
+          // Rolling buffer — keeps a partial line when a read() chunk ends mid-line.
+          // Without this, large JSON payloads (600-token responses ≈ 2KB+) that span
+          // two read() calls produce a malformed first half whose JSON.parse silently
+          // fails, making the content appear blank in the UI.
+          let lineBuffer = "";
+
           try {
             while (true) {
               const { done, value } = await reader.read();
               if (done) break;
 
-              const chunk = decoder.decode(value, { stream: true });
-              for (const line of chunk.split("\n")) {
-                // SSE comment (: ...) — ignore
-                if (line.startsWith(":")) continue;
+              lineBuffer += decoder.decode(value, { stream: true });
+
+              // Extract all complete lines; keep the trailing incomplete fragment.
+              const lines = lineBuffer.split("\n");
+              lineBuffer = lines.pop() ?? "";
+
+              for (const line of lines) {
+                if (line === "" || line.startsWith(":")) continue;
 
                 if (line.startsWith("data: ")) {
                   try {
                     const event: ChatEvent = JSON.parse(line.slice(6));
+                    // Always read keyRef.current here — may have migrated after the
+                    // first awaited DB call above (SESSION_NEW → realId).
+                    const k = keyRef.current;
 
-                    setMessages((prev) =>
-                      prev.map((m) => {
+                    if (event.type === "text" && event.content) assistantContent += event.content;
+                    if (event.type === "tool_call" || event.type === "approval") assistantEvents.push(event);
+
+                    setSessionMsgs(k, prev =>
+                      prev.map(m => {
                         if (m.id !== assistantId) return m;
                         if (event.type === "text" && event.content)
                           return { ...m, content: m.content + event.content };
                         if (event.type === "thinking") {
-                          const events = m.events ?? [];
-                          // Always append to the single existing thinking block, wherever it is
-                          const thinkingIdx = events.findIndex(e => e.type === "thinking");
+                          const evs = m.events ?? [];
+                          const thinkingIdx = evs.findIndex(e => e.type === "thinking");
                           if (thinkingIdx >= 0) {
-                            const updated = [...events];
+                            const updated = [...evs];
                             updated[thinkingIdx] = {
                               ...updated[thinkingIdx],
                               content: (updated[thinkingIdx].content ?? "") + "\n" + (event.content ?? ""),
                             };
                             return { ...m, events: updated };
                           }
-                          return { ...m, events: [...events, event] };
+                          return { ...m, events: [...evs, event] };
                         }
                         if (event.type === "tool_call" || event.type === "approval")
                           return { ...m, events: [...(m.events ?? []), event] };
@@ -479,63 +729,208 @@ export default function ChatPage({
                       })
                     );
 
-                    if (event.type === "done" || event.type === "error") {
+                    if (event.type === "done") {
                       clearTimeout(timeoutId);
-                      setStreaming(false);
+                      timeoutMapRef.current.delete(k);
+                      abortMapRef.current.delete(k);
+                      setSessionStreaming(k, false);
+                      if (sessionId) {
+                        chatSessionsApi.appendMessages(id, sessionId, [{
+                          id: assistantId,
+                          session_id: sessionId,
+                          tenant_id: tenantId,
+                          agent_id: id,
+                          role: "assistant",
+                          content: assistantContent,
+                          metadata: {
+                            tokens_in:  event.tokens_in,
+                            tokens_out: event.tokens_out,
+                            steps:      event.steps,
+                            model:      event.model,
+                            events:     assistantEvents,
+                          },
+                          created_at: new Date().toISOString(),
+                        }])
+                          .then(() => chatSessionsApi.list(id).then(setSessions).catch(() => {}))
+                          .catch(() => {/* non-fatal */});
+                      }
+                      return;
+                    }
+                    if (event.type === "error") {
+                      clearTimeout(timeoutId);
+                      timeoutMapRef.current.delete(k);
+                      abortMapRef.current.delete(k);
+                      setSessionStreaming(k, false);
                       return;
                     }
                   } catch {
-                    // malformed JSON — skip
+                    // malformed JSON line — skip and continue
                   }
                 }
               }
             }
-          } catch (err: any) {
-            if (err?.name === "AbortError") return; // timeout already handled
+          } catch (err: unknown) {
+            const streamErr = err instanceof Error ? err : null;
+            const k = keyRef.current;
             clearTimeout(timeoutId);
-            setMessages((prev) =>
-              prev.map((m) =>
+            timeoutMapRef.current.delete(k);
+            abortMapRef.current.delete(k);
+            if (streamErr?.name === "AbortError") return;
+            setSessionMsgs(k, prev =>
+              prev.map(m =>
                 m.id === assistantId
-                  ? { ...m, content: friendlyError(err?.message ?? "Stream error"), streaming: false }
+                  ? { ...m, content: friendlyError(streamErr?.message ?? "Stream error"), streaming: false }
                   : m
               )
             );
-            setStreaming(false);
+            setSessionStreaming(k, false);
           }
         };
 
         pump();
       })
-      .catch((err: any) => {
-        if (err?.name === "AbortError") return;
+      .catch((err: unknown) => {
+        const fetchErr = err instanceof Error ? err : null;
+        const k = keyRef.current;
         clearTimeout(timeoutId);
-        setMessages((prev) =>
-          prev.map((m) =>
+        timeoutMapRef.current.delete(k);
+        abortMapRef.current.delete(k);
+        if (fetchErr?.name === "AbortError") return;
+        setSessionMsgs(k, prev =>
+          prev.map(m =>
             m.id === assistantId
-              ? { ...m, content: friendlyError(err?.message ?? ""), streaming: false }
+              ? { ...m, content: friendlyError(fetchErr?.message ?? ""), streaming: false }
               : m
           )
         );
-        setStreaming(false);
+        setSessionStreaming(k, false);
       });
-  }, [id, input, streaming, tenantId, agent]);
+  }, [id, input, streaming, activeSessionId, tenantId, activeModel, agent, setSessionMsgs, setSessionStreaming, setSessions]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
   };
 
-  const stopStreaming = () => {
-    abortRef.current?.abort();
-    setStreaming(false);
-    setMessages((prev) =>
-      prev.map((m) => (m.streaming ? { ...m, streaming: false } : m))
+  // Stop only the CURRENT session's stream — other sessions keep running
+  const stopStreaming = useCallback(() => {
+    const abort = abortMapRef.current.get(currentKey);
+    if (abort) {
+      abort.abort();
+      abortMapRef.current.delete(currentKey);
+    }
+    const timeout = timeoutMapRef.current.get(currentKey);
+    if (timeout) {
+      clearTimeout(timeout);
+      timeoutMapRef.current.delete(currentKey);
+    }
+    setSessionStreaming(currentKey, false);
+    setSessionMsgs(currentKey, prev =>
+      prev.map(m => m.streaming ? { ...m, streaming: false } : m)
     );
-  };
+  }, [currentKey, setSessionMsgs, setSessionStreaming]);
 
   const isActive = agent?.status === "active";
 
   return (
-    <div className="flex flex-col h-full bg-background">
+    <div className="flex h-full bg-background overflow-hidden">
+
+      {/* ── Sessions sidebar ─────────────────────────────────────────────── */}
+      <div className="w-60 shrink-0 border-r border-border/40 flex flex-col bg-card/30 overflow-hidden">
+        {/* Sidebar header */}
+        <div className="flex items-center justify-between px-3 py-2.5 border-b border-border/40 shrink-0">
+          <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+            Chats
+          </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
+            onClick={startNewChat}
+            title="New chat"
+          >
+            <Plus className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+
+        {/* Session list */}
+        <div className="flex-1 overflow-y-auto py-1">
+          {/* Pinned "New Chat" row — always visible, highlighted when no session is selected */}
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={startNewChat}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); startNewChat(); } }}
+            className={cn(
+              "w-full text-left px-3 py-2 rounded-md mx-1 text-xs flex items-center gap-2 transition-colors cursor-pointer select-none",
+              "hover:bg-muted/60",
+              activeSessionId === null
+                ? "bg-violet-500/10 text-foreground font-medium"
+                : "text-muted-foreground"
+            )}
+            style={{ width: "calc(100% - 8px)" }}
+          >
+            <Plus className="h-3 w-3 shrink-0 opacity-60" />
+            <span className="truncate">New chat</span>
+          </div>
+          {sessions.length > 0 && <div className="mx-3 my-1 border-t border-border/30" />}
+          {sessions.length === 0 ? (
+            <p className="text-[11px] text-muted-foreground/50 text-center py-4 px-3">
+              No past chats yet
+            </p>
+          ) : (
+            sessions.map((s) => {
+              // Pulsing green dot if this session is actively streaming in the background
+              const isSessionStreaming = sessionData[s.id]?.streaming ?? false;
+              return (
+                // Using div[role=button] instead of <button> so that the delete <button>
+                // inside is valid HTML. A <button> inside a <button> is illegal HTML and
+                // causes a React hydration error that breaks the entire page.
+                <div
+                  key={s.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => loadSession(s)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      loadSession(s);
+                    }
+                  }}
+                  className={cn(
+                    "w-full text-left px-3 py-2 rounded-md mx-1 text-xs group flex items-start gap-2 transition-colors cursor-pointer select-none",
+                    "hover:bg-muted/60",
+                    activeSessionId === s.id
+                      ? "bg-violet-500/10 text-foreground"
+                      : "text-muted-foreground"
+                  )}
+                  style={{ width: "calc(100% - 8px)" }}
+                >
+                  <MessageSquare className="h-3 w-3 mt-0.5 shrink-0 opacity-50" />
+                  <span className="flex-1 truncate leading-snug">{s.title}</span>
+                  {/* Live streaming indicator — shown on background sessions */}
+                  {isSessionStreaming && (
+                    <span
+                      className="h-2 w-2 rounded-full bg-green-400 animate-pulse shrink-0 mt-0.5"
+                      title="Streaming…"
+                    />
+                  )}
+                  <button
+                    onClick={(e) => deleteSession(e, s)}
+                    className="opacity-0 group-hover:opacity-60 hover:!opacity-100 shrink-0 text-muted-foreground hover:text-destructive transition-opacity"
+                    title="Delete chat"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+
+      {/* ── Main chat area ───────────────────────────────────────────────── */}
+      <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
+
       {/* Header */}
       <div
         className="flex items-center gap-3 px-4 shrink-0 border-b border-border/50"
@@ -560,15 +955,26 @@ export default function ChatPage({
           variant="ghost"
           size="sm"
           className="h-7 px-2 text-muted-foreground shrink-0"
-          onClick={() => { clearSession(id); setMessages([]); }}
+          onClick={startNewChat}
         >
           <RefreshCw className="h-3 w-3 mr-1.5" />
           New Chat
         </Button>
       </div>
 
-      {/* Messages */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 md:px-8 py-4">
+      {/* Messages — wrapper is relative so the scroll button can be absolutely positioned */}
+      <div className="flex-1 min-h-0 relative overflow-hidden">
+        {/* Scroll-to-bottom button — appears when user has scrolled up during a stream */}
+        {showScrollBtn && (
+          <button
+            onClick={scrollToBottom}
+            className="absolute bottom-4 right-6 z-10 flex h-8 w-8 items-center justify-center rounded-full border border-border bg-card/90 shadow-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-all"
+            title="Scroll to latest"
+          >
+            <ChevronDown className="h-4 w-4" />
+          </button>
+        )}
+      <div ref={scrollRef} className="h-full overflow-y-auto px-4 md:px-8 py-4">
         <div className="max-w-2xl mx-auto">
           {messages.length === 0 && (
             <div className="flex flex-col items-center justify-center py-24 text-center">
@@ -600,6 +1006,7 @@ export default function ChatPage({
           )}
         </div>
       </div>
+      </div>{/* end scroll wrapper */}
 
       {/* Input */}
       <div className="shrink-0 border-t border-border/50 px-4 md:px-8 py-4">
@@ -609,9 +1016,13 @@ export default function ChatPage({
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={isActive ? "Message agent… (↵ send · ⇧↵ newline)" : "Deploy the agent to start chatting"}
+              placeholder={
+                !isActive ? "Deploy the agent to start chatting"
+                : sessionLoading ? "Loading chat history…"
+                : "Message agent… (↵ send · ⇧↵ newline)"
+              }
               rows={3}
-              disabled={streaming || !isActive}
+              disabled={streaming || !isActive || sessionLoading}
               className={cn(
                 "resize-none border-0 bg-transparent pr-12 text-sm leading-relaxed rounded-xl",
                 "focus-visible:ring-0 focus-visible:ring-offset-0",
@@ -627,7 +1038,7 @@ export default function ChatPage({
                 <Button
                   size="sm"
                   onClick={sendMessage}
-                  disabled={!input.trim() || !isActive}
+                  disabled={!input.trim() || !isActive || sessionLoading}
                   className="h-7 w-7 p-0"
                 >
                   <Send className="h-3.5 w-3.5" />
@@ -640,6 +1051,8 @@ export default function ChatPage({
           </p>
         </div>
       </div>
+
+      </div>{/* end main chat area */}
     </div>
   );
 }

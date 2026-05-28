@@ -267,8 +267,10 @@ services:
       - "8080:8080"
     environment:
       - WORKFLOW_INITIATOR_URL=http://workflow-initiator:8081
+      - POSTGRES_URL=postgres://postgres:postgres@postgres:5432/agentplatform?sslmode=disable
     depends_on:
       - workflow-initiator
+      - postgres
     networks:
       - agent-net
 

@@ -32,6 +32,21 @@ log "DB   : $DB_URL"
 log "Dir  : $MIGRATIONS_DIR"
 
 # ---------------------------------------------------------------------------
+# 0. Wait for postgres to accept connections (up to 60 s)
+# ---------------------------------------------------------------------------
+log "Waiting for postgres..."
+for i in $(seq 1 30); do
+  if psql "$DB_URL" -c "SELECT 1" -q >/dev/null 2>&1; then
+    log "Postgres ready after ${i}x2s"
+    break
+  fi
+  if [ "$i" -eq 30 ]; then
+    fail "Postgres not ready after 60 seconds — aborting"
+  fi
+  sleep 2
+done
+
+# ---------------------------------------------------------------------------
 # 1. Bootstrap the history table (idempotent DDL — always safe to run)
 # ---------------------------------------------------------------------------
 psql "$DB_URL" -v ON_ERROR_STOP=1 -q <<'SQL'

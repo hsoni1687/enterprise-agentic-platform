@@ -247,23 +247,35 @@ class AgentWorkflow:
             "reasoning": plan.get("reasoning", ""),
         })
 
-        # ── Phase 3: Task execution loop ──────────────────────────────────────
-        task_results: dict[str, str]  = {}
-        task_statuses: dict[str, str] = {t["task_id"]: "pending" for t in tasks}
-        final_answer: Optional[str]   = None
-        abort_plan = False
+        # ── Phase 3: Task execution loop (Claude-Code-style: execute → verify → replan) ──
+        #
+        # Key design: pending_tasks is a mutable queue, not a fixed list.
+        # When a task fails validation or execution, replan_remaining_tasks() rewrites
+        # the queue with a revised plan that addresses the specific failure.
+        # This continues up to MAX_REPLANS times before giving up.
+        #
+        task_results:    dict[str, str] = {}
+        task_statuses:   dict[str, str] = {t["task_id"]: "pending" for t in tasks}
+        succeeded_tasks: list[dict]     = []   # ordered list of tasks that succeeded
+        final_answer:    Optional[str]  = None
+        abort_plan  = False
+        replan_count = 0
+        MAX_REPLANS  = 3   # max times we'll rewrite the plan before giving up
 
-        for task in tasks:
-            if abort_plan:
-                break
+        pending_tasks: list[dict] = list(tasks)   # mutable — replanning replaces this
+
+        while pending_tasks and not abort_plan:
+            task = pending_tasks.pop(0)
 
             tid         = task["task_id"]
             description = task["description"]
             is_critical = task.get("critical", True)
 
+            task_statuses.setdefault(tid, "pending")
+
             # ── Dependency check ──────────────────────────────────────────────
-            deps           = task.get("depends_on", [])
-            failed_deps    = [d for d in deps if task_statuses.get(d) in ("failed", "blocked", "aborted")]
+            deps            = task.get("depends_on", [])
+            failed_deps     = [d for d in deps if task_statuses.get(d) in ("failed", "blocked", "aborted")]
             incomplete_deps = [d for d in deps if task_statuses.get(d) not in ("succeeded", "skipped")]
 
             if failed_deps:
@@ -273,7 +285,6 @@ class AgentWorkflow:
                 continue
 
             if incomplete_deps:
-                # Plan was not topologically sorted — treat as blocked
                 task_statuses[tid] = "blocked"
                 self._emit({"type": "task_blocked", "task_id": tid, "reason": f"dependency not complete: {incomplete_deps}"})
                 continue
@@ -283,8 +294,8 @@ class AgentWorkflow:
             workflow.logger.info(f"[WORKFLOW] task={tid} STARTING — {description}")
 
             # ── Input guardrails ──────────────────────────────────────────────
-            args_text    = json.dumps(task.get("resource_args", {}))
-            guard_input  = await workflow.execute_activity(
+            args_text   = json.dumps(task.get("resource_args", {}))
+            guard_input = await workflow.execute_activity(
                 "apply_guardrails",
                 args=[args_text, guardrails, "input"],
                 start_to_close_timeout=timedelta(seconds=10),
@@ -299,7 +310,6 @@ class AgentWorkflow:
                     abort_plan = True
                     final_answer = f"Execution blocked by safety guardrail: {reason}"
                 continue
-            # Use sanitized args going forward
             if guard_input.get("violations"):
                 task["resource_args"] = json.loads(guard_input.get("sanitized_text", args_text))
 
@@ -318,7 +328,6 @@ class AgentWorkflow:
                     abort_plan = True
                     final_answer = f"Execution blocked by hook: {reason}"
                 continue
-            # Use args modified by hooks (e.g. pii_strip)
             if hook_pre.get("modified_args"):
                 task["resource_args"] = hook_pre["modified_args"]
 
@@ -351,7 +360,6 @@ class AgentWorkflow:
                         abort_plan = True
                         final_answer = f"Task '{description}' timed out awaiting human approval."
                     continue
-
                 if self._hitl_decision != "approved":
                     task_statuses[tid] = "blocked"
                     self._emit({"type": "task_blocked", "task_id": tid, "reason": "HITL denied"})
@@ -360,13 +368,11 @@ class AgentWorkflow:
                         final_answer = f"Task '{description}' was denied by operator."
                     continue
 
-            # ── Execute the task ──────────────────────────────────────────────
-            raw_result: Optional[str] = None
+            # ── Execute — with one immediate retry on transient errors ─────────
+            raw_result:      Optional[str] = None
             execution_error: Optional[str] = None
-            retry_count = 0
-            max_retries = 1  # one recovery attempt
 
-            while retry_count <= max_retries:
+            for attempt in range(2):   # attempt 0 = first try, attempt 1 = one retry
                 try:
                     raw_result = await workflow.execute_activity(
                         "execute_single_task",
@@ -381,70 +387,99 @@ class AgentWorkflow:
                     break
                 except Exception as e:
                     execution_error = str(e)
-                    workflow.logger.error(f"[WORKFLOW] task={tid} execution error (attempt {retry_count+1}): {execution_error[:200]}")
+                    workflow.logger.error(
+                        f"[WORKFLOW] task={tid} attempt={attempt+1} error: {execution_error[:200]}")
 
-                    if retry_count >= max_retries:
+                    if attempt == 0:
+                        # First failure: ask recovery agent if we should retry immediately
+                        # with different args (transient / wrong-args) before replanning
+                        self._emit({"type": "thinking",
+                                    "content": f"Task '{description}' failed — checking quick recovery..."})
+                        recovery = await workflow.execute_activity(
+                            "handle_task_failure",
+                            args=[task, execution_error, task_results, context_summary, model],
+                            start_to_close_timeout=timedelta(seconds=30),
+                            retry_policy=RetryPolicy(maximum_attempts=1),
+                        )
+                        decision = recovery.get("recovery", "abort")
+                        workflow.logger.info(f"[WORKFLOW] task={tid} quick-recovery={decision}")
+
+                        if decision == "retry_with_args" and recovery.get("retry_args"):
+                            # Patch args and retry immediately (attempt 1)
+                            task["resource_args"] = recovery["retry_args"]
+                            self._emit({"type": "thinking",
+                                        "content": f"Retrying '{description}' with adjusted arguments..."})
+                            continue   # → attempt 1
+
+                        elif decision == "skip":
+                            task_statuses[tid] = "skipped"
+                            task_results[tid]  = recovery.get("message_to_context", "skipped")
+                            self._emit({"type": "task_skipped", "task_id": tid})
+                            execution_error = None
+                            raw_result      = None
+                            break
+
+                        # For abort/use_alternative: fall through to replanning below
                         break
 
-                    # ── Recovery: diagnose and decide ─────────────────────────
-                    self._emit({"type": "thinking", "content": f"Task '{description}' failed — diagnosing recovery..."})
-                    recovery = await workflow.execute_activity(
-                        "handle_task_failure",
-                        args=[task, execution_error, task_results, context_summary, model],
-                        start_to_close_timeout=timedelta(seconds=30),
-                        retry_policy=RetryPolicy(maximum_attempts=1),
-                    )
-
-                    decision = recovery.get("recovery", "abort")
-                    self._emit({
-                        "type": "recovery",
-                        "task_id": tid,
-                        "decision": decision,
-                        "reason": recovery.get("reason", ""),
-                    })
-                    workflow.logger.info(f"[WORKFLOW] task={tid} recovery={decision}")
-
-                    if decision == "retry_with_args" and recovery.get("retry_args"):
-                        task["resource_args"] = recovery["retry_args"]
-                        retry_count += 1
-                        continue
-
-                    elif decision == "skip":
-                        task_statuses[tid] = "skipped"
-                        task_results[tid]  = recovery.get("message_to_context", "skipped")
-                        self._emit({"type": "task_skipped", "task_id": tid})
-                        raw_result = None
-                        execution_error = None
-                        break
-
-                    else:  # abort or use_alternative (alternative not yet implemented)
-                        task_statuses[tid] = "failed"
-                        task_results[tid]  = f"ERROR: {execution_error}"
-                        self._emit({"type": "task_failed", "task_id": tid, "error": execution_error})
-                        if is_critical:
-                            abort_plan = True
-                            final_answer = (
-                                f"Critical task '{description}' could not be completed: {execution_error}"
-                            )
-                        raw_result = None
-                        execution_error = None
-                        break
-
-            # Skip to next task if recovery resolved it
-            if task_statuses.get(tid) in ("skipped", "failed"):
-                continue
-            if abort_plan:
-                break
-
-            # ── Handle unrecovered execution error ────────────────────────────
-            if execution_error:
+            # ── Task failed after execution attempts → replan ─────────────────
+            if execution_error and task_statuses.get(tid) not in ("skipped",):
                 task_statuses[tid] = "failed"
                 task_results[tid]  = f"ERROR: {execution_error}"
                 self._emit({"type": "task_failed", "task_id": tid, "error": execution_error})
-                if is_critical:
-                    abort_plan = True
-                    final_answer = f"Critical task '{description}' failed: {execution_error}"
+
+                if replan_count < MAX_REPLANS:
+                    replan_count += 1
+                    self._emit({"type": "thinking",
+                                "content": f"Task '{description}' failed — replanning (attempt {replan_count}/{MAX_REPLANS})..."})
+                    workflow.logger.info(f"[WORKFLOW] REPLANNING #{replan_count} — task={tid} error={execution_error[:100]}")
+
+                    new_plan = await workflow.execute_activity(
+                        "replan_remaining_tasks",
+                        args=[prompt, succeeded_tasks, task,
+                              f"Execution error: {execution_error}",
+                              "",   # no output to show — task never produced one
+                              list(pending_tasks),  # tasks that were still queued
+                              context_summary, replan_count, model],
+                        start_to_close_timeout=timedelta(seconds=60),
+                        retry_policy=RetryPolicy(maximum_attempts=1),
+                    )
+
+                    if new_plan.get("give_up") or not new_plan.get("tasks"):
+                        abort_plan  = True
+                        final_answer = (
+                            f"Could not complete the task after {replan_count} replan(s). "
+                            f"Reason: {new_plan.get('reasoning', execution_error)}"
+                        )
+                        self._emit({"type": "thinking",
+                                    "content": f"No viable path forward — stopping. {new_plan.get('reasoning', '')}"})
+                    else:
+                        # Register new task IDs in statuses, splice into pending queue
+                        for nt in new_plan["tasks"]:
+                            task_statuses[nt["task_id"]] = "pending"
+                        pending_tasks = new_plan["tasks"]
+                        self._emit({
+                            "type": "plan",
+                            "tasks": [{"id": t["task_id"], "description": t["description"]}
+                                      for t in new_plan["tasks"]],
+                            "reasoning": new_plan.get("reasoning", ""),
+                            "replan_n":  replan_count,
+                        })
+                        workflow.logger.info(
+                            f"[WORKFLOW] Replan #{replan_count} produced {len(new_plan['tasks'])} tasks")
+                else:
+                    # Exhausted replan budget
+                    if is_critical:
+                        abort_plan   = True
+                        final_answer = f"Critical task '{description}' could not be completed after {MAX_REPLANS} replan attempts."
+
                 continue
+
+            # Skip to next if task was skipped by quick-recovery
+            if task_statuses.get(tid) == "skipped":
+                continue
+            if abort_plan:
+                break
 
             result_str = raw_result or ""
 
@@ -460,9 +495,10 @@ class AgentWorkflow:
                 self._emit({"type": "guardrail_block", "task_id": tid, "phase": "output"})
             elif guard_output.get("violations"):
                 result_str = guard_output.get("sanitized_text", result_str)
-                self._emit({"type": "guardrail_redact", "task_id": tid, "count": len(guard_output["violations"])})
+                self._emit({"type": "guardrail_redact", "task_id": tid,
+                             "count": len(guard_output["violations"])})
 
-            # ── Validate result ───────────────────────────────────────────────
+            # ── Verify result (the "check" in Claude-Code loop) ───────────────
             validation = await workflow.execute_activity(
                 "validate_task_result",
                 args=[task, result_str, model],
@@ -470,22 +506,71 @@ class AgentWorkflow:
                 retry_policy=RetryPolicy(maximum_attempts=1),
             )
             self._emit({
-                "type": "task_validated",
-                "task_id": tid,
-                "valid": validation.get("valid", True),
+                "type":       "task_validated",
+                "task_id":    tid,
+                "valid":      validation.get("valid", True),
                 "confidence": validation.get("confidence", "low"),
             })
 
+            # ── Validation failed → replan remaining tasks ────────────────────
             if not validation.get("valid", True) and validation.get("confidence") == "high":
-                # High-confidence validation failure — treat like an execution error
-                workflow.logger.warning(f"[WORKFLOW] task={tid} validation FAILED (high confidence): {validation.get('reason')}")
+                failure_reason = validation.get("reason", "validation failed")
+                workflow.logger.warning(
+                    f"[WORKFLOW] task={tid} validation FAILED: {failure_reason}")
                 task_statuses[tid] = "failed"
-                task_results[tid]  = f"VALIDATION_FAILED: {validation.get('reason')}"
-                self._emit({"type": "task_failed", "task_id": tid, "error": validation.get("reason")})
-                if is_critical:
-                    abort_plan = True
-                    final_answer = f"Task '{description}' result did not meet validation: {validation.get('reason')}"
+                task_results[tid]  = f"VALIDATION_FAILED: {failure_reason}"
+                self._emit({"type": "task_failed", "task_id": tid, "error": failure_reason})
+
+                if replan_count < MAX_REPLANS:
+                    replan_count += 1
+                    self._emit({"type": "thinking",
+                                "content": f"Result for '{description}' didn't pass check — replanning (attempt {replan_count}/{MAX_REPLANS})..."})
+                    workflow.logger.info(
+                        f"[WORKFLOW] REPLANNING #{replan_count} after validation failure: {failure_reason[:80]}")
+
+                    new_plan = await workflow.execute_activity(
+                        "replan_remaining_tasks",
+                        args=[prompt, succeeded_tasks, task,
+                              f"Validation failed: {failure_reason}",
+                              result_str,               # pass the bad output as evidence
+                              list(pending_tasks),
+                              context_summary, replan_count, model],
+                        start_to_close_timeout=timedelta(seconds=60),
+                        retry_policy=RetryPolicy(maximum_attempts=1),
+                    )
+
+                    if new_plan.get("give_up") or not new_plan.get("tasks"):
+                        abort_plan   = True
+                        final_answer = (
+                            f"Could not produce a valid result after {replan_count} replan(s). "
+                            f"Reason: {new_plan.get('reasoning', failure_reason)}"
+                        )
+                        self._emit({"type": "thinking",
+                                    "content": f"No viable path — stopping. {new_plan.get('reasoning', '')}"})
+                    else:
+                        for nt in new_plan["tasks"]:
+                            task_statuses[nt["task_id"]] = "pending"
+                        pending_tasks = new_plan["tasks"]
+                        self._emit({
+                            "type":      "plan",
+                            "tasks":     [{"id": t["task_id"], "description": t["description"]}
+                                          for t in new_plan["tasks"]],
+                            "reasoning": new_plan.get("reasoning", ""),
+                            "replan_n":  replan_count,
+                        })
+                        workflow.logger.info(
+                            f"[WORKFLOW] Replan #{replan_count} produced {len(new_plan['tasks'])} tasks")
+                else:
+                    if is_critical:
+                        abort_plan   = True
+                        final_answer = (
+                            f"Task '{description}' never produced a valid result after "
+                            f"{MAX_REPLANS} replan attempts."
+                        )
                 continue
+
+            if abort_plan:
+                break
 
             # ── Post-execution hooks ──────────────────────────────────────────
             await workflow.execute_activity(
@@ -499,6 +584,7 @@ class AgentWorkflow:
             # ── Task succeeded ────────────────────────────────────────────────
             task_statuses[tid] = "succeeded"
             task_results[tid]  = result_str
+            succeeded_tasks.append(task)   # track for replanning context
             self._emit({"type": "task_complete", "task_id": tid, "result_preview": result_str[:200]})
             workflow.logger.info(f"[WORKFLOW] task={tid} SUCCEEDED")
 
@@ -512,15 +598,25 @@ class AgentWorkflow:
                 retry_policy=RetryPolicy(maximum_attempts=2),
             )
 
-        # ── Phase 5: Store memory (fire-and-forget) ───────────────────────────
+        # ── Phase 5: Reflect on run + store memory (fire-and-forget) ────────────
         try:
-            workflow.start_activity(
-                "store_memory",
-                args=[f"Observation for '{prompt}': {final_answer}", agent_id],
-                start_to_close_timeout=timedelta(seconds=10),
+            # reflect_on_run extracts typed learnings (strategies, failures, tool prefs)
+            # and returns True if it also recommends a manifest update proposal
+            should_propose = await workflow.execute_activity(
+                "reflect_on_run",
+                args=[agent_id, tenant_id, prompt, plan, task_results, task_statuses,
+                      final_answer, model],
+                start_to_close_timeout=timedelta(seconds=45),
+                retry_policy=RetryPolicy(maximum_attempts=1),
             )
+            if should_propose:
+                workflow.start_activity(
+                    "propose_manifest_update",
+                    args=[agent_id, tenant_id, model],
+                    start_to_close_timeout=timedelta(seconds=30),
+                )
         except Exception as e:
-            workflow.logger.warning(f"[WORKFLOW] store_memory skipped: {e}")
+            workflow.logger.warning(f"[WORKFLOW] reflect_on_run skipped: {e}")
 
         self._emit({"type": "text", "content": final_answer})
         self._emit({"type": "done"})
@@ -909,15 +1005,30 @@ Rules:
                 "Here is what I found so far:\n\n" + (content or "No conclusion reached.")
             )
 
-        # ── Store to memory (fire-and-forget) ─────────────────────────────────
+        # ── Reflect on run + store typed memories (fire-and-forget) ─────────────
         try:
-            workflow.start_activity(
-                "store_memory",
-                args=[f"Observation for '{prompt[:100]}': {final_answer[:300]}", agent_id],
-                start_to_close_timeout=timedelta(seconds=10),
+            # Build minimal plan/results summary for the ReAct path (no formal plan object)
+            react_plan = {"tasks": [{"task_id": f"step_{i}", "description": f"ReAct step {i}",
+                                      "resource_name": "llm", "resource_type": "llm"}
+                                     for i in range(step + 1)]}
+            react_statuses = {f"step_{i}": "succeeded" for i in range(step + 1)}
+            react_results  = {f"step_{i}": "" for i in range(step + 1)}
+
+            should_propose = await workflow.execute_activity(
+                "reflect_on_run",
+                args=[agent_id, tenant_id, prompt, react_plan, react_results,
+                      react_statuses, final_answer, model],
+                start_to_close_timeout=timedelta(seconds=45),
+                retry_policy=RetryPolicy(maximum_attempts=1),
             )
+            if should_propose:
+                workflow.start_activity(
+                    "propose_manifest_update",
+                    args=[agent_id, tenant_id, model],
+                    start_to_close_timeout=timedelta(seconds=30),
+                )
         except Exception as e:
-            workflow.logger.warning(f"[REACT] store_memory skipped: {e}")
+            workflow.logger.warning(f"[REACT] reflect_on_run skipped: {e}")
 
         # ── Emit agent_completed event ────────────────────────────────────────
         try:
@@ -1080,13 +1191,27 @@ Rules:
         self._emit({"type": "text", "content": final_answer})
         self._emit({"type": "done"})
 
+        # ── Reflect on run (PydanticAI path) ──────────────────────────────────
         try:
-            workflow.start_activity(
-                "store_memory",
-                args=[f"Observation for '{prompt}': {final_answer}", agent_id],
-                start_to_close_timeout=timedelta(seconds=10),
+            pai_plan = {"tasks": [{"task_id": "t1", "description": prompt[:120],
+                                    "resource_name": "pydantic_ai", "resource_type": "llm"}]}
+            pai_statuses = {"t1": "succeeded"}
+            pai_results  = {"t1": final_answer[:300]}
+
+            should_propose = await workflow.execute_activity(
+                "reflect_on_run",
+                args=[agent_id, tenant_id, prompt, pai_plan, pai_results,
+                      pai_statuses, final_answer, model],
+                start_to_close_timeout=timedelta(seconds=45),
+                retry_policy=RetryPolicy(maximum_attempts=1),
             )
+            if should_propose:
+                workflow.start_activity(
+                    "propose_manifest_update",
+                    args=[agent_id, tenant_id, model],
+                    start_to_close_timeout=timedelta(seconds=30),
+                )
         except Exception as store_err:
-            workflow.logger.warning(f"[WORKFLOW] store_memory skipped: {store_err}")
+            workflow.logger.warning(f"[WORKFLOW] reflect_on_run skipped: {store_err}")
 
         return f"Agent {agent_id} completed: {final_answer}"

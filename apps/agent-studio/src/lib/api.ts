@@ -264,7 +264,39 @@ export const agentsApi = {
       }
     );
   },
+  // ── Self-improvement proposals ─────────────────────────────────────────────
+  improvements: (agentId: string, status?: string) =>
+    req<ImprovementProposal[]>(
+      AGENT_REGISTRY,
+      `/api/v1/agents/${agentId}/improvements${status ? `?status=${status}` : ""}`
+    ),
+  acceptImprovement: (agentId: string, proposalId: string) =>
+    req<ImprovementProposal>(
+      AGENT_REGISTRY,
+      `/api/v1/agents/${agentId}/improvements/${proposalId}/accept`,
+      { method: "POST" }
+    ),
+  dismissImprovement: (agentId: string, proposalId: string) =>
+    req<void>(
+      AGENT_REGISTRY,
+      `/api/v1/agents/${agentId}/improvements/${proposalId}/dismiss`,
+      { method: "POST" }
+    ),
 };
+
+export interface ImprovementProposal {
+  id: string;
+  agent_id: string;
+  tenant_id: string;
+  field: "system_prompt" | "max_iterations" | "skills" | "general";
+  current_value: string;
+  proposed_value: string;
+  rationale: string;
+  status: "pending" | "accepted" | "dismissed";
+  resolved_at?: string;
+  resolved_by?: string;
+  created_at: string;
+}
 
 // Models
 export interface ModelInfo {
@@ -976,3 +1008,55 @@ export const runsApi = {
 /** URL to the self-hosted Langfuse instance — for trace deep-links */
 export const LANGFUSE_URL =
   process.env.NEXT_PUBLIC_LANGFUSE_URL ?? "http://localhost:3002";
+
+// ── Chat Sessions API ─────────────────────────────────────────────────────────
+
+export const chatSessionsApi = {
+  /** List all sessions for an agent (most recent first) */
+  list: (agentId: string) =>
+    req<import("./types").ChatSession[]>(
+      API_GATEWAY,
+      `/api/v1/agents/${agentId}/chat/sessions`,
+    ),
+
+  /** Create a new session (returns session with empty messages array) */
+  create: (agentId: string, title: string, tenantId?: string) =>
+    req<import("./types").ChatSession>(
+      API_GATEWAY,
+      `/api/v1/agents/${agentId}/chat/sessions`,
+      {
+        method: "POST",
+        body: JSON.stringify({ title, tenant_id: tenantId }),
+      },
+    ),
+
+  /** Load a session with all its messages */
+  get: (agentId: string, sessionId: string) =>
+    req<import("./types").ChatSession>(
+      API_GATEWAY,
+      `/api/v1/agents/${agentId}/chat/sessions/${sessionId}`,
+    ),
+
+  /** Append user + assistant messages after a completed exchange */
+  appendMessages: (
+    agentId: string,
+    sessionId: string,
+    messages: import("./types").ChatSessionMessage[],
+  ) =>
+    req<{ status: string }>(
+      API_GATEWAY,
+      `/api/v1/agents/${agentId}/chat/sessions/${sessionId}/messages`,
+      {
+        method: "POST",
+        body: JSON.stringify({ messages }),
+      },
+    ),
+
+  /** Delete a session and all its messages */
+  delete: (agentId: string, sessionId: string) =>
+    req<undefined>(
+      API_GATEWAY,
+      `/api/v1/agents/${agentId}/chat/sessions/${sessionId}`,
+      { method: "DELETE" },
+    ),
+};

@@ -143,8 +143,11 @@ litellm_settings:
   # LiteLLM container (Alpine-based) cannot verify — disable peer verification.
   # When ANTHROPIC_BASE_URL points to an internal proxy this is a non-issue anyway.
   ssl_verify: false
-  success_callback: []
-  failure_callback: []
+  # Langfuse callbacks — every LLM call (success or failure) is automatically
+  # traced in Langfuse. Metadata passed in extra_body.metadata (e.g. trace_id)
+  # is forwarded to Langfuse to link LLM calls to the parent workflow trace.
+  success_callback: ["langfuse"]
+  failure_callback: ["langfuse"]
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY

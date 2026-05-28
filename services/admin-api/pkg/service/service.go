@@ -880,6 +880,361 @@ func (h *AdminHandler) HandleGetAuditLog(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+// HandleCreateAuditEvent writes an audit/run event to agent_run_events.
+// Called by the audit_log hook in agent-workers activities.
+func (h *AdminHandler) HandleCreateAuditEvent(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	var req struct {
+		TenantID       string      `json:"tenant_id"`
+		AgentID        string      `json:"agent_id"`
+		WorkflowID     string      `json:"workflow_id"`
+		RunID          string      `json:"run_id"`
+		Resource       string      `json:"resource"`
+		Action         string      `json:"action"`
+		ArgsSnapshot   interface{} `json:"args_snapshot"`
+		ResultSnapshot interface{} `json:"result_snapshot"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	if req.TenantID == "" {
+		req.TenantID = r.Header.Get("X-Tenant-ID")
+	}
+
+	detailsMap := map[string]interface{}{
+		"resource":        req.Resource,
+		"action":          req.Action,
+		"args_snapshot":   req.ArgsSnapshot,
+		"result_snapshot": req.ResultSnapshot,
+	}
+	detailsJSON, _ := json.Marshal(detailsMap)
+
+	_, err := h.DB.Exec(r.Context(), `
+		INSERT INTO agent_run_events
+			(workflow_id, run_id, tenant_id, agent_id,
+			 event_type, level, source, source_id, message, details)
+		VALUES ($1,$2,$3,$4,'hook_fired','info','hook','audit_log',$5,$6::jsonb)
+	`,
+		req.WorkflowID, req.RunID, req.TenantID, req.AgentID,
+		fmt.Sprintf("audit: %s", req.Action),
+		string(detailsJSON),
+	)
+	if err != nil {
+		// Non-fatal — log and return success so the hook doesn't block the agent
+		fmt.Printf("audit event write failed: %v\n", err)
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// HandleListAgentRunEvents returns paginated agent run events for the logs UI.
+// Public endpoint (no admin key) — filters by X-Tenant-ID header.
+func (h *AdminHandler) HandleListAgentRunEvents(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	tenantID := r.URL.Query().Get("tenant_id")
+	if tenantID == "" {
+		tenantID = r.Header.Get("X-Tenant-ID")
+	}
+
+	// Parse filters
+	limit := 100
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if _, err := fmt.Sscanf(l, "%d", &limit); err != nil || limit <= 0 || limit > 500 {
+			limit = 100
+		}
+	}
+	offset := 0
+	if o := r.URL.Query().Get("offset"); o != "" {
+		if _, err := fmt.Sscanf(o, "%d", &offset); err != nil || offset < 0 {
+			offset = 0
+		}
+	}
+
+	levelFilter      := r.URL.Query().Get("level")
+	sourceFilter     := r.URL.Query().Get("source")
+	agentIDFilter    := r.URL.Query().Get("agent_id")
+	workflowIDFilter := r.URL.Query().Get("workflow_id")
+	searchQuery      := r.URL.Query().Get("q")
+	fromStr          := r.URL.Query().Get("from")  // ISO8601
+	toStr            := r.URL.Query().Get("to")    // ISO8601
+
+	query := `
+		SELECT id, workflow_id, run_id, tenant_id, agent_id,
+		       event_type, level, source, source_id, message,
+		       duration_ms, details, created_at
+		FROM agent_run_events
+		WHERE 1=1
+	`
+	args := []interface{}{}
+	argc := 0
+
+	if tenantID != "" {
+		argc++
+		query += fmt.Sprintf(` AND tenant_id = $%d`, argc)
+		args = append(args, tenantID)
+	}
+	if levelFilter != "" && levelFilter != "all" {
+		argc++
+		query += fmt.Sprintf(` AND level = $%d`, argc)
+		args = append(args, levelFilter)
+	}
+	if sourceFilter != "" && sourceFilter != "all" {
+		argc++
+		query += fmt.Sprintf(` AND source = $%d`, argc)
+		args = append(args, sourceFilter)
+	}
+	if agentIDFilter != "" {
+		argc++
+		query += fmt.Sprintf(` AND agent_id = $%d`, argc)
+		args = append(args, agentIDFilter)
+	}
+	if workflowIDFilter != "" {
+		argc++
+		query += fmt.Sprintf(` AND workflow_id = $%d`, argc)
+		args = append(args, workflowIDFilter)
+	}
+	if searchQuery != "" {
+		argc++
+		query += fmt.Sprintf(` AND (message ILIKE $%d OR source_id ILIKE $%d)`, argc, argc)
+		args = append(args, "%"+searchQuery+"%")
+	}
+	if fromStr != "" {
+		if t, err := time.Parse(time.RFC3339, fromStr); err == nil {
+			argc++
+			query += fmt.Sprintf(` AND created_at >= $%d`, argc)
+			args = append(args, t)
+		}
+	}
+	if toStr != "" {
+		if t, err := time.Parse(time.RFC3339, toStr); err == nil {
+			argc++
+			query += fmt.Sprintf(` AND created_at <= $%d`, argc)
+			args = append(args, t)
+		}
+	}
+
+	query += fmt.Sprintf(` ORDER BY created_at DESC LIMIT %d OFFSET %d`, limit, offset)
+
+	type RunEvent struct {
+		ID         string      `json:"id"`
+		WorkflowID string      `json:"workflow_id"`
+		RunID      string      `json:"run_id"`
+		TenantID   string      `json:"tenant_id"`
+		AgentID    string      `json:"agent_id"`
+		EventType  string      `json:"event_type"`
+		Level      string      `json:"level"`
+		Source     string      `json:"source"`
+		SourceID   string      `json:"source_id"`
+		Message    string      `json:"message"`
+		DurationMS *int64      `json:"duration_ms,omitempty"`
+		Details    interface{} `json:"details,omitempty"`
+		CreatedAt  time.Time   `json:"timestamp"`
+	}
+
+	rows, err := h.DB.Query(r.Context(), query, args...)
+	if err != nil {
+		// Table might not exist yet — return empty list gracefully
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"events": []RunEvent{},
+			"count":  0,
+			"limit":  limit,
+			"offset": offset,
+		})
+		return
+	}
+	defer rows.Close()
+
+	var events []RunEvent
+	for rows.Next() {
+		var e RunEvent
+		var detailsRaw []byte
+		if err := rows.Scan(
+			&e.ID, &e.WorkflowID, &e.RunID, &e.TenantID, &e.AgentID,
+			&e.EventType, &e.Level, &e.Source, &e.SourceID, &e.Message,
+			&e.DurationMS, &detailsRaw, &e.CreatedAt,
+		); err != nil {
+			continue
+		}
+		if len(detailsRaw) > 0 {
+			var d interface{}
+			if json.Unmarshal(detailsRaw, &d) == nil {
+				e.Details = d
+			}
+		}
+		events = append(events, e)
+	}
+
+	if events == nil {
+		events = []RunEvent{}
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"events": events,
+		"count":  len(events),
+		"limit":  limit,
+		"offset": offset,
+	})
+}
+
+// HandleListAgentIDs returns the distinct agent_ids that have run events, for the LOV dropdown.
+func (h *AdminHandler) HandleListAgentIDs(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	tenantID := r.URL.Query().Get("tenant_id")
+	if tenantID == "" {
+		tenantID = r.Header.Get("X-Tenant-ID")
+	}
+
+	args := []interface{}{}
+	where := "WHERE agent_id != ''"
+	if tenantID != "" {
+		where += " AND tenant_id = $1"
+		args = append(args, tenantID)
+	}
+
+	rows, err := h.DB.Query(r.Context(),
+		fmt.Sprintf(`SELECT DISTINCT agent_id FROM agent_run_events %s ORDER BY agent_id`, where),
+		args...)
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{"agents": []string{}})
+		return
+	}
+	defer rows.Close()
+
+	var agents []string
+	for rows.Next() {
+		var id string
+		if rows.Scan(&id) == nil {
+			agents = append(agents, id)
+		}
+	}
+	if agents == nil {
+		agents = []string{}
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"agents": agents})
+}
+
+// HandleListAgentRuns returns one summary row per workflow_id for the Runs view.
+// Groups agent_run_events by workflow_id and computes per-run metadata.
+func (h *AdminHandler) HandleListAgentRuns(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	tenantID := r.URL.Query().Get("tenant_id")
+	if tenantID == "" {
+		tenantID = r.Header.Get("X-Tenant-ID")
+	}
+
+	limit := 50
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if _, err := fmt.Sscanf(l, "%d", &limit); err != nil || limit <= 0 || limit > 200 {
+			limit = 50
+		}
+	}
+	agentFilter := r.URL.Query().Get("agent_id")
+
+	fromStr := r.URL.Query().Get("from")
+	toStr   := r.URL.Query().Get("to")
+
+	args := []interface{}{}
+	argc := 0
+	where := "WHERE workflow_id != ''"
+
+	if tenantID != "" {
+		argc++
+		where += fmt.Sprintf(` AND tenant_id = $%d`, argc)
+		args = append(args, tenantID)
+	}
+	if agentFilter != "" {
+		argc++
+		where += fmt.Sprintf(` AND agent_id = $%d`, argc)
+		args = append(args, agentFilter)
+	}
+	if fromStr != "" {
+		if t, err := time.Parse(time.RFC3339, fromStr); err == nil {
+			argc++
+			where += fmt.Sprintf(` AND created_at >= $%d`, argc)
+			args = append(args, t)
+		}
+	}
+	if toStr != "" {
+		if t, err := time.Parse(time.RFC3339, toStr); err == nil {
+			argc++
+			where += fmt.Sprintf(` AND created_at <= $%d`, argc)
+			args = append(args, t)
+		}
+	}
+
+	query := fmt.Sprintf(`
+		SELECT
+			workflow_id,
+			MAX(agent_id)    AS agent_id,
+			MAX(tenant_id)   AS tenant_id,
+			MIN(created_at)  AS started_at,
+			MAX(created_at)  AS last_event_at,
+			EXTRACT(EPOCH FROM (MAX(created_at) - MIN(created_at))) * 1000 AS duration_ms,
+			COUNT(*)         AS event_count,
+			COUNT(*) FILTER (WHERE source = 'llm')                                         AS llm_calls,
+			COUNT(*) FILTER (WHERE event_type = 'tool_invoked' AND level = 'success')       AS tool_calls,
+			BOOL_OR(event_type = 'agent_completed' AND level = 'success')                   AS completed_ok,
+			BOOL_OR(level = 'error')                                                        AS has_error
+		FROM agent_run_events
+		%s
+		GROUP BY workflow_id
+		ORDER BY MAX(created_at) DESC
+		LIMIT %d`, where, limit)
+
+	type AgentRun struct {
+		WorkflowID  string    `json:"workflow_id"`
+		AgentID     string    `json:"agent_id"`
+		TenantID    string    `json:"tenant_id"`
+		StartedAt   time.Time `json:"started_at"`
+		LastEventAt time.Time `json:"last_event_at"`
+		DurationMS  float64   `json:"duration_ms"`
+		EventCount  int       `json:"event_count"`
+		LLMCalls    int       `json:"llm_calls"`
+		ToolCalls   int       `json:"tool_calls"`
+		Status      string    `json:"status"` // success | error | running
+	}
+
+	rows, err := h.DB.Query(r.Context(), query, args...)
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{"runs": []AgentRun{}, "count": 0})
+		return
+	}
+	defer rows.Close()
+
+	var runs []AgentRun
+	for rows.Next() {
+		var run AgentRun
+		var completedOK, hasError bool
+		if err := rows.Scan(
+			&run.WorkflowID, &run.AgentID, &run.TenantID,
+			&run.StartedAt, &run.LastEventAt, &run.DurationMS,
+			&run.EventCount, &run.LLMCalls, &run.ToolCalls,
+			&completedOK, &hasError,
+		); err != nil {
+			continue
+		}
+		switch {
+		case hasError:
+			run.Status = "error"
+		case completedOK:
+			run.Status = "success"
+		default:
+			run.Status = "running"
+		}
+		runs = append(runs, run)
+	}
+	if runs == nil {
+		runs = []AgentRun{}
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"runs": runs, "count": len(runs)})
+}
+
 // HandleCreateGlobalMCPServer creates a global MCP server (admin only)
 func (h *AdminHandler) HandleCreateGlobalMCPServer(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")

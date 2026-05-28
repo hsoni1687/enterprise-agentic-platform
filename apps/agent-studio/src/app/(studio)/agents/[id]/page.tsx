@@ -13,8 +13,9 @@ import {
   ChevronRight, ChevronLeft, CheckCircle2, Search,
   Activity, DollarSign, UserCheck, Clock,
   Ban, EyeOff, AlertTriangle, Plus, Minus, BookOpen,
+  TrendingUp, CheckCircle, XCircle, ChevronDown,
 } from "lucide-react";
-import { agentsApi, skillsApi, toolsApi, modelsApi, mcpApi, platformApi, kgApi, PlatformGuardrail, PlatformHook, ModelInfo } from "@/lib/api";
+import { agentsApi, skillsApi, toolsApi, modelsApi, mcpApi, platformApi, kgApi, PlatformGuardrail, PlatformHook, ModelInfo, ImprovementProposal } from "@/lib/api";
 import { ManifestAssistantPanel, AssistantDraft } from "@/components/manifest-assistant-panel";
 import { AgentRecord, SkillManifest, ToolSpec, MCPServer, KGGraph } from "@/lib/types";
 import { Button } from "@/components/ui/button";
@@ -472,7 +473,7 @@ function StepKnowledge({
 
 function StepSafety({
   selectedGuardrails, onToggleGuardrail, selectedHooks, onToggleHook,
-  guardrails, hooks, safetyLoading,
+  guardrails, hooks, safetyLoading, safetyError,
 }: {
   selectedGuardrails: string[];
   onToggleGuardrail: (id: string) => void;
@@ -481,6 +482,7 @@ function StepSafety({
   guardrails: PlatformGuardrail[];
   hooks: PlatformHook[];
   safetyLoading: boolean;
+  safetyError?: boolean;
 }) {
   // Every guardrail/hook is a catalog item — user picks which to attach (same model as skills).
   // admin_managed=true just means "admin created it" — shown as a badge, never locked.
@@ -509,7 +511,11 @@ function StepSafety({
         </div>
 
         {guardrails.length === 0 ? (
-          <p className="text-xs text-muted-foreground py-2">No guardrails in catalog yet. Ask an admin to create some.</p>
+          <p className="text-xs text-muted-foreground py-2">
+            {safetyError
+              ? "⚠ Could not load guardrails — is admin-api running on :8089?"
+              : "No guardrails in catalog yet. Ask an admin to create some."}
+          </p>
         ) : (
           <div className="space-y-2">
             {guardrails.map((gr) => {
@@ -553,7 +559,11 @@ function StepSafety({
           </p>
         </div>
         {hooks.length === 0 ? (
-          <p className="text-xs text-muted-foreground py-2">No hooks in catalog yet. Ask an admin to create some.</p>
+          <p className="text-xs text-muted-foreground py-2">
+            {safetyError
+              ? "⚠ Could not load hooks — is admin-api running on :8089?"
+              : "No hooks in catalog yet. Ask an admin to create some."}
+          </p>
         ) : (
           <div className="space-y-2">
             {hooks.map((hook) => {
@@ -737,12 +747,12 @@ function EditAgentSheet({ agent, onUpdated }: { agent: AgentRecord; onUpdated: (
     queryFn: () => mcpApi.listServers(),
     enabled: open,
   });
-  const { data: guardrailsData, isLoading: guardrailsLoading } = useQuery({
+  const { data: guardrailsData, isLoading: guardrailsLoading, isError: guardrailsError } = useQuery({
     queryKey: ["platform-guardrails"],
     queryFn: () => platformApi.listGuardrails(),
     enabled: open,
   });
-  const { data: hooksData, isLoading: hooksLoading } = useQuery({
+  const { data: hooksData, isLoading: hooksLoading, isError: hooksError } = useQuery({
     queryKey: ["platform-hooks"],
     queryFn: () => platformApi.listHooks(),
     enabled: open,
@@ -869,6 +879,7 @@ function EditAgentSheet({ agent, onUpdated }: { agent: AgentRecord; onUpdated: (
                   guardrails={availableGuardrails}
                   hooks={availableHooks}
                   safetyLoading={guardrailsLoading || hooksLoading}
+                  safetyError={guardrailsError || hooksError}
                 />
               )}
               {step === "review" && (
@@ -948,6 +959,94 @@ const STATUS_DOT: Record<string, string> = {
   archived: "bg-muted-foreground",
 };
 
+// ── Improvement proposal card ─────────────────────────────────────────────────
+
+const FIELD_LABEL: Record<string, string> = {
+  system_prompt:  "System Prompt",
+  max_iterations: "Max Iterations",
+  skills:         "Skills",
+  general:        "General",
+};
+
+function ImprovementProposalCard({
+  proposal,
+  onAccept,
+  onDismiss,
+  busy,
+}: {
+  proposal: ImprovementProposal;
+  onAccept: () => void;
+  onDismiss: () => void;
+  busy: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const isAutoApply = proposal.field === "system_prompt" || proposal.field === "max_iterations";
+
+  return (
+    <div className="rounded-lg border border-amber-500/20 bg-background/60 overflow-hidden text-xs">
+      {/* Header */}
+      <button
+        onClick={() => setExpanded((v) => !v)}
+        className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-amber-500/5 transition-colors"
+      >
+        <TrendingUp className="h-3 w-3 text-amber-400 shrink-0" />
+        <span className="font-medium text-amber-300">{FIELD_LABEL[proposal.field] ?? proposal.field}</span>
+        {isAutoApply && (
+          <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-green-500/15 text-green-400">auto-apply</span>
+        )}
+        <span className="ml-auto text-muted-foreground">{expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}</span>
+      </button>
+
+      {/* Rationale — always visible */}
+      <div className="px-3 pb-2 text-muted-foreground/80 leading-relaxed">
+        {proposal.rationale}
+      </div>
+
+      {/* Expandable diff */}
+      {expanded && (
+        <div className="border-t border-amber-500/10 px-3 py-2 space-y-2 bg-muted/10">
+          {proposal.current_value && (
+            <div>
+              <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Current</p>
+              <pre className="whitespace-pre-wrap text-muted-foreground/70 leading-relaxed max-h-24 overflow-y-auto">
+                {proposal.current_value}
+              </pre>
+            </div>
+          )}
+          <div>
+            <p className="text-[10px] uppercase tracking-wider text-amber-400/70 mb-1">Proposed</p>
+            <pre className="whitespace-pre-wrap text-foreground/80 leading-relaxed max-h-32 overflow-y-auto">
+              {proposal.proposed_value}
+            </pre>
+          </div>
+        </div>
+      )}
+
+      {/* Actions */}
+      <div className="flex gap-2 px-3 py-2 border-t border-amber-500/10 justify-end">
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={busy}
+          onClick={onDismiss}
+          className="h-6 text-[10px] text-muted-foreground hover:text-destructive"
+        >
+          <XCircle className="h-3 w-3 mr-1" />Dismiss
+        </Button>
+        <Button
+          size="sm"
+          disabled={busy}
+          onClick={onAccept}
+          className="h-6 text-[10px] bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 border border-amber-500/30"
+        >
+          <CheckCircle className="h-3 w-3 mr-1" />
+          {isAutoApply ? "Accept & Apply" : "Accept"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 // ── Agent detail page ─────────────────────────────────────────────────────────
 
 export default function AgentDetailPage({
@@ -997,6 +1096,28 @@ export default function AgentDetailPage({
     mutationFn: () => agentsApi.transition(id, { target_state: "active", actor: "studio-user" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["agents", id] }),
   });
+
+  // ── Self-improvement proposals ──────────────────────────────────────────────
+  const { data: improvements } = useQuery({
+    queryKey: ["agent-improvements", id],
+    queryFn: () => agentsApi.improvements(id, "pending"),
+    refetchInterval: 30_000, // poll for new proposals every 30 s
+  });
+
+  const acceptImprovement = useMutation({
+    mutationFn: (proposalId: string) => agentsApi.acceptImprovement(id, proposalId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["agent-improvements", id] });
+      qc.invalidateQueries({ queryKey: ["agents", id] });
+    },
+  });
+
+  const dismissImprovement = useMutation({
+    mutationFn: (proposalId: string) => agentsApi.dismissImprovement(id, proposalId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["agent-improvements", id] }),
+  });
+
+  const pendingProposals = improvements ?? [];
 
   if (isLoading) {
     return (
@@ -1185,6 +1306,35 @@ export default function AgentDetailPage({
               </section>
             )}
           </div>
+        )}
+
+        {/* Self-improvement proposals */}
+        {pendingProposals.length > 0 && (
+          <section className="catalog-card border-amber-500/30 bg-amber-500/5">
+            <div className="flex items-center gap-2 mb-3">
+              <TrendingUp className="h-4 w-4 text-amber-400" />
+              <h2 className="text-sm font-semibold text-amber-300">
+                Self-Improvement Proposals
+              </h2>
+              <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-medium">
+                {pendingProposals.length} pending
+              </span>
+            </div>
+            <p className="text-xs text-muted-foreground mb-3">
+              The agent analysed its past runs and suggests these changes. Review and accept or dismiss each one.
+            </p>
+            <div className="space-y-3">
+              {pendingProposals.map((p) => (
+                <ImprovementProposalCard
+                  key={p.id}
+                  proposal={p}
+                  onAccept={() => acceptImprovement.mutate(p.id)}
+                  onDismiss={() => dismissImprovement.mutate(p.id)}
+                  busy={acceptImprovement.isPending || dismissImprovement.isPending}
+                />
+              ))}
+            </div>
+          </section>
         )}
 
         {/* Safety overview */}

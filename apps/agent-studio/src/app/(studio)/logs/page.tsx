@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   ScrollText, Search, RefreshCw, ChevronDown, ChevronRight,
   CheckCircle2, XCircle, AlertTriangle, Info, Clock, Zap, Bot,
@@ -317,7 +317,8 @@ function CopyButton({ text }: { text: string }) {
 
 function LLMCallCard({ e }: { e: RunEvent }) {
   const [expanded, setExpanded] = useState(false);
-  const d = (e.details ?? {}) as Record<string, any>;
+  interface LLMDetails { model?: string; tokens_in?: number; tokens_out?: number; input?: string; output?: string; [k: string]: unknown }
+  const d = (e.details ?? {}) as LLMDetails;
   const model     = d.model ?? e.source_id ?? "unknown";
   const tokensIn  = d.tokens_in  ?? 0;
   const tokensOut = d.tokens_out ?? 0;
@@ -517,19 +518,19 @@ function EventRow({ e }: { e: RunEvent }) {
             {e.details && (
               <div className="space-y-2">
                 {/* LLM input / output — shown as labelled blocks when present */}
-                {(e.details as any).input && (
+                {!!(e.details as { input?: unknown }).input && (
                   <div>
                     <p className="text-[10px] text-muted-foreground mb-1 uppercase tracking-wider">↑ Input (prompt)</p>
                     <pre className="rounded bg-blue-500/5 border border-blue-500/20 p-2 overflow-auto max-h-32 font-mono text-[10px] leading-relaxed whitespace-pre-wrap">
-                      {String((e.details as any).input)}
+                      {String((e.details as { input?: unknown }).input)}
                     </pre>
                   </div>
                 )}
-                {(e.details as any).output && (
+                {!!(e.details as { output?: unknown }).output && (
                   <div>
                     <p className="text-[10px] text-muted-foreground mb-1 uppercase tracking-wider">↓ Output (LLM response)</p>
                     <pre className="rounded bg-green-500/5 border border-green-500/20 p-2 overflow-auto max-h-32 font-mono text-[10px] leading-relaxed whitespace-pre-wrap">
-                      {String((e.details as any).output)}
+                      {String((e.details as { output?: unknown }).output)}
                     </pre>
                   </div>
                 )}
@@ -572,6 +573,13 @@ export default function LogsPage() {
   const [autoRefresh,   setAutoRefresh]   = useState(false);
   const [error,         setError]         = useState<string | null>(null);
 
+  // Derived — true whenever any run in the current list is still running
+  const livePolling = useMemo(() => runs.some((r) => r.status === "running"), [runs]);
+
+  // Ref mirrors selectedRun so background-poll closures always read current value
+  const selectedRunRef = useRef<AgentRun | null>(null);
+  useEffect(() => { selectedRunRef.current = selectedRun; }, [selectedRun]);
+
   // ── Load agent list once ────────────────────────────────────────────────
   useEffect(() => {
     runsApi.agents()
@@ -580,8 +588,9 @@ export default function LogsPage() {
   }, []);
 
   // ── Load sessions ───────────────────────────────────────────────────────
-  const fetchRuns = useCallback(async () => {
-    setLoadingRuns(true);
+  // background=true skips the loading spinner (used by auto-poll)
+  const fetchRuns = useCallback(async (background = false) => {
+    if (!background) setLoadingRuns(true);
     setError(null);
     try {
       const res = await runsApi.list({
@@ -590,27 +599,35 @@ export default function LogsPage() {
         to:       timeRange.to.toISOString(),
         limit:    100,
       });
-      setRuns(res.runs ?? []);
-      // If previously selected run is no longer in the list, clear it
-      if (selectedRun && !(res.runs ?? []).find((r) => r.workflow_id === selectedRun.workflow_id)) {
-        setSelectedRun(null);
+      const fresh = res.runs ?? [];
+      setRuns(fresh);
+      // Keep selectedRun in sync when its status changes (e.g. running → success)
+      const current = selectedRunRef.current;
+      if (current) {
+        const updated = fresh.find((r) => r.workflow_id === current.workflow_id);
+        if (updated) {
+          if (updated.status !== current.status) setSelectedRun(updated);
+        } else {
+          setSelectedRun(null);
+        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load sessions");
     } finally {
-      setLoadingRuns(false);
+      if (!background) setLoadingRuns(false);
     }
-  }, [selectedAgent, timeRange, selectedRun]);
+  }, [selectedAgent, timeRange]); // selectedRun intentionally excluded — use ref
 
   useEffect(() => { fetchRuns(); }, [selectedAgent, timeRange]); // eslint-disable-line
 
   // ── Load events for selected session ────────────────────────────────────
   const fetchEvents = useCallback(async () => {
-    if (!selectedRun) { setEvents([]); return; }
+    const run = selectedRunRef.current;
+    if (!run) { setEvents([]); return; }
     setLoadingEvents(true);
     try {
       const res = await logsApi.list({
-        workflow_id: selectedRun.workflow_id,
+        workflow_id: run.workflow_id,
         q:           query.trim() || undefined,
         limit:       500,
       });
@@ -620,11 +637,21 @@ export default function LogsPage() {
     } finally {
       setLoadingEvents(false);
     }
-  }, [selectedRun, query]);
+  }, [query]);
 
   useEffect(() => { fetchEvents(); }, [selectedRun]); // eslint-disable-line
 
-  // ── Auto-refresh ────────────────────────────────────────────────────────
+  // ── Smart live-poll — fires automatically when any run is still "running" ──
+  useEffect(() => {
+    if (!livePolling) return;
+    const id = setInterval(async () => {
+      await fetchRuns(true); // silent refresh — no spinner
+      if (selectedRunRef.current?.status === "running") fetchEvents();
+    }, 5_000);
+    return () => clearInterval(id);
+  }, [livePolling, fetchRuns, fetchEvents]);
+
+  // ── Manual auto-refresh (15 s, user-toggled) ────────────────────────────
   useEffect(() => {
     if (!autoRefresh) return;
     const id = setInterval(() => {
@@ -633,11 +660,11 @@ export default function LogsPage() {
         const preset = PRESETS.find((p) => p.key === timeRange.preset)!;
         setTimeRange(makePreset(preset.key, preset.minutes));
       }
-      fetchRuns();
-      if (selectedRun) fetchEvents();
+      fetchRuns(true);
+      if (selectedRunRef.current) fetchEvents();
     }, 15_000);
     return () => clearInterval(id);
-  }, [autoRefresh, timeRange, selectedRun, fetchRuns, fetchEvents]);
+  }, [autoRefresh, timeRange, fetchRuns, fetchEvents]);
 
   // ── Derived stats ────────────────────────────────────────────────────────
   const stats = {
@@ -694,6 +721,12 @@ export default function LogsPage() {
 
           {/* Right: actions */}
           <div className="flex items-center gap-2 shrink-0">
+            {livePolling && (
+              <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-amber-400 animate-pulse">
+                <span className="h-1.5 w-1.5 rounded-full bg-amber-400 inline-block" />
+                Live
+              </span>
+            )}
             <Button size="sm" variant={autoRefresh ? "default" : "outline"} className="gap-1.5 h-7 text-xs"
               onClick={() => setAutoRefresh((v) => !v)}>
               <RefreshCw className={`h-3.5 w-3.5 ${autoRefresh ? "animate-spin" : ""}`} />

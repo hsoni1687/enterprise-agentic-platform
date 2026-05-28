@@ -552,6 +552,43 @@ type LLMConfigRequest struct {
 	OpenAIAPIKey     string `json:"openai_api_key,omitempty"`
 }
 
+// --- Chat Sessions ---
+
+// ChatSession is a persistent conversation thread between a user and an agent.
+type ChatSession struct {
+	ID        string    `json:"id"`
+	TenantID  string    `json:"tenant_id"`
+	AgentID   string    `json:"agent_id"`
+	Title     string    `json:"title"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	// Messages is populated only when loading a single session (not in list view).
+	Messages []ChatSessionMessage `json:"messages,omitempty"`
+}
+
+// ChatSessionMessage is a single message stored inside a ChatSession.
+type ChatSessionMessage struct {
+	ID        string                 `json:"id"`
+	SessionID string                 `json:"session_id"`
+	TenantID  string                 `json:"tenant_id"`
+	AgentID   string                 `json:"agent_id"`
+	Role      string                 `json:"role"` // "user" | "assistant"
+	Content   string                 `json:"content"`
+	Metadata  map[string]interface{} `json:"metadata,omitempty"` // tokens_in, tokens_out, steps, model, events
+	CreatedAt time.Time              `json:"created_at"`
+}
+
+// AppendMessagesRequest is the body for POST /api/v1/agents/{id}/chat/sessions/{sid}/messages.
+type AppendMessagesRequest struct {
+	Messages []ChatSessionMessage `json:"messages"`
+}
+
+// CreateSessionRequest is the body for POST /api/v1/agents/{id}/chat/sessions.
+type CreateSessionRequest struct {
+	Title    string `json:"title"`
+	TenantID string `json:"tenant_id,omitempty"`
+}
+
 // SystemAgent represents a platform-system agent (Manifest Assistant, etc).
 type SystemAgent struct {
 	ID             string         `json:"id"`

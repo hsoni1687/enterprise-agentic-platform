@@ -27,6 +27,7 @@ func withCORS(next http.Handler) http.Handler {
 
 func main() {
 	var s store.Store
+	var rawDB *sql.DB
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn != "" {
 		db, err := sql.Open("postgres", dsn)
@@ -38,13 +39,14 @@ func main() {
 			log.Fatalf("Failed to connect to database: %v", err)
 		}
 		s = pg
+		rawDB = db // kept for improvement-proposal queries
 		log.Println("Agent Registry: using PostgreSQL store")
 	} else {
 		s = store.NewInMemoryStore()
 		log.Println("Agent Registry: using in-memory store (set DATABASE_URL for production)")
 	}
 
-	h := service.NewHandler(s)
+	h := service.NewHandlerWithDB(s, rawDB)
 	mux := service.BuildMux(h)
 
 	addr := ":8088"

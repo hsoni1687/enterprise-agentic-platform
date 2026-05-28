@@ -58,117 +58,113 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "Sandbox Manager is healthy\n")
 }
 
+// handleWebSearch scrapes DuckDuckGo HTML results — works for any query,
+// unlike the JSON instant-answer API which only returns factual lookups.
 func handleWebSearch() http.HandlerFunc {
+	// Pre-compiled regex patterns
+	linkRe    := regexp.MustCompile(`class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)</a>`)
+	snippetRe := regexp.MustCompile(`class="result__snippet"[^>]*>([\s\S]*?)</div>`)
+	tagRe     := regexp.MustCompile(`<[^>]+>`)
+
+	stripTags := func(s string) string {
+		s = tagRe.ReplaceAllString(s, "")
+		s = strings.ReplaceAll(s, "&amp;", "&")
+		s = strings.ReplaceAll(s, "&lt;", "<")
+		s = strings.ReplaceAll(s, "&gt;", ">")
+		s = strings.ReplaceAll(s, "&quot;", `"`)
+		s = strings.ReplaceAll(s, "&#x27;", "'")
+		return strings.TrimSpace(s)
+	}
+
 	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
 		var req struct {
 			Args struct {
 				Query      string `json:"query"`
 				MaxResults int    `json:"max_results"`
 			} `json:"args"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "Invalid request", http.StatusBadRequest)
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Args.Query == "" {
+			json.NewEncoder(w).Encode(map[string]interface{}{"error": "query is required", "results": []interface{}{}})
 			return
 		}
-
-		if req.Args.Query == "" {
-			http.Error(w, "query is required", http.StatusBadRequest)
-			return
+		if req.Args.MaxResults <= 0 || req.Args.MaxResults > 10 {
+			req.Args.MaxResults = 5
 		}
 
-		if req.Args.MaxResults == 0 {
-			req.Args.MaxResults = 10
-		}
-
-		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 		defer cancel()
 
+		// POST to DuckDuckGo HTML endpoint — same as a real browser form submit
+		formData := url.Values{"q": {req.Args.Query}, "b": {""}}
+		httpReq, _ := http.NewRequestWithContext(ctx, http.MethodPost,
+			"https://html.duckduckgo.com/html/",
+			strings.NewReader(formData.Encode()))
+		httpReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		httpReq.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36")
+		httpReq.Header.Set("Accept-Language", "en-US,en;q=0.9")
+
 		client := &http.Client{
-			Timeout: 10 * time.Second,
+			Timeout: 15 * time.Second,
+			// Follow redirects
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				if len(via) >= 5 {
+					return fmt.Errorf("too many redirects")
+				}
+				return nil
+			},
 		}
 
-		duckDuckGoURL := fmt.Sprintf("https://api.duckduckgo.com/?q=%s&format=json&no_html=1&skip_disambig=1",
-			url.QueryEscape(req.Args.Query))
-
-		httpReq, _ := http.NewRequestWithContext(ctx, "GET", duckDuckGoURL, nil)
-		httpReq.Header.Set("User-Agent", "A1-Agent-Engine/1.0")
 		resp, err := client.Do(httpReq)
 		if err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"error":   fmt.Sprintf("Search failed: %v", err),
-				"results": []interface{}{},
-			})
+			log.Printf("[web-search] HTTP error: %v", err)
+			json.NewEncoder(w).Encode(map[string]interface{}{"error": err.Error(), "results": []interface{}{}})
 			return
 		}
 		defer resp.Body.Close()
 
-		if resp.StatusCode != http.StatusOK {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"error":   fmt.Sprintf("DuckDuckGo API returned status %d", resp.StatusCode),
-				"results": []interface{}{},
-			})
-			return
+		body, _ := io.ReadAll(resp.Body)
+		html := string(body)
+
+		links    := linkRe.FindAllStringSubmatch(html, -1)
+		snippets := snippetRe.FindAllStringSubmatch(html, -1)
+
+		type Result struct {
+			Rank    int    `json:"rank"`
+			Title   string `json:"title"`
+			URL     string `json:"url"`
+			Snippet string `json:"snippet"`
+			Domain  string `json:"domain"`
 		}
 
-		var ddgResp struct {
-			AbstractText  string `json:"AbstractText"`
-			AbstractURL   string `json:"AbstractURL"`
-			Heading       string `json:"Heading"`
-			RelatedTopics []struct {
-				FirstURL string `json:"FirstURL"`
-				Text     string `json:"Text"`
-			} `json:"RelatedTopics"`
-		}
-
-		if err := json.NewDecoder(resp.Body).Decode(&ddgResp); err != nil {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]interface{}{
-				"error":   fmt.Sprintf("Parse failed: %v", err),
-				"results": []interface{}{},
-			})
-			return
-		}
-
-		results := []map[string]string{}
-
-		if ddgResp.AbstractText != "" && ddgResp.AbstractURL != "" {
-			domain := extractDomain(ddgResp.AbstractURL)
-			results = append(results, map[string]string{
-				"title":   ddgResp.Heading,
-				"url":     ddgResp.AbstractURL,
-				"snippet": ddgResp.AbstractText,
-				"domain":  domain,
-			})
-		}
-
-		for _, topic := range ddgResp.RelatedTopics {
-			if len(results) >= req.Args.MaxResults {
+		results := make([]Result, 0, req.Args.MaxResults)
+		for i, m := range links {
+			if i >= req.Args.MaxResults {
 				break
 			}
-			if topic.FirstURL == "" {
-				continue
+			rawURL := m[1]
+			title  := stripTags(m[2])
+			snippet := ""
+			if i < len(snippets) {
+				snippet = stripTags(snippets[i][1])
 			}
-
-			title := strings.Split(topic.Text, " - ")[0]
-			domain := extractDomain(topic.FirstURL)
-			results = append(results, map[string]string{
-				"title":   title,
-				"url":     topic.FirstURL,
-				"snippet": topic.Text,
-				"domain":  domain,
+			domain := extractDomain(rawURL)
+			results = append(results, Result{
+				Rank:    i + 1,
+				Title:   title,
+				URL:     rawURL,
+				Snippet: snippet,
+				Domain:  domain,
 			})
 		}
 
-		output := map[string]interface{}{
-			"results": results[:minInt(len(results), req.Args.MaxResults)],
-			"total":   len(results),
+		log.Printf("[web-search] query=%q results=%d", req.Args.Query, len(results))
+		json.NewEncoder(w).Encode(map[string]interface{}{
 			"query":   req.Args.Query,
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(output)
+			"results": results,
+			"total":   len(results),
+		})
 	}
 }
 

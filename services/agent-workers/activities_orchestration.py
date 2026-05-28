@@ -648,6 +648,124 @@ Available resource context:
     return recovery
 
 
+# ─── Dynamic replanning ───────────────────────────────────────────────────────
+
+_REPLAN_SYSTEM = """You are a dynamic task replanning agent for an AI execution system.
+
+A task in the current plan has failed or produced an invalid result.
+Your job: revise the remaining plan so the overall goal can still be achieved.
+
+You will be given:
+  - The original user goal
+  - Tasks that already succeeded (do NOT redo these)
+  - The task that failed, the exact error/validation reason, and what it produced
+  - The remaining tasks that were going to run next (now cancelled)
+  - Available resources (tools, skills, MCP, llm, code)
+
+Rules:
+1. Produce ONLY the tasks still needed to reach the original goal.
+2. Do NOT repeat tasks that already succeeded.
+3. Every new task must address the failure — either work around it, use a different
+   resource, simplify the approach, or fix the inputs.
+4. Use resource_type="llm" for pure reasoning with no external calls.
+5. Keep tasks atomic — one resource per task.
+6. Every task MUST have a concrete validation criterion.
+7. Number new task IDs starting from where the failure occurred, prefixed with "r{replan_n}_"
+   e.g. "r1_t1", "r1_t2". This makes it clear which replan generated them.
+8. If there is NO viable path to the goal given the failure, return an empty tasks list
+   and set "give_up": true with a clear explanation in "reasoning".
+9. Do NOT invent resources that are not in the available inventory.
+
+Return ONLY valid JSON:
+{
+  "tasks": [
+    {
+      "task_id": "r{n}_t1",
+      "description": "...",
+      "resource_type": "tool|skill|mcp|llm|code",
+      "resource_name": "exact name or 'reasoning'",
+      "resource_args": {},
+      "preconditions": [],
+      "depends_on": [],
+      "validation": "how to verify this task succeeded",
+      "critical": true
+    }
+  ],
+  "give_up": false,
+  "reasoning": "why this revised plan will succeed where the original failed"
+}"""
+
+
+@activity.defn
+async def replan_remaining_tasks(
+    original_prompt: str,
+    succeeded_tasks: list[dict],
+    failed_task: dict,
+    failure_reason: str,
+    failure_output: str,
+    cancelled_tasks: list[dict],
+    context_summary: str,
+    replan_n: int,
+    model: str,
+) -> dict:
+    """
+    Claude-Code-style dynamic replanning: given what succeeded, what failed and why,
+    and what was still pending, produce a revised task list to reach the original goal.
+
+    Returns the same shape as plan_tasks(): {"tasks": [...], "reasoning": "...", "give_up": bool}
+    """
+    logger.info(f"[REPLAN] replan #{replan_n} — failed task={failed_task.get('task_id')} "
+                f"reason={failure_reason[:80]}")
+
+    succeeded_summary = "\n".join(
+        f"  ✓ {t['task_id']}: {t['description']}"
+        for t in succeeded_tasks
+    ) or "  (none yet)"
+
+    cancelled_summary = "\n".join(
+        f"  - {t['task_id']}: {t['description']}"
+        for t in cancelled_tasks
+    ) or "  (none)"
+
+    user_msg = f"""Original goal:
+{original_prompt}
+
+Already succeeded (DO NOT redo):
+{succeeded_summary}
+
+Failed task:
+  ID: {failed_task.get('task_id')}
+  Description: {failed_task.get('description')}
+  Resource: {failed_task.get('resource_type')}/{failed_task.get('resource_name')}
+  Args: {json.dumps(failed_task.get('resource_args', {}))[:300]}
+
+Failure reason: {failure_reason}
+Failure output (first 400 chars): {failure_output[:400]}
+
+Cancelled tasks (were going to run next, now need replacing or merging):
+{cancelled_summary}
+
+Available resources:
+{context_summary}
+
+Replan number: {replan_n} (prefix new task IDs with "r{replan_n}_")
+
+Produce the revised remaining plan."""
+
+    plan = await _json_llm_call(model, _REPLAN_SYSTEM, user_msg)
+
+    if not plan:
+        logger.warning(f"[REPLAN] LLM returned empty — giving up")
+        return {"tasks": [], "give_up": True,
+                "reasoning": "Replanning LLM call failed to return a valid plan."}
+
+    task_count = len(plan.get("tasks") or [])
+    logger.info(f"[REPLAN] replan #{replan_n} produced {task_count} tasks. "
+                f"give_up={plan.get('give_up', False)}. "
+                f"reasoning={plan.get('reasoning','')[:120]}")
+    return plan
+
+
 # ─── Final synthesis ──────────────────────────────────────────────────────────
 
 _SYNTHESIS_SYSTEM = """You are a final answer synthesizer for an AI agent.

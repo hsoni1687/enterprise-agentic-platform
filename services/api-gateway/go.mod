@@ -6,6 +6,7 @@ require (
 	github.com/agent-platform/go-shared v0.0.0-00010101000000-000000000000
 	github.com/agent-platform/webhook-security v0.0.0-00010101000000-000000000000
 	github.com/coder/websocket v1.8.13
+	github.com/lib/pq v1.10.9
 	github.com/stretchr/testify v1.11.1
 )
 

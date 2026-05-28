@@ -99,8 +99,18 @@ func main() {
 	mux.Handle("GET /api/v1/admin/cost", authMiddleware(adminAPIKey, http.HandlerFunc(handler.HandleGetCostSummary)))
 	mux.Handle("GET /api/v1/admin/cost/{tenant_id}", authMiddleware(adminAPIKey, http.HandlerFunc(handler.HandleGetCostByTenant)))
 
-	// Audit Log
+	// Audit Log (resource lifecycle events)
 	mux.Handle("GET /api/v1/admin/audit", authMiddleware(adminAPIKey, http.HandlerFunc(handler.HandleGetAuditLog)))
+	// Agent run events — written by audit_log hook; requires admin key
+	mux.Handle("POST /api/v1/admin/audit", authMiddleware(adminAPIKey, http.HandlerFunc(handler.HandleCreateAuditEvent)))
+
+	// Agent Run Event Logs — public read endpoint for the Logs UI in Agent Studio
+	// Filters by X-Tenant-ID header; no admin key required.
+	mux.HandleFunc("GET /api/v1/logs", handler.HandleListAgentRunEvents)
+	// Agent Runs — one row per workflow_id (grouped summary for the Runs panel)
+	mux.HandleFunc("GET /api/v1/logs/runs", handler.HandleListAgentRuns)
+	// Distinct agent IDs — for the Agent LOV dropdown
+	mux.HandleFunc("GET /api/v1/logs/agents", handler.HandleListAgentIDs)
 
 	// System Tools Management
 	mux.Handle("GET /api/v1/admin/system-tools", authMiddleware(adminAPIKey, http.HandlerFunc(handler.HandleListSystemTools)))

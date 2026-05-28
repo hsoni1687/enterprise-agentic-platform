@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import {
   Shield, Plus, Play, Loader2, CheckCircle2, XCircle, AlertTriangle,
-  Eye, EyeOff, Ban, Filter, ChevronRight, Clock,
+  EyeOff, Ban, Filter, Clock,
 } from "lucide-react";
 import { platformApi } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -448,6 +448,7 @@ function GuardrailPlayground({ rules }: { rules: GuardrailRule[] }) {
 export default function GuardrailsPage() {
   const [rules, setRules] = useState<GuardrailRule[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [categoryFilter, setCategoryFilter] = useState("All");
 
   // Load from platform catalog on mount; all guardrails start enabled (as DB says)
@@ -468,8 +469,12 @@ export default function GuardrailsPage() {
           created_at: g.created_at,
         }));
         setRules(mapped);
+        setLoadError(null);
       })
-      .catch(() => setRules([]))
+      .catch(() => {
+        setRules([]);
+        setLoadError("Could not reach the platform catalog — is admin-api running on :8089?");
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -499,7 +504,7 @@ export default function GuardrailsPage() {
             <h1 className="text-xl font-semibold">Guardrails</h1>
           </div>
           <p className="text-sm text-muted-foreground max-w-xl">
-            Enforceable gates that inspect, block, or redact agent inputs and outputs before they're processed or returned.
+            Enforceable gates that inspect, block, or redact agent inputs and outputs before they&apos;re processed or returned.
           </p>
         </div>
         <AddRuleSheet onAdded={addRule} />
@@ -555,11 +560,21 @@ export default function GuardrailsPage() {
             {categoryFilter !== "All" ? ` in ${categoryFilter}` : ""}
           </p>
 
+          {loadError && (
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-400">
+              ⚠ {loadError}
+            </div>
+          )}
+
           <div className="space-y-3">
             {loading ? (
               [1,2,3].map((i) => <div key={i} className="h-24 rounded-lg bg-muted animate-pulse" />)
             ) : filtered.length === 0 ? (
-              <p className="text-sm text-muted-foreground py-4">No guardrails found. Use &quot;Add Rule&quot; to create your first one.</p>
+              <p className="text-sm text-muted-foreground py-4">
+                {loadError
+                  ? "Guardrails could not be loaded. Check that admin-api is running."
+                  : "No guardrails found. Use \"Add Rule\" to create your first one."}
+              </p>
             ) : (
               filtered.map((rule) => (
                 <RuleCard key={rule.id} rule={rule} onToggle={toggleRule} />

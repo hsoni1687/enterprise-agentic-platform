@@ -156,43 +156,64 @@ Run as `AgentWorkflow` in Temporal — a full ReAct loop with:
 - Node.js 18+ with npm
 - Ollama (for local model serving)
 
-### 1 · Start infrastructure (2 min)
+### 1 · Configure environment (1 min)
 
 ```bash
-# Pull local models first
+cd infra/local
+cp .env.example .env
+# Edit .env — add ANTHROPIC_API_KEY or other LLM keys if using cloud models
+```
+
+### 2 · Start infrastructure (2 min)
+
+```bash
+# Optional: pull local models if using Ollama
 ollama serve              # Terminal 1 — keep running
-ollama pull llama3.1:8b
 ollama pull nomic-embed-text
 
-# Start all backing services
+# Start all backend services (frontends are NOT included — run those on host)
 cd infra/local
 docker compose up -d
 ```
 
-This starts: PostgreSQL, Redis, Temporal, LiteLLM, Admin API, all platform microservices, and the Temporal worker.
+This starts: PostgreSQL, Redis, Temporal, LiteLLM, all platform microservices, and agent-workers (which also serves the Tool API on port 8094).
 
-Verify with:
+> **Note:** `agent-studio` and `admin-console` Docker containers are excluded from the default profile — run them on the host for instant HMR (see step 3).
+
+Verify services are up:
 
 ```bash
-curl http://localhost:4000/v1/chat/completions \
-  -H "Authorization: Bearer sk-litellm-dev" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"local-chat","messages":[{"role":"user","content":"Say hello"}]}'
+curl http://localhost:4000/health                    # LiteLLM
+curl http://localhost:8094/health                    # Tool API (agent-workers)
+curl http://localhost:8088/api/v1/agents             # Agent Registry
 ```
 
-### 2 · Start frontends (1 min)
+### 2b · Load demo data (1 min, first time only)
+
+Seeds tenants, tools, skills, agents, and workflow examples into the database:
 
 ```bash
-# Agent Studio — where you build and test agents
+docker exec -i postgres psql -U postgres -d agentplatform \
+  < infra/postgres/seed_demo.sql
+```
+
+### 3 · Start frontends (1 min)
+
+Frontends run on the **host** (not in Docker) for fast Hot Module Replacement:
+
+```bash
+# Terminal A — Agent Studio
 cd apps/agent-studio && npm install && npm run dev
 # → http://localhost:3000
 
-# Admin Console — platform administration
+# Terminal B — Admin Console
 cd apps/admin-console && npm install && npm run dev
 # → http://localhost:3001  (key: dev-admin-key)
 ```
 
-### 3 · Build your first agent (3 min, no code)
+> **Why host, not Docker?** HMR gives you < 1s feedback on code changes. Running Next.js inside Docker on macOS is 10–30x slower with no HMR.
+
+### 5 · Build your first agent (3 min, no code)
 
 1. Open **http://localhost:3000**
 2. Click **Agents → Create Agent**
@@ -203,6 +224,15 @@ cd apps/admin-console && npm install && npm run dev
 7. Open the agent → **Chat** — send any message
 
 The agent responds in < 2 seconds.
+
+### Tool Playground
+
+Navigate to **Tools** in the sidebar to browse all 9 built-in platform tools and invoke them live:
+- Select any tool (bash, web-search, file-read, etc.)
+- Fill in the input form (auto-generated from each tool's JSON Schema)
+- Click **Run Tool** — results appear immediately with execution time
+
+The playground talks directly to the Tool API at `http://localhost:8094`.
 
 ---
 

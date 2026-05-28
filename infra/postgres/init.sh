@@ -8,6 +8,12 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-E
     CREATE DATABASE litellm;
 EOSQL
 
+# Create a dedicated database for Langfuse (self-hosted LLM observability).
+# Langfuse runs its own Prisma migrations on startup — isolated from agentplatform.
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
+    CREATE DATABASE langfuse;
+EOSQL
+
 # Enable pgvector on the main agent database
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
     CREATE EXTENSION IF NOT EXISTS vector;
