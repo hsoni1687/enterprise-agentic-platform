@@ -53,7 +53,15 @@ func main() {
 		func(_ *http.Request) ([]byte, error) { return hmacSecret, nil },
 	)
 
-	store := service.NewInMemoryIdempotencyStore()
+	// Idempotency store: Postgres-backed (shared across replicas) when a DB URL
+	// is configured, otherwise a per-replica in-memory fallback for local dev.
+	var store service.IdempotencyStore = service.NewInMemoryIdempotencyStore()
+	if pgStore, err := service.NewPostgresIdempotencyStoreFromEnv(); err != nil {
+		log.Printf("WARNING: idempotency falling back to in-memory (Postgres unreachable): %v", err)
+	} else if pgStore != nil {
+		store = pgStore
+		log.Println("[gateway] idempotency store: Postgres")
+	}
 
 	// Chat history store — non-fatal if Postgres is unreachable at startup.
 	chatStore, err := service.NewChatStore()

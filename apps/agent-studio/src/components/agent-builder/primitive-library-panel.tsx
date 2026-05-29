@@ -201,6 +201,11 @@ export function PrimitiveLibraryPanel({ state }: Props) {
     queryFn: () => kgApi.listGraphs(),
   });
 
+  const { data: hooks = [], isLoading: loadingHooks } = useQuery({
+    queryKey: ["builder-hooks"],
+    queryFn: () => platformApi.listHooks(),
+  });
+
   const { data: mcpResult, isLoading: loadingMCP } = useQuery({
     queryKey: ["builder-mcp"],
     queryFn: () => mcpApi.listServers(),
@@ -208,7 +213,7 @@ export function PrimitiveLibraryPanel({ state }: Props) {
   const mcpList = mcpResult?.servers ?? [];
 
   const isLoading =
-    loadingSkills || loadingTools || loadingGuardrails || loadingKGs || loadingMCP;
+    loadingSkills || loadingTools || loadingGuardrails || loadingKGs || loadingHooks || loadingMCP;
 
   // Build typed primitive lists
   const skillItems: DragPrimitive[] = useMemo(
@@ -246,6 +251,18 @@ export function PrimitiveLibraryPanel({ state }: Props) {
     [guardrails]
   );
 
+  const hookItems: DragPrimitive[] = useMemo(
+    () =>
+      hooks.map((h) => ({
+        id: h.id,
+        name: h.name,
+        description: `${h.phase} · ${h.description}`,
+        primitiveType: "hook" as PrimitiveType,
+        metadata: { type: h.type, phase: h.phase, category: h.category },
+      })),
+    [hooks]
+  );
+
   const kgItems: DragPrimitive[] = useMemo(
     () =>
       kgs.map((k) => ({
@@ -280,7 +297,7 @@ export function PrimitiveLibraryPanel({ state }: Props) {
     tool:           toolItems,
     guardrail:      guardrailItems,
     knowledge_graph: kgItems,
-    hook:           [],
+    hook:           hookItems,
     mcp:            mcpItems,
   };
 

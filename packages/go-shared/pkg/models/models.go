@@ -141,16 +141,18 @@ type TeamManifest struct {
 
 // --- Agent Tiers ---
 
-// AgentTier classifies the execution model of an agent.
-// lite     → single-shot, no Temporal, <2 s target
-// workflow → multi-step static DAG, Temporal durable
-// deep     → autonomous planning + memory, Temporal orchestrated
+// AgentTier is kept as a type for API compatibility, but all agents now run
+// as deep agents via Temporal. The lite and workflow variants are deprecated
+// aliases — the platform ignores the value and always routes to AgentWorkflow.
 type AgentTier string
 
 const (
-	AgentTierLite     AgentTier = "lite"
-	AgentTierWorkflow AgentTier = "workflow"
-	AgentTierDeep     AgentTier = "deep"
+	AgentTierDeep AgentTier = "deep"
+
+	// Deprecated: all agents are now deep. These remain for API/DB compatibility
+	// only — the workflow-initiator ignores them and routes everything to Temporal.
+	AgentTierLite     AgentTier = "deep" // was "lite"
+	AgentTierWorkflow AgentTier = "deep" // was "workflow"
 )
 
 // AutonomyLevel describes how much the agent acts without human oversight.
@@ -162,9 +164,7 @@ const (
 	AutonomyAutonomous AutonomyLevel = "autonomous"
 )
 
-// ExecutionConfig holds tier-specific runtime constraints. Fields are pointers
-// so callers can distinguish "not set" from "zero". Workflow-tier agents also
-// carry their step DAG here.
+// ExecutionConfig holds agent runtime constraints.
 type ExecutionConfig struct {
 	// Common
 	MaxDurationSeconds int     `json:"max_duration_seconds"`
@@ -213,52 +213,23 @@ type WorkflowStep struct {
 	NextStepID     string   `json:"next_step_id,omitempty"`
 }
 
-// TierDefaults returns the canonical ExecutionConfig for a given tier.
-func TierDefaults(tier AgentTier) ExecutionConfig {
-	switch tier {
-	case AgentTierLite:
-		maxCalls := 2
-		return ExecutionConfig{
-			MaxDurationSeconds: 10,
-			MaxToolCalls:       &maxCalls,
-			MaxTokens:          2000,
-			MaxCostUSD:         0.01,
-			PlanningMode:       "none",
-		}
-	case AgentTierWorkflow:
-		maxCalls := 20
-		return ExecutionConfig{
-			MaxDurationSeconds: 300,
-			MaxToolCalls:       &maxCalls,
-			MaxTokens:          10000,
-			MaxCostUSD:         0.10,
-			PlanningMode:       "static",
-			HITLOnMutating:     true,
-		}
-	default: // deep
-		return ExecutionConfig{
-			MaxDurationSeconds: 3600,
-			MaxToolCalls:       nil, // unlimited
-			MaxTokens:          100000,
-			MaxCostUSD:         5.00,
-			PlanningMode:       "dynamic",
-			SelfCorrection:     true,
-			MemoryCrossSession: true,
-			HITLOnMutating:     true,
-		}
+// TierDefaults returns the canonical ExecutionConfig. All agents are deep.
+func TierDefaults(_ AgentTier) ExecutionConfig {
+	return ExecutionConfig{
+		MaxDurationSeconds: 3600,
+		MaxToolCalls:       nil, // unlimited
+		MaxTokens:          100000,
+		MaxCostUSD:         5.00,
+		PlanningMode:       "dynamic",
+		SelfCorrection:     true,
+		MemoryCrossSession: true,
+		HITLOnMutating:     true,
 	}
 }
 
-// TierAutonomy returns the default AutonomyLevel for a tier.
-func TierAutonomy(tier AgentTier) AutonomyLevel {
-	switch tier {
-	case AgentTierLite:
-		return AutonomyNone
-	case AgentTierWorkflow:
-		return AutonomySupervised
-	default:
-		return AutonomyAutonomous
-	}
+// TierAutonomy returns the default AutonomyLevel. All agents default to autonomous.
+func TierAutonomy(_ AgentTier) AutonomyLevel {
+	return AutonomyAutonomous
 }
 
 // --- Agent Manifests (updated) ---
@@ -377,13 +348,17 @@ type StartSessionRequest struct {
 // AgentEvent is a single observable event emitted by a running agent workflow,
 // streamed to the client via SSE.
 type AgentEvent struct {
-	Type       string      `json:"type"`                  // "thinking" | "tool_call" | "text" | "done" | "error" | "approval"
+	Type       string      `json:"type"`                  // "thinking" | "tool_call" | "text" | "done" | "error" | "approval" | "clarification_request"
 	Content    string      `json:"content,omitempty"`     // text / thinking / error content
 	ToolName   string      `json:"tool_name,omitempty"`   // tool_call: tool name
 	ToolArgs   interface{} `json:"tool_args,omitempty"`   // tool_call: tool arguments (object, not string)
 	ToolResult interface{} `json:"tool_result,omitempty"` // tool_call: execution result
 	ApprovalID string      `json:"approval_id,omitempty"` // approval: approval request ID
 	Reason     string      `json:"reason,omitempty"`      // approval: why approval is needed
+	// Clarification HITL — populated on "clarification_request" events
+	Question   string   `json:"question,omitempty"`    // the question the agent is asking
+	Options    []string `json:"options,omitempty"`     // optional clickable answer choices
+	WorkflowID string   `json:"workflow_id,omitempty"` // Temporal workflow ID — client POSTs answer here
 	// Token usage — populated on "done" events by the ReAct loop
 	TokensIn  int    `json:"tokens_in,omitempty"`  // total prompt tokens across all reasoning steps
 	TokensOut int    `json:"tokens_out,omitempty"` // total completion tokens across all reasoning steps

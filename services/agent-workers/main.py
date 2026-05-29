@@ -10,7 +10,6 @@ try:
 
     # Workflows (deterministic — no I/O allowed inside)
     from workflows import AgentWorkflow
-    from workflows_workflow_agent import WorkflowAgentRun
 
     # Activities are non-deterministic (all moved to separate files)
     from activities_agent import (
@@ -19,19 +18,14 @@ try:
         resolve_skill_context, invoke_direct_tool,
         execute_react_tool,   # ReAct loop tool executor
         emit_run_event,       # workflow-level observability emitter
+        register_hitl_approval,  # durable HITL approval registration
     )
     from activities_memory import recall_memories, store_memory, reflect_on_run, propose_manifest_update
+    # Only the cross-cutting activities the single ReAct flow uses remain; the
+    # plan/validate/replan/synthesize activities went away with the orchestrated path.
     from activities_orchestration import (
         load_active_guardrails, load_active_hooks,
-        plan_tasks, apply_guardrails, run_hooks,
-        validate_task_result, handle_task_failure,
-        execute_single_task, synthesize_final_answer,
-        replan_remaining_tasks,
-    )
-    from activities_workflow_agent import (
-        run_single_llm_step,
-        execute_workflow_step_tool,
-        evaluate_condition,
+        apply_guardrails, run_hooks,
     )
 
     # Tool API — FastAPI server for built-in tool catalog & playground
@@ -65,8 +59,7 @@ async def run_temporal_worker(logger: logging.Logger) -> None:
         client,
         task_queue=task_queue,
         workflows=[
-            AgentWorkflow,        # deep tier — orchestrated planning
-            WorkflowAgentRun,     # workflow tier — static DAG execution
+            AgentWorkflow,        # the single agent execution workflow
         ],
         activities=[
             execute_code, reasoning_step, pydantic_ai_reasoning_step,
@@ -74,20 +67,14 @@ async def run_temporal_worker(logger: logging.Logger) -> None:
             resolve_mcp_servers, fetch_system_tools, resolve_skill_context,
             invoke_direct_tool, recall_memories, store_memory,
             reflect_on_run, propose_manifest_update,
-            # deep-tier orchestration activities
+            # cross-cutting governance applied around every ReAct tool call
             load_active_guardrails, load_active_hooks,
-            plan_tasks, apply_guardrails, run_hooks,
-            validate_task_result, handle_task_failure,
-            execute_single_task, synthesize_final_answer,
-            replan_remaining_tasks,
-            # deep-tier ReAct loop
+            apply_guardrails, run_hooks,
+            # ReAct loop tool executor
             execute_react_tool,
             # observability
             emit_run_event,
-            # workflow-tier activities
-            run_single_llm_step,
-            execute_workflow_step_tool,
-            evaluate_condition,
+            register_hitl_approval,
         ],
     )
 

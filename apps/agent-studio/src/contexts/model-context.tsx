@@ -15,12 +15,10 @@ interface ModelCtx {
 const ModelContext = createContext<ModelCtx | null>(null);
 
 export function ModelProvider({ children }: { children: React.ReactNode }) {
-  const [model, _setModel] = useState<string>(() => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem(STORAGE_KEY) ?? "";
-    }
-    return "";
-  });
+  // Stable SSR-safe initial value — localStorage is client-only and cannot be
+  // read in a useState initializer (it runs on the server too, causing a
+  // hydration mismatch). The useEffect below syncs from storage after mount.
+  const [model, _setModel] = useState<string>("");
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 

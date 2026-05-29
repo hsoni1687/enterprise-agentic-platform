@@ -46,12 +46,7 @@ export function ManifestPreviewBar({ state }: Props) {
     setTimeout(() => setCopied(false), 1500);
   };
 
-  const autonomyColor =
-    agentConfig.tier === "deep"
-      ? "#8B5CF6"
-      : agentConfig.tier === "workflow"
-      ? "#F59E0B"
-      : "#6B7280";
+  const autonomyColor = "#8B5CF6"; // all agents are deep
 
   return (
     <div

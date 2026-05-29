@@ -35,9 +35,7 @@ const RINGS: Array<{ type: PrimitiveType; label: string; color: string }> = [
 ];
 
 const TIER_LABEL: Record<AgentTier, { label: string; color: string }> = {
-  lite:     { label: "Lite",     color: "#6B7280" },
-  workflow: { label: "Workflow", color: "#F59E0B" },
-  deep:     { label: "Deep",     color: "#8B5CF6" },
+  deep: { label: "Agent", color: "#8B5CF6" },
 };
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -46,7 +44,7 @@ export const AgentCoreNode = memo(function AgentCoreNode({
   data,
   selected,
 }: AgentCoreNodeProps) {
-  const tier = TIER_LABEL[data.tier] ?? TIER_LABEL.workflow;
+  const tier = TIER_LABEL["deep"];
   const modelShort = data.model?.split("/").pop() ?? data.model ?? "—";
 
   return (

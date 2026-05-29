@@ -20,6 +20,8 @@ import {
   Plus,
   Trash2,
 } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { agentsApi, kgApi, chatSessionsApi } from "@/lib/api";
 import { ChatEvent, Message, ChatSession } from "@/lib/types";
 import { getSession, setSession, clearSession } from "@/lib/chat-session-cache";
@@ -116,6 +118,126 @@ function ApprovalBlock({ event, tenantId }: { event: ChatEvent; tenantId: string
       ) : (
         <div className={`px-3 py-2 font-semibold ${status === "approved" ? "text-green-400" : "text-red-400"}`}>
           {status === "approved" ? "✓ Approved — execution will resume" : "✗ Denied"}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Clarification block ───────────────────────────────────────────────────────
+
+function ClarificationBlock({ event, tenantId }: { event: ChatEvent; tenantId: string }) {
+  const [selected, setSelected] = useState<string | null>(null);
+  const [custom, setCustom] = useState("");
+  const [sentAnswer, setSentAnswer] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
+
+  const hasOptions = (event.options ?? []).length > 0;
+  const question = event.question ?? "Could you clarify your request?";
+
+  const send = async (answer: string) => {
+    const trimmed = answer.trim();
+    if (!trimmed || busy) return;
+    setBusy(true);
+    try {
+      const resp = await fetch(
+        `${WORKFLOW_INITIATOR}/api/v1/sessions/${event.workflow_id}/clarify`,
+        {
+          method: "POST",
+          headers: { "X-Tenant-ID": tenantId, "Content-Type": "application/json" },
+          body: JSON.stringify({ answer: trimmed }),
+        }
+      );
+      if (resp.ok) setSentAnswer(trimmed);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const pickOption = (opt: string) => { setSelected(opt); send(opt); };
+
+  const handleKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(custom); }
+  };
+
+  // Sent state — collapsible summary showing what was chosen
+  if (sentAnswer !== null) {
+    return (
+      <div className="my-3 rounded-xl border border-blue-500/20 bg-blue-950/15 overflow-hidden">
+        <button
+          onClick={() => setCollapsed(v => !v)}
+          className="w-full flex items-center gap-2.5 px-4 py-2.5 hover:bg-blue-500/5 transition-colors text-left"
+        >
+          <CheckCircle className="h-3.5 w-3.5 text-blue-400 shrink-0" />
+          <span className="text-sm text-foreground/90 font-medium flex-1 truncate">{question}</span>
+          <span className="text-xs text-blue-300/80 font-medium shrink-0 max-w-[40%] truncate">"{sentAnswer}"</span>
+          <ChevronDown className={cn("h-3.5 w-3.5 text-muted-foreground/50 shrink-0 transition-transform", collapsed && "rotate-180")} />
+        </button>
+        {!collapsed && (
+          <div className="px-4 pb-3 pt-1 border-t border-blue-500/10">
+            <p className="text-xs text-muted-foreground">Your answer: <span className="text-foreground/80 font-medium">"{sentAnswer}"</span></p>
+            <p className="text-xs text-blue-400/70 mt-1">Agent is resuming with your answer…</p>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Pending state
+  return (
+    <div className="my-3 rounded-xl border border-blue-500/30 bg-blue-950/20 overflow-hidden">
+      {/* Header — question IS the title, with collapse toggle */}
+      <button
+        onClick={() => setCollapsed(v => !v)}
+        className="w-full flex items-start gap-2.5 px-4 py-3 hover:bg-blue-500/5 transition-colors text-left"
+      >
+        <MessageSquare className="h-3.5 w-3.5 text-blue-400 shrink-0 mt-0.5" />
+        <span className="text-sm text-foreground font-semibold flex-1 leading-snug">{question}</span>
+        <ChevronDown className={cn("h-3.5 w-3.5 text-muted-foreground/50 shrink-0 mt-0.5 transition-transform", collapsed && "rotate-180")} />
+      </button>
+
+      {!collapsed && (
+        <div className="px-4 pb-3 space-y-3 border-t border-blue-500/15">
+          {/* Option chips */}
+          {hasOptions && (
+            <div className="flex flex-wrap gap-2 pt-3">
+              {(event.options ?? []).map((opt) => (
+                <button
+                  key={opt}
+                  disabled={busy}
+                  onClick={() => pickOption(opt)}
+                  className={cn(
+                    "px-3 py-1.5 rounded-full border text-xs font-medium transition-all",
+                    selected === opt
+                      ? "border-blue-400 bg-blue-500/20 text-blue-300"
+                      : "border-border/60 bg-muted/30 text-foreground/70 hover:border-blue-400/60 hover:bg-blue-500/10 hover:text-blue-300"
+                  )}
+                >
+                  {opt}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Custom answer */}
+          <div className={cn("space-y-2", !hasOptions && "pt-3")}>
+            {hasOptions && <p className="text-[11px] text-muted-foreground">Or type a custom answer:</p>}
+            <textarea
+              autoFocus={!hasOptions}
+              placeholder={hasOptions ? "Type a custom answer…" : "Type your answer… (Enter to send, Shift+Enter for new line)"}
+              value={custom}
+              onChange={(e) => setCustom(e.target.value)}
+              onKeyDown={handleKey}
+              rows={2}
+              className="w-full rounded-lg border border-border/50 bg-muted/20 px-3 py-2 text-sm resize-none focus:outline-none focus:ring-1 focus:ring-blue-500/40 placeholder:text-muted-foreground/50"
+            />
+            <div className="flex justify-end">
+              <Button size="sm" disabled={busy || !custom.trim()} onClick={() => send(custom)} className="gap-1.5">
+                <Send className="h-3 w-3" />Send
+              </Button>
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -241,7 +363,169 @@ function mergeEvents(events: ChatEvent[]): ChatEvent[] {
   return merged;
 }
 
-function AssistantMessage({ message, tenantId }: { message: Message; tenantId: string }) {
+// ── Markdown renderer ─────────────────────────────────────────────────────────
+// Renders LLM markdown with appropriate styling for the dark chat UI.
+function MarkdownContent({ content, streaming }: { content: string; streaming?: boolean }) {
+  return (
+    <div className="markdown-body text-sm leading-relaxed text-foreground">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          // Headings
+          h1: ({ children }) => (
+            <h1 className="text-lg font-bold mt-5 mb-2 text-foreground first:mt-0 border-b border-border/30 pb-1">{children}</h1>
+          ),
+          h2: ({ children }) => (
+            <h2 className="text-base font-semibold mt-4 mb-1.5 text-foreground first:mt-0">{children}</h2>
+          ),
+          h3: ({ children }) => (
+            <h3 className="text-sm font-semibold mt-3 mb-1 text-foreground first:mt-0">{children}</h3>
+          ),
+
+          // Paragraphs
+          p: ({ children }) => (
+            <p className="mb-3 last:mb-0 leading-relaxed">{children}</p>
+          ),
+
+          // Lists
+          ul: ({ children }) => (
+            <ul className="mb-3 pl-5 space-y-1 list-disc marker:text-primary/60">{children}</ul>
+          ),
+          ol: ({ children }) => (
+            <ol className="mb-3 pl-5 space-y-1 list-decimal marker:text-primary/60">{children}</ol>
+          ),
+          li: ({ children }) => (
+            <li className="leading-relaxed">{children}</li>
+          ),
+
+          // Inline code
+          code: ({ children, className }) => {
+            const isBlock = className?.includes("language-");
+            if (isBlock) {
+              // Fenced code block
+              const lang = className?.replace("language-", "") ?? "";
+              return (
+                <div className="my-3 rounded-lg overflow-hidden border border-border/40">
+                  {lang && (
+                    <div className="px-3 py-1.5 bg-muted/60 border-b border-border/30 text-[10px] font-mono text-muted-foreground uppercase tracking-wider">
+                      {lang}
+                    </div>
+                  )}
+                  <pre className="overflow-x-auto p-4 bg-muted/40 text-[13px] font-mono leading-relaxed">
+                    <code className="text-foreground/90">{children}</code>
+                  </pre>
+                </div>
+              );
+            }
+            // Inline code
+            return (
+              <code className="px-1.5 py-0.5 rounded bg-primary/10 border border-primary/20 text-[12px] font-mono text-primary/90">
+                {children}
+              </code>
+            );
+          },
+          pre: ({ children }) => <>{children}</>,
+
+          // Blockquote
+          blockquote: ({ children }) => (
+            <blockquote className="my-3 pl-3 border-l-2 border-primary/40 text-muted-foreground italic">
+              {children}
+            </blockquote>
+          ),
+
+          // Horizontal rule
+          hr: () => <hr className="my-4 border-border/30" />,
+
+          // Bold / italic
+          strong: ({ children }) => (
+            <strong className="font-semibold text-foreground">{children}</strong>
+          ),
+          em: ({ children }) => (
+            <em className="italic text-foreground/80">{children}</em>
+          ),
+
+          // Links
+          a: ({ href, children }) => (
+            <a
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary underline underline-offset-2 hover:text-primary/80 transition-colors"
+            >
+              {children}
+            </a>
+          ),
+
+          // Tables (GFM)
+          table: ({ children }) => (
+            <div className="my-3 overflow-x-auto rounded-lg border border-border/40">
+              <table className="w-full text-sm">{children}</table>
+            </div>
+          ),
+          thead: ({ children }) => (
+            <thead className="bg-muted/50 border-b border-border/40">{children}</thead>
+          ),
+          tbody: ({ children }) => <tbody className="divide-y divide-border/20">{children}</tbody>,
+          tr: ({ children }) => <tr className="hover:bg-muted/20 transition-colors">{children}</tr>,
+          th: ({ children }) => (
+            <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+              {children}
+            </th>
+          ),
+          td: ({ children }) => (
+            <td className="px-3 py-2 text-foreground/80">{children}</td>
+          ),
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+      {streaming && (
+        <span className="inline-block h-4 w-0.5 bg-primary ml-0.5 animate-pulse align-middle" />
+      )}
+    </div>
+  );
+}
+
+/** Extract explicit agent follow-up offers from the very end of a response.
+ *  Only matches sentences where the agent is clearly offering to do more work —
+ *  NOT rhetorical questions or questions embedded in generated content.
+ *  Examples that match: "Want a longer version?", "Should I add more examples?",
+ *  "Would you like a carousel format?"
+ *  Examples that do NOT match: "What's one habit you're missing?" (rhetorical/content). */
+function extractFollowUpQuestions(content: string): string[] {
+  if (!content) return [];
+
+  // Only look at the last paragraph — offer sentences always come at the very end
+  const paragraphs = content.split(/\n\n+/).map(p => p.trim()).filter(Boolean);
+  const lastPara = paragraphs[paragraphs.length - 1] ?? "";
+
+  // Strip markdown bold/italic so "**Want a longer version?**" → "Want a longer version?"
+  const plain = lastPara.replace(/\*\*([^*]+)\*\*/g, "$1").replace(/\*([^*]+)\*/g, "$1");
+
+  // Agent offer sentence starters — the agent is proposing to do something for the user
+  const OFFER_PREFIXES = /^(want|would you like|should i|shall i|need me to|want me to|can i|let me know if you (want|need|would like)|prefer)/i;
+
+  const offers: string[] = [];
+  // Split the last paragraph into sentences
+  const sentences = plain.split(/(?<=[.!?])\s+/).map(s => s.trim()).filter(Boolean);
+  for (const s of sentences) {
+    // Must start with an offer pattern, contain ?, and be concise
+    if (OFFER_PREFIXES.test(s) && s.includes("?") && s.length >= 8 && s.length <= 200) {
+      // Use the full sentence — it may have multiple "?" (e.g. "Want a version? Shorter or longer?")
+      // Trim to the last "?" so any trailing non-question fragment is dropped.
+      const q = (s.match(/^.*\?/) ?? [s])[0].trim();
+      offers.push(q);
+      if (offers.length >= 2) break; // max 2 chips — keep UI clean
+    }
+  }
+  return offers;
+}
+
+function AssistantMessage({ message, tenantId, onSuggestion }: {
+  message: Message;
+  tenantId: string;
+  onSuggestion: (text: string) => void;
+}) {
   const hasError = message.content?.startsWith("Error:");
   const mergedEvents = useMemo(() => mergeEvents(message.events ?? []), [message.events]);
 
@@ -264,19 +548,39 @@ function AssistantMessage({ message, tenantId }: { message: Message; tenantId: s
             }
             if (ev.type === "tool_call") return <ToolCallBlock key={i} event={ev} />;
             if (ev.type === "approval") return <ApprovalBlock key={i} event={ev} tenantId={tenantId} />;
+            if (ev.type === "clarification_request") return <ClarificationBlock key={i} event={ev} tenantId={tenantId} />;
             return null;
           })}
           {message.content && (
-            <div className={cn("whitespace-pre-wrap", hasError ? "text-destructive/90 text-xs leading-relaxed" : "text-foreground")}>
-              {hasError ? message.content.slice("Error: ".length) : message.content}
-              {message.streaming && !hasError && (
-                <span className="inline-block h-4 w-0.5 bg-primary ml-0.5 animate-pulse" />
-              )}
-            </div>
+            hasError ? (
+              <div className="text-destructive/90 text-xs leading-relaxed whitespace-pre-wrap">
+                {message.content.slice("Error: ".length)}
+              </div>
+            ) : (
+              <MarkdownContent content={message.content} streaming={message.streaming} />
+            )
           )}
           {message.streaming && !message.content && (
             <span className="inline-block h-4 w-0.5 bg-primary animate-pulse" />
           )}
+          {/* Follow-up question chips — clickable suggestions extracted from trailing questions */}
+          {!message.streaming && !hasError && (() => {
+            const followUps = extractFollowUpQuestions(message.content ?? "");
+            if (followUps.length === 0) return null;
+            return (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {followUps.map((q) => (
+                  <button
+                    key={q}
+                    onClick={() => onSuggestion(q)}
+                    className="px-3 py-1.5 rounded-full border border-primary/30 bg-primary/5 text-xs text-primary/80 hover:border-primary/60 hover:bg-primary/10 hover:text-primary transition-all text-left"
+                  >
+                    {q}
+                  </button>
+                ))}
+              </div>
+            );
+          })()}
           {/* Token usage footer — shown once streaming completes and we have metadata */}
           {!message.streaming && !hasError && (message.model || message.steps) && (
             <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground/60 font-mono select-none border-t border-border/20 pt-2">
@@ -346,17 +650,24 @@ export default function ChatPage({
   // Each chat session (including the unsaved new one) gets its own messages +
   // streaming flag so switching sessions never aborts an in-progress stream.
   //
-  // SESSION_NEW is initialised from the sessionStorage cache so navigating away
-  // and back within the same browser tab preserves the conversation.
-  // Any message left with streaming=true is healed to streaming=false (the stream
-  // was killed by navigation — the user sees the partial response, not a spinner).
-  const [sessionData, setSessionData] = useState<Record<string, SessionData>>(() => {
-    const cached = getSession(id);           // restore from sessionStorage / in-memory cache
+  // SESSION_NEW starts empty on both server and client (identical initial render).
+  // After mount, messages are restored from sessionStorage — browser-only storage
+  // cannot be read in a useState initializer because it runs during SSR too,
+  // producing different HTML on server vs client (hydration mismatch).
+  const [sessionData, setSessionData] = useState<Record<string, SessionData>>({
+    [SESSION_NEW]: { messages: [], streaming: false },
+  });
+
+  // Restore sessionStorage cache after hydration (client-only).
+  useEffect(() => {
+    const cached = getSession(id);
+    if (cached.length === 0) return;
     const healed = cached.map((m) =>
       m.streaming ? { ...m, streaming: false } : m
     );
-    return { [SESSION_NEW]: { messages: healed, streaming: false } };
-  });
+    setSessionData({ [SESSION_NEW]: { messages: healed, streaming: false } });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Which session the user is currently viewing.
   // null  → the brand-new, not-yet-persisted chat (SESSION_NEW key)
@@ -379,6 +690,11 @@ export default function ChatPage({
   // Per-session abort controllers and timeout IDs — keyed by session key
   const abortMapRef = useRef(new Map<string, AbortController>());
   const timeoutMapRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+
+  // Ref-based in-flight guard — blocks concurrent sendMessage calls regardless of
+  // React render cycle. Unlike the `streaming` state flag, this is mutation-safe
+  // across async boundaries and component remounts within the same JS heap.
+  const sendInFlightRef = useRef(false);
 
   // Ref mirror of sessionData so async callbacks read latest without stale closures
   const sessionDataRef = useRef<Record<string, SessionData>>(sessionData);
@@ -543,9 +859,13 @@ export default function ChatPage({
   }, [id]);
 
   // ── Send a message ─────────────────────────────────────────────────────────
-  const sendMessage = useCallback(async () => {
-    const text = input.trim();
+  const sendMessage = useCallback(async (overrideText?: string) => {
+    const text = (overrideText ?? input).trim();
     if (!text || streaming) return;
+    // Ref-based guard prevents a second concurrent workflow even if streaming
+    // state resets mid-flight (e.g. component remount in dev StrictMode).
+    if (sendInFlightRef.current) return;
+    sendInFlightRef.current = true;
 
     // Capture the session key for this send cycle.
     // keyRef is a plain mutable object (not a React ref) so that pump() always reads the
@@ -718,7 +1038,7 @@ export default function ChatPage({
                     const k = keyRef.current;
 
                     if (event.type === "text" && event.content) assistantContent += event.content;
-                    if (event.type === "tool_call" || event.type === "approval") assistantEvents.push(event);
+                    if (event.type === "tool_call" || event.type === "approval" || event.type === "clarification_request") assistantEvents.push(event);
 
                     setSessionMsgs(k, prev =>
                       prev.map(m => {
@@ -738,7 +1058,7 @@ export default function ChatPage({
                           }
                           return { ...m, events: [...evs, event] };
                         }
-                        if (event.type === "tool_call" || event.type === "approval")
+                        if (event.type === "tool_call" || event.type === "approval" || event.type === "clarification_request")
                           return { ...m, events: [...(m.events ?? []), event] };
                         if (event.type === "done")
                           return {
@@ -755,11 +1075,34 @@ export default function ChatPage({
                       })
                     );
 
+                    // Clarification requested — swap the 2-min chat timeout for a
+                    // 10-min window so the SSE stays alive while the user reads and answers.
+                    if (event.type === "clarification_request") {
+                      const existing = timeoutMapRef.current.get(k);
+                      if (existing) clearTimeout(existing);
+                      const clarifyTimeout = setTimeout(() => {
+                        timeoutMapRef.current.delete(k);
+                        abortMapRef.current.delete(k);
+                        abort.abort();
+                        sendInFlightRef.current = false;
+                        setSessionMsgs(k, prev =>
+                          prev.map(msg =>
+                            msg.id === assistantId
+                              ? { ...msg, content: friendlyError("TIMEOUT"), streaming: false }
+                              : msg
+                          )
+                        );
+                        setSessionStreaming(k, false);
+                      }, 10 * 60 * 1000); // 10 min — enough time to read and respond
+                      timeoutMapRef.current.set(k, clarifyTimeout);
+                    }
+
                     if (event.type === "done") {
                       clearTimeout(timeoutId);
                       timeoutMapRef.current.delete(k);
                       abortMapRef.current.delete(k);
                       setSessionStreaming(k, false);
+                      sendInFlightRef.current = false;
 
                       // If this was SESSION_NEW (or migrated from it), persist the
                       // completed messages to sessionStorage NOW — the component may
@@ -817,6 +1160,7 @@ export default function ChatPage({
             clearTimeout(timeoutId);
             timeoutMapRef.current.delete(k);
             abortMapRef.current.delete(k);
+            sendInFlightRef.current = false;
             if (streamErr?.name === "AbortError") return;
             setSessionMsgs(k, prev =>
               prev.map(m =>
@@ -846,6 +1190,7 @@ export default function ChatPage({
           )
         );
         setSessionStreaming(k, false);
+        sendInFlightRef.current = false;
       });
   }, [id, input, streaming, activeSessionId, tenantId, activeModel, agent, setSessionMsgs, setSessionStreaming, setSessions]);
 
@@ -1044,7 +1389,15 @@ export default function ChatPage({
           {messages.map((msg) =>
             msg.role === "user"
               ? <UserMessage key={msg.id} message={msg} />
-              : <AssistantMessage key={msg.id} message={msg} tenantId={tenantId} />
+              : <AssistantMessage
+                  key={msg.id}
+                  message={msg}
+                  tenantId={tenantId}
+                  onSuggestion={(text) => {
+                    setInput(text);
+                    sendMessage(text);
+                  }}
+                />
           )}
         </div>
       </div>
@@ -1079,7 +1432,7 @@ export default function ChatPage({
               ) : (
                 <Button
                   size="sm"
-                  onClick={sendMessage}
+                  onClick={() => sendMessage()}
                   disabled={!input.trim() || !isActive || sessionLoading}
                   className="h-7 w-7 p-0"
                 >

@@ -42,7 +42,10 @@ function makePreset(key: PresetKey, minutes: number): TimeRange {
   return { preset: key, from, to };
 }
 
-const DEFAULT_RANGE = makePreset("24h", 1440);
+// Do NOT call makePreset() at module level — new Date() runs on the server AND
+// again during client hydration, producing different timestamps and a mismatch.
+// The lazy useState initializer below calls it only once, on the client.
+const getDefaultRange = () => makePreset("24h", 1440);
 
 // ── Level / Source config ─────────────────────────────────────────────────────
 
@@ -65,15 +68,18 @@ const SRC_CFG: Record<LogSource, { icon: typeof ScrollText; label: string }> = {
 
 // ── Tiny helpers ──────────────────────────────────────────────────────────────
 
+// Use explicit locale + options so server (Node.js) and browser produce
+// identical strings. "en-GB" 24-hour format is unambiguous and consistent.
 const fmt = {
-  time: (iso: string) => new Date(iso).toLocaleTimeString(),
+  time: (iso: string) =>
+    new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
   datetime: (iso: string) => {
     const d = new Date(iso);
     const today = new Date();
     return d.toDateString() === today.toDateString()
-      ? d.toLocaleTimeString()
-      : d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) +
-        " " + d.toLocaleTimeString();
+      ? d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+      : d.toLocaleDateString("en-GB", { month: "short", day: "numeric" }) +
+        " " + d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
   },
   duration: (ms: number) => {
     if (!ms || ms < 0) return "—";
@@ -97,8 +103,15 @@ function TimeRangePicker({
   onChange: (r: TimeRange) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [customFrom, setCustomFrom] = useState(fmt.isoLocal(value.from));
-  const [customTo,   setCustomTo]   = useState(fmt.isoLocal(value.to));
+  // Use empty strings until mounted — fmt.isoLocal calls getHours() which
+  // differs between server timezone and browser timezone → hydration mismatch.
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo,   setCustomTo]   = useState("");
+  useEffect(() => {
+    setCustomFrom(fmt.isoLocal(value.from));
+    setCustomTo(fmt.isoLocal(value.to));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -562,7 +575,9 @@ function EventRow({ e }: { e: RunEvent }) {
 export default function LogsPage() {
   const [agents,        setAgents]        = useState<string[]>([]);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
-  const [timeRange,     setTimeRange]     = useState<TimeRange>(DEFAULT_RANGE);
+  // null until mounted: getDefaultRange() calls new Date() which differs
+  // between server render and client hydration → mismatch. Set after mount only.
+  const [timeRange,     setTimeRange]     = useState<TimeRange | null>(null);
   const [runs,          setRuns]          = useState<AgentRun[]>([]);
   const [selectedRun,   setSelectedRun]   = useState<AgentRun | null>(null);
   const [events,        setEvents]        = useState<RunEvent[]>([]);
@@ -580,6 +595,10 @@ export default function LogsPage() {
   const selectedRunRef = useRef<AgentRun | null>(null);
   useEffect(() => { selectedRunRef.current = selectedRun; }, [selectedRun]);
 
+  // Initialise time range after mount — new Date() in useState initializer
+  // causes server/client mismatch because timestamps differ between SSR and hydration.
+  useEffect(() => { setTimeRange(getDefaultRange()); }, []);
+
   // ── Load agent list once ────────────────────────────────────────────────
   useEffect(() => {
     runsApi.agents()
@@ -590,6 +609,7 @@ export default function LogsPage() {
   // ── Load sessions ───────────────────────────────────────────────────────
   // background=true skips the loading spinner (used by auto-poll)
   const fetchRuns = useCallback(async (background = false) => {
+    if (!timeRange) return; // not mounted yet
     if (!background) setLoadingRuns(true);
     setError(null);
     try {
@@ -653,7 +673,7 @@ export default function LogsPage() {
 
   // ── Manual auto-refresh (15 s, user-toggled) ────────────────────────────
   useEffect(() => {
-    if (!autoRefresh) return;
+    if (!autoRefresh || !timeRange) return;
     const id = setInterval(() => {
       // Slide the time window forward unless using custom range
       if (timeRange.preset !== "custom") {
@@ -706,8 +726,10 @@ export default function LogsPage() {
               onChange={(v) => { setSelectedAgent(v); setSelectedRun(null); }}
             />
 
-            {/* Time range */}
-            <TimeRangePicker value={timeRange} onChange={(r) => { setTimeRange(r); setSelectedRun(null); }} />
+            {/* Time range — null until mounted (date init is client-only) */}
+            {timeRange && (
+              <TimeRangePicker value={timeRange} onChange={(r) => { setTimeRange(r); setSelectedRun(null); }} />
+            )}
 
             {selectedAgent && (
               <button

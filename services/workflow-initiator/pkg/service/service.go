@@ -95,11 +95,9 @@ func SendWorkflowSignal(workflowID, signalName string, payload interface{}) erro
 	return temporalClient.SignalWorkflow(context.Background(), workflowID, "", signalName, payload)
 }
 
-// HandleStartSession dispatches a new agent session.
-// Routing depends on the agent's tier:
-//   - lite     → synchronous LiteLLMHandler (no Temporal)
-//   - workflow → Temporal WorkflowAgentRun
-//   - deep     → Temporal AgentWorkflow (existing orchestrated path)
+// HandleStartSession dispatches a new agent session. All agents run through the
+// single Temporal AgentWorkflow (the governed ReAct flow); the legacy lite and
+// workflow tiers were removed, so the manifest's tier field is ignored.
 func HandleStartSession(w http.ResponseWriter, r *http.Request) {
 	var req models.StartSessionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -133,24 +131,9 @@ func HandleStartSession(w http.ResponseWriter, r *http.Request) {
 		req.Manifest.Model = req.ModelOverride
 	}
 
-	// ── Tier routing ──────────────────────────────────────────────────────────
-	tier := models.AgentTierDeep
-	if req.Manifest != nil && req.Manifest.Tier != "" {
-		tier = req.Manifest.Tier
-	}
-
-	log.Printf("[INITIATOR] Routing agent_id=%s to tier=%s", req.AgentID, tier)
-
-	switch tier {
-	case models.AgentTierLite:
-		// Synchronous execution — no Temporal, returns inline
-		HandleLiteSession(w, r, req)
-		return
-	case models.AgentTierWorkflow:
-		dispatchTemporalSession(w, req, "WorkflowAgentRun")
-	default: // deep (and any legacy agents without a tier)
-		dispatchTemporalSession(w, req, "AgentWorkflow")
-	}
+	// All agents run as deep agents via Temporal — tier field is ignored.
+	log.Printf("[INITIATOR] Dispatching agent_id=%s via AgentWorkflow (Temporal)", req.AgentID)
+	dispatchTemporalSession(w, req, "AgentWorkflow")
 }
 
 // dispatchTemporalSession starts a named Temporal workflow and returns its IDs.
@@ -209,15 +192,6 @@ func HandleGetSessionStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Lite sessions are tracked in memory, not Temporal
-	if IsLiteSession(id) {
-		_, status := GetLiteSessionState(id, 0)
-		resp := models.SessionStatus{WorkflowID: id, Status: status}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
-		return
-	}
-
 	if temporalClient == nil {
 		http.Error(w, "Temporal client not connected", http.StatusServiceUnavailable)
 		return
@@ -244,21 +218,6 @@ func HandleGetSessionEvents(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[REST_API] HandleGetSessionEvents called for workflow_id=%s", id)
 	if id == "" {
 		http.Error(w, "workflow id is required", http.StatusBadRequest)
-		return
-	}
-
-	// Lite session
-	if IsLiteSession(id) {
-		from := 0
-		if s := r.URL.Query().Get("from"); s != "" {
-			fmt.Sscanf(s, "%d", &from)
-		}
-		events, _ := GetLiteSessionState(id, from)
-		if events == nil {
-			events = []models.AgentEvent{}
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(events)
 		return
 	}
 
@@ -310,21 +269,6 @@ func HandlePollSession(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[REST_API] HandlePollSession called for workflow_id=%s", id)
 	if id == "" {
 		http.Error(w, "workflow id is required", http.StatusBadRequest)
-		return
-	}
-
-	// ── Lite session: served from in-memory store, no Temporal ───────────────
-	if IsLiteSession(id) {
-		from := 0
-		if s := r.URL.Query().Get("from"); s != "" {
-			fmt.Sscanf(s, "%d", &from)
-		}
-		events, status := GetLiteSessionState(id, from)
-		if events == nil {
-			events = []models.AgentEvent{}
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(models.PollResponse{Events: events, Status: status})
 		return
 	}
 
@@ -471,6 +415,42 @@ func mapTemporalStatus(s enumspb.WorkflowExecutionStatus) string {
 	}
 }
 
+// HandleClarifySession POST /api/v1/sessions/{id}/clarify
+// Sends the user's free-text answer to a workflow waiting on an ask_human clarification.
+// {id} is the Temporal workflow ID (e.g. "agent-wf-<agent>-<session>").
+func HandleClarifySession(w http.ResponseWriter, r *http.Request) {
+	tenantID := r.Header.Get("X-Tenant-ID")
+	if tenantID == "" {
+		http.Error(w, "X-Tenant-ID header required", http.StatusBadRequest)
+		return
+	}
+	workflowID := r.PathValue("id")
+	if workflowID == "" {
+		http.Error(w, "workflow id is required", http.StatusBadRequest)
+		return
+	}
+
+	var req struct {
+		Answer string `json:"answer"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Answer == "" {
+		http.Error(w, "answer field is required", http.StatusBadRequest)
+		return
+	}
+
+	if err := SendWorkflowSignal(workflowID, "clarification_response", map[string]string{
+		"answer": req.Answer,
+	}); err != nil {
+		log.Printf("[CLARIFY] failed to signal workflow %s: %v", workflowID, err)
+		http.Error(w, fmt.Sprintf("failed to signal workflow: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("[CLARIFY] answer sent to workflow_id=%s tenant=%s", workflowID, tenantID)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
 // HandleStoreHITLApproval POST /api/v1/approvals - stores a pending HITL approval
 func HandleStoreHITLApproval(w http.ResponseWriter, r *http.Request) {
 	tenantID := r.Header.Get("X-Tenant-ID")
@@ -480,6 +460,7 @@ func HandleStoreHITLApproval(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
+		ApprovalID string                 `json:"approval_id"` // optional; workflow supplies its own so SSE id == store id
 		WorkflowID string                 `json:"workflow_id"`
 		AgentID    string                 `json:"agent_id"`
 		ToolName   string                 `json:"tool_name"`
@@ -492,7 +473,7 @@ func HandleStoreHITLApproval(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	approvalID := StoreHITLApproval(req.WorkflowID, req.AgentID, tenantID, req.ToolName, req.Reason, req.ToolArgs)
+	approvalID := StoreHITLApproval(r.Context(), req.ApprovalID, req.WorkflowID, req.AgentID, tenantID, req.ToolName, req.Reason, req.ToolArgs)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)

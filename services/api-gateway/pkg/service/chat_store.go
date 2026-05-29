@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"time"
 
+	shareddb "github.com/agent-platform/go-shared/pkg/db"
 	"github.com/agent-platform/go-shared/pkg/models"
 	_ "github.com/lib/pq" // postgres driver
 )
@@ -16,6 +18,12 @@ import (
 // ChatStore handles persistent chat session storage via Postgres.
 type ChatStore struct {
 	db *sql.DB
+}
+
+// withTenant runs fn inside a transaction with app.tenant_id set, so row-level
+// security on chat_sessions/chat_messages is enforced for this tenant.
+func (s *ChatStore) withTenant(ctx context.Context, tenantID string, fn func(tx *sql.Tx) error) error {
+	return shareddb.WithTenant(ctx, s.db, tenantID, fn)
 }
 
 // NewChatStore opens a Postgres pool and returns a ready-to-use ChatStore.
@@ -45,73 +53,93 @@ func (s *ChatStore) createSession(tenantID, agentID, title string) (*models.Chat
 	if title == "" {
 		title = "New Chat"
 	}
-	row := s.db.QueryRow(`
-		INSERT INTO chat_sessions (tenant_id, agent_id, title)
-		VALUES ($1, $2, $3)
-		RETURNING id, tenant_id, agent_id, title, created_at, updated_at`,
-		tenantID, agentID, title,
-	)
 	var cs models.ChatSession
-	if err := row.Scan(&cs.ID, &cs.TenantID, &cs.AgentID, &cs.Title, &cs.CreatedAt, &cs.UpdatedAt); err != nil {
+	err := s.withTenant(context.Background(), tenantID, func(tx *sql.Tx) error {
+		return tx.QueryRow(`
+			INSERT INTO chat_sessions (tenant_id, agent_id, title)
+			VALUES ($1, $2, $3)
+			RETURNING id, tenant_id, agent_id, title, created_at, updated_at`,
+			tenantID, agentID, title,
+		).Scan(&cs.ID, &cs.TenantID, &cs.AgentID, &cs.Title, &cs.CreatedAt, &cs.UpdatedAt)
+	})
+	if err != nil {
 		return nil, err
 	}
 	return &cs, nil
 }
 
 func (s *ChatStore) listSessions(tenantID, agentID string) ([]models.ChatSession, error) {
-	rows, err := s.db.Query(`
-		SELECT id, tenant_id, agent_id, title, created_at, updated_at
-		FROM   chat_sessions
-		WHERE  tenant_id = $1 AND agent_id = $2
-		ORDER  BY updated_at DESC
-		LIMIT  100`,
-		tenantID, agentID,
-	)
+	var sessions []models.ChatSession
+	err := s.withTenant(context.Background(), tenantID, func(tx *sql.Tx) error {
+		rows, err := tx.Query(`
+			SELECT id, tenant_id, agent_id, title, created_at, updated_at
+			FROM   chat_sessions
+			WHERE  tenant_id = $1 AND agent_id = $2
+			ORDER  BY updated_at DESC
+			LIMIT  100`,
+			tenantID, agentID,
+		)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var cs models.ChatSession
+			if err := rows.Scan(&cs.ID, &cs.TenantID, &cs.AgentID, &cs.Title, &cs.CreatedAt, &cs.UpdatedAt); err != nil {
+				return err
+			}
+			sessions = append(sessions, cs)
+		}
+		return rows.Err()
+	})
 	if err != nil {
 		return nil, err
-	}
-	defer rows.Close()
-
-	var sessions []models.ChatSession
-	for rows.Next() {
-		var cs models.ChatSession
-		if err := rows.Scan(&cs.ID, &cs.TenantID, &cs.AgentID, &cs.Title, &cs.CreatedAt, &cs.UpdatedAt); err != nil {
-			return nil, err
-		}
-		sessions = append(sessions, cs)
 	}
 	if sessions == nil {
 		sessions = []models.ChatSession{}
 	}
-	return sessions, rows.Err()
+	return sessions, nil
 }
 
 func (s *ChatStore) getSession(tenantID, agentID, sessionID string) (*models.ChatSession, error) {
-	row := s.db.QueryRow(`
-		SELECT id, tenant_id, agent_id, title, created_at, updated_at
-		FROM   chat_sessions
-		WHERE  id = $1 AND tenant_id = $2 AND agent_id = $3`,
-		sessionID, tenantID, agentID,
-	)
 	var cs models.ChatSession
-	if err := row.Scan(&cs.ID, &cs.TenantID, &cs.AgentID, &cs.Title, &cs.CreatedAt, &cs.UpdatedAt); err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil
+	found := false
+	err := s.withTenant(context.Background(), tenantID, func(tx *sql.Tx) error {
+		row := tx.QueryRow(`
+			SELECT id, tenant_id, agent_id, title, created_at, updated_at
+			FROM   chat_sessions
+			WHERE  id = $1 AND tenant_id = $2 AND agent_id = $3`,
+			sessionID, tenantID, agentID,
+		)
+		if err := row.Scan(&cs.ID, &cs.TenantID, &cs.AgentID, &cs.Title, &cs.CreatedAt, &cs.UpdatedAt); err != nil {
+			if err == sql.ErrNoRows {
+				return nil
+			}
+			return err
 		}
-		return nil, err
-	}
-
-	// Load messages
-	msgs, err := s.listMessages(sessionID)
+		found = true
+		// Load messages within the same tenant transaction (RLS active).
+		msgs, err := listMessagesTx(tx, sessionID)
+		if err != nil {
+			return err
+		}
+		cs.Messages = msgs
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	cs.Messages = msgs
+	if !found {
+		return nil, nil
+	}
 	return &cs, nil
 }
 
-func (s *ChatStore) listMessages(sessionID string) ([]models.ChatSessionMessage, error) {
-	rows, err := s.db.Query(`
+// listMessagesTx loads messages for a session within an existing tenant
+// transaction. RLS on chat_messages scopes the result to the active tenant, so
+// this is safe even though it filters only by session_id.
+func listMessagesTx(tx *sql.Tx, sessionID string) ([]models.ChatSessionMessage, error) {
+	rows, err := tx.Query(`
 		SELECT id, session_id, tenant_id, agent_id, role, content, metadata, created_at
 		FROM   chat_messages
 		WHERE  session_id = $1
@@ -142,65 +170,41 @@ func (s *ChatStore) listMessages(sessionID string) ([]models.ChatSessionMessage,
 }
 
 func (s *ChatStore) appendMessages(tenantID, agentID, sessionID string, msgs []models.ChatSessionMessage) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback() //nolint:errcheck
-
-	for _, m := range msgs {
-		metaJSON, _ := json.Marshal(m.Metadata)
-		if metaJSON == nil {
-			metaJSON = []byte("{}")
+	return s.withTenant(context.Background(), tenantID, func(tx *sql.Tx) error {
+		for _, m := range msgs {
+			metaJSON, _ := json.Marshal(m.Metadata)
+			if metaJSON == nil {
+				metaJSON = []byte("{}")
+			}
+			if _, err := tx.Exec(`
+				INSERT INTO chat_messages (session_id, tenant_id, agent_id, role, content, metadata)
+				VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
+				sessionID, tenantID, agentID, m.Role, m.Content, string(metaJSON),
+			); err != nil {
+				return err
+			}
 		}
-		if _, err := tx.Exec(`
-			INSERT INTO chat_messages (session_id, tenant_id, agent_id, role, content, metadata)
-			VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
-			sessionID, tenantID, agentID, m.Role, m.Content, string(metaJSON),
-		); err != nil {
-			return err
-		}
-	}
-
-	// Bump session.updated_at so list stays sorted by most recent activity
-	if _, err := tx.Exec(`
-		UPDATE chat_sessions SET updated_at = now()
-		WHERE  id = $1 AND tenant_id = $2`,
-		sessionID, tenantID,
-	); err != nil {
+		// Bump session.updated_at so list stays sorted by most recent activity
+		_, err := tx.Exec(`
+			UPDATE chat_sessions SET updated_at = now()
+			WHERE  id = $1 AND tenant_id = $2`,
+			sessionID, tenantID,
+		)
 		return err
-	}
-
-	return tx.Commit()
+	})
 }
 
 func (s *ChatStore) deleteSession(tenantID, agentID, sessionID string) error {
-	_, err := s.db.Exec(`
-		DELETE FROM chat_sessions
-		WHERE id = $1 AND tenant_id = $2 AND agent_id = $3`,
-		sessionID, tenantID, agentID,
-	)
-	return err
+	return s.withTenant(context.Background(), tenantID, func(tx *sql.Tx) error {
+		_, err := tx.Exec(`
+			DELETE FROM chat_sessions
+			WHERE id = $1 AND tenant_id = $2 AND agent_id = $3`,
+			sessionID, tenantID, agentID,
+		)
+		return err
+	})
 }
 
-// writeRunEvent writes a single row to agent_run_events so lite-tier agent
-// runs appear on the Logs page (which reads agent_run_events, not Temporal).
-// Non-fatal: errors are logged and swallowed so they never block the chat stream.
-func (s *ChatStore) writeRunEvent(tenantID, agentID, workflowID, eventType, level, message string, durationMS int, details map[string]interface{}) {
-	detailsJSON, _ := json.Marshal(details)
-	if detailsJSON == nil {
-		detailsJSON = []byte("{}")
-	}
-	_, err := s.db.Exec(`
-		INSERT INTO agent_run_events
-			(workflow_id, run_id, tenant_id, agent_id, event_type, level, source, source_id, message, duration_ms, details)
-		VALUES ($1, '', $2, $3, $4, $5, 'system', 'lite-runner', $6, $7, $8::jsonb)`,
-		workflowID, tenantID, agentID, eventType, level, message, durationMS, string(detailsJSON),
-	)
-	if err != nil {
-		log.Printf("[ChatStore] writeRunEvent failed (non-fatal): %v", err)
-	}
-}
 
 // ── HTTP handlers ─────────────────────────────────────────────────────────────
 

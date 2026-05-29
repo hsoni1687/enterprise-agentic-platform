@@ -166,7 +166,7 @@ services:
       - "8086:8086"
     environment:
       # Remove DATABASE_URL to fall back to in-memory store.
-      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/agentplatform?sslmode=disable
+      - DATABASE_URL=postgresql://agent_app:agent_app_local_pw@postgres:5432/agentplatform?sslmode=disable
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -185,7 +185,7 @@ services:
     ports:
       - "8087:8087"
     environment:
-      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/agentplatform?sslmode=disable
+      - DATABASE_URL=postgresql://agent_app:agent_app_local_pw@postgres:5432/agentplatform?sslmode=disable
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -230,7 +230,7 @@ services:
     ports:
       - "8084:8084"
     environment:
-      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/agentplatform?sslmode=disable
+      - DATABASE_URL=postgresql://agent_app:agent_app_local_pw@postgres:5432/agentplatform?sslmode=disable
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -249,7 +249,7 @@ services:
     ports:
       - "8088:8088"
     environment:
-      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/agentplatform?sslmode=disable
+      - DATABASE_URL=postgresql://agent_app:agent_app_local_pw@postgres:5432/agentplatform?sslmode=disable
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -269,7 +269,10 @@ services:
       - "8080:8080"
     environment:
       - WORKFLOW_INITIATOR_URL=http://workflow-initiator:8081
-      - POSTGRES_URL=postgres://postgres:postgres@postgres:5432/agentplatform?sslmode=disable
+      # Connects as the non-superuser agent_app role so RLS on chat_sessions/
+      # chat_messages is enforced (migrations 032/033). Chat queries run through
+      # WithTenant; idempotency_keys/agent_run_events are granted without RLS.
+      - POSTGRES_URL=postgres://agent_app:agent_app_local_pw@postgres:5432/agentplatform?sslmode=disable
     depends_on:
       - workflow-initiator
       - postgres
@@ -293,9 +296,16 @@ services:
       - LITELLM_URL=http://litellm:4000
       - LITELLM_MASTER_KEY=sk-litellm-dev
       - SKILL_CATALOG_URL=http://skill-catalog:8087
+      # Durable HITL approval store (migration 031). Without this the service
+      # falls back to a per-replica in-memory store.
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/agentplatform?sslmode=disable
     depends_on:
-      - temporal
-      - agent-registry
+      temporal:
+        condition: service_started
+      agent-registry:
+        condition: service_started
+      migrate:
+        condition: service_completed_successfully
     networks:
       - agent-net
 
@@ -354,7 +364,10 @@ services:
     ports:
       - "8093:8093"
     environment:
-      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/agentplatform?sslmode=disable
+      # Connects as the non-superuser `agent_app` role (created in migration 029)
+      # so PostgreSQL row-level security is actually enforced on the kg_* tables.
+      # The superuser `postgres` role bypasses RLS and must NOT be used here.
+      - DATABASE_URL=postgresql://agent_app:agent_app_local_pw@postgres:5432/agentplatform?sslmode=disable
       - LLM_GATEWAY_URL=http://litellm:4000
       - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-litellm-dev}
       - EMBEDDING_MODEL=local-embedding

@@ -109,8 +109,8 @@ const INITIAL_CONFIG: AgentCoreConfig = {
   description: "",
   systemPrompt: "You are a helpful enterprise assistant.",
   model: "claude-sonnet-4-5",
-  tier: "workflow",
-  maxIterations: 20,
+  tier: "deep",
+  maxIterations: 100,
   memoryBudgetMb: 512,
 };
 

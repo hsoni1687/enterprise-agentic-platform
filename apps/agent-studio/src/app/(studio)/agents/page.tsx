@@ -796,36 +796,14 @@ const TIER_META: Record<AgentTier, {
   color: string;
   badge: string;
   examples: string[];
-  speed: number;
-  cost: number;
-  power: number;
 }> = {
-  lite: {
-    label: "Lite Agent",
-    tagline: "Fast, focused, single-purpose",
-    icon: "⚡",
-    color: "border-green-500/40 bg-green-500/5 hover:border-green-500/70",
-    badge: "bg-green-500/10 text-green-400",
-    examples: ["FAQ bot", "API caller", "Notifier", "Validator"],
-    speed: 95, cost: 95, power: 30,
-  },
-  workflow: {
-    label: "Workflow Agent",
-    tagline: "Multi-step, structured, predictable",
-    icon: "🔗",
-    color: "border-blue-500/40 bg-blue-500/5 hover:border-blue-500/70",
-    badge: "bg-blue-500/10 text-blue-400",
-    examples: ["Support router", "Deploy pipeline", "Data enrichment", "Escalation flow"],
-    speed: 55, cost: 60, power: 65,
-  },
   deep: {
-    label: "Deep Agent",
-    tagline: "Autonomous, reasoning, long-running",
+    label: "Agent",
+    tagline: "Autonomous, reasoning, Temporal-durable",
     icon: "🧠",
     color: "border-purple-500/40 bg-purple-500/5 hover:border-purple-500/70",
     badge: "bg-purple-500/10 text-purple-400",
-    examples: ["Researcher", "Autonomous debugger", "Financial analyst", "Investigator"],
-    speed: 20, cost: 25, power: 95,
+    examples: ["Researcher", "LinkedIn Writer", "Code Reviewer", "Support Agent"],
   },
 };
 
@@ -841,17 +819,17 @@ function TierBar({ label, value }: { label: string; value: number }) {
 }
 
 function TierPicker({ onSelect }: { onSelect: (tier: AgentTier) => void }) {
+  const meta = TIER_META["deep"];
   return (
     <div className="p-6 flex flex-col gap-5">
       <div>
-        <h2 className="text-lg font-semibold">What are you building?</h2>
+        <h2 className="text-lg font-semibold">Create a new agent</h2>
         <p className="text-sm text-muted-foreground mt-1">
-          Choose the agent type that matches your use case. You can change this later.
+          Every agent runs on Temporal — durable, observable, and HITL-capable by default.
         </p>
       </div>
       <div className="grid gap-3">
-        {(["lite", "workflow", "deep"] as AgentTier[]).map((tier) => {
-          const meta = TIER_META[tier];
+        {(["deep"] as AgentTier[]).map((tier) => {
           return (
             <button
               key={tier}
@@ -865,14 +843,14 @@ function TierPicker({ onSelect }: { onSelect: (tier: AgentTier) => void }) {
                   <div className="flex items-center gap-2 mb-0.5">
                     <span className="font-semibold text-sm">{meta.label}</span>
                     <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${meta.badge}`}>
-                      {tier}
+                      autonomous
                     </span>
                   </div>
                   <p className="text-xs text-muted-foreground mb-3">{meta.tagline}</p>
                   <div className="flex flex-col gap-1.5 mb-3">
-                    <TierBar label="Speed" value={meta.speed} />
-                    <TierBar label="Cost" value={meta.cost} />
-                    <TierBar label="Power" value={meta.power} />
+                    <TierBar label="Speed" value={80} />
+                    <TierBar label="Cost" value={65} />
+                    <TierBar label="Power" value={95} />
                   </div>
                   <div className="flex flex-wrap gap-1">
                     {meta.examples.map((ex) => (
@@ -1026,9 +1004,7 @@ function CreateAgentDialog({ onCreated }: { onCreated: () => void }) {
 
   function handleTierSelect(selectedTier: AgentTier) {
     setTier(selectedTier);
-    if (selectedTier === "lite") setValue("max_iterations", 1);
-    else if (selectedTier === "workflow") setValue("max_iterations", 20);
-    else setValue("max_iterations", 100);
+    setValue("max_iterations", 100);
   }
 
   return (

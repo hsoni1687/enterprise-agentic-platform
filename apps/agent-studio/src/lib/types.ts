@@ -74,8 +74,10 @@ export interface MCPServer {
 }
 
 // ── Agent Tiers ──────────────────────────────────────────────────────────────
+// All agents run as deep agents via Temporal. The tier type is kept for
+// API compatibility but the platform always normalises to "deep".
 
-export type AgentTier = "lite" | "workflow" | "deep";
+export type AgentTier = "deep";
 export type AutonomyLevel = "none" | "supervised" | "autonomous";
 
 export interface ExecutionConfig {
@@ -114,24 +116,8 @@ export interface WorkflowStep {
   next_step_id?: string;
 }
 
-/** Tier-specific defaults used when pre-filling the wizard */
+/** Default execution config — all agents are deep */
 export const TIER_DEFAULTS: Record<AgentTier, Partial<ExecutionConfig>> = {
-  lite: {
-    max_duration_seconds: 10,
-    max_tool_calls: 2,
-    max_tokens: 2000,
-    max_cost_usd: 0.01,
-    planning_mode: "none",
-  },
-  workflow: {
-    max_duration_seconds: 300,
-    max_tool_calls: 20,
-    max_tokens: 10000,
-    max_cost_usd: 0.10,
-    planning_mode: "static",
-    hitl_on_mutating: true,
-    steps: [],
-  },
   deep: {
     max_duration_seconds: 3600,
     max_tool_calls: null,
@@ -146,8 +132,6 @@ export const TIER_DEFAULTS: Record<AgentTier, Partial<ExecutionConfig>> = {
 };
 
 export const TIER_AUTONOMY: Record<AgentTier, AutonomyLevel> = {
-  lite: "none",
-  workflow: "supervised",
   deep: "autonomous",
 };
 
@@ -210,7 +194,15 @@ export interface TransitionRequest {
 }
 
 export interface ChatEvent {
-  type: "thinking" | "tool_call" | "tool_result" | "text" | "error" | "done" | "approval";
+  type:
+    | "thinking"
+    | "tool_call"
+    | "tool_result"
+    | "text"
+    | "error"
+    | "done"
+    | "approval"
+    | "clarification_request";
   content?: string;
   tool_name?: string;
   tool_args?: unknown;
@@ -218,6 +210,10 @@ export interface ChatEvent {
   timestamp?: string;
   approval_id?: string;
   reason?: string;
+  // Clarification HITL — populated on "clarification_request" events
+  question?: string;      // the question the agent is asking
+  options?: string[];     // optional clickable answer choices
+  workflow_id?: string;   // Temporal workflow ID — used to POST the answer back
   // Token usage — populated on "done" events from the ReAct loop
   tokens_in?: number;
   tokens_out?: number;

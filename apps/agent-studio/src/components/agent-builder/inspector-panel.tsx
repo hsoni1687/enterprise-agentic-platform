@@ -78,22 +78,7 @@ function AgentConfigEditor({ state }: Props) {
         />
       </div>
 
-      <div className="space-y-1.5">
-        <Label className="text-[10px] uppercase tracking-widest text-white/35">Tier</Label>
-        <Select
-          value={agentConfig.tier}
-          onValueChange={(v) => setAgentConfig({ tier: v as "lite" | "workflow" | "deep" })}
-        >
-          <SelectTrigger className="h-8 text-xs border-white/10 bg-white/5 text-white/80">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="lite">Lite — Simple, fast, low-cost</SelectItem>
-            <SelectItem value="workflow">Workflow — Supervised, step-based</SelectItem>
-            <SelectItem value="deep">Deep — Autonomous, long-horizon</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
+      {/* Tier is always "deep" — all agents run via Temporal */}
 
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-1.5">

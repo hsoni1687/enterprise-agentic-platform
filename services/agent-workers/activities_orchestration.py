@@ -288,55 +288,6 @@ Return ONLY valid JSON in this exact shape:
 }"""
 
 
-@activity.defn
-async def plan_tasks(prompt: str, context_summary: str, model: str) -> dict:
-    """
-    Call the LLM (same model as the agent) to produce a structured TaskPlan.
-    Falls back to a single LLM reasoning task if planning fails.
-    """
-    logger.info(f"[PLANNER] Planning tasks for prompt: {prompt[:80]}...")
-    wf_id, run_id = obs.workflow_ctx()
-    obs.lf_trace(wf_id, name="agent_run")
-    span  = obs.lf_span(wf_id, "planning", input_data={"prompt": prompt[:200], "model": model})
-    t0 = time.monotonic()
-
-    user_msg = f"""Available resources:
-{context_summary}
-
-User prompt:
-{prompt}"""
-
-    plan = await _json_llm_call(model, _PLANNER_SYSTEM, user_msg)
-
-    if not plan.get("tasks"):
-        logger.warning("[PLANNER] LLM returned no tasks — using fallback single-step plan")
-        plan = {
-            "tasks": [{
-                "task_id": "t1",
-                "description": prompt,
-                "resource_type": "llm",
-                "resource_name": "reasoning",
-                "resource_args": {},
-                "preconditions": [],
-                "depends_on": [],
-                "validation": "LLM produced a non-empty response",
-                "critical": True,
-            }],
-            "reasoning": "Fallback: planning did not produce tasks, executing prompt directly.",
-        }
-
-    task_count = len(plan["tasks"])
-    duration_ms = int((time.monotonic() - t0) * 1000)
-    obs.lf_end_span(span, output={"task_count": task_count, "reasoning": plan.get("reasoning", "")[:200]})
-    await obs.emit(
-        event_type="task_planned", level="info", source="agent",
-        source_id="planner", message=f"Planned {task_count} task(s) for execution",
-        workflow_id=wf_id, run_id=run_id, duration_ms=duration_ms,
-        details={"task_count": task_count, "model": model, "reasoning": plan.get("reasoning", "")[:200]},
-    )
-    obs.lf_flush()
-    logger.info(f"[PLANNER] Plan has {task_count} tasks. Reasoning: {plan.get('reasoning','')[:120]}")
-    return plan
 
 
 # ─── Guardrail enforcement ────────────────────────────────────────────────────
@@ -474,15 +425,18 @@ async def run_hooks(
         # ── audit_log (pre + post) ───────────────────────────────────────────
         elif htype == "audit_log":
             try:
+                _wf_id, _run_id = obs.workflow_ctx()
                 async with httpx.AsyncClient() as client:
                     await client.post(
                         f"{admin_url}/api/v1/admin/audit",
                         json={
-                            "tenant_id":   tenant_id,
-                            "agent_id":    agent_id,
-                            "resource":    "task",
-                            "action":      f"{phase}:{task_name}",
-                            "args_snapshot": modified_args,
+                            "tenant_id":       tenant_id,
+                            "agent_id":        agent_id,
+                            "workflow_id":     _wf_id,
+                            "run_id":          _run_id,
+                            "resource":        "task",
+                            "action":          f"{phase}:{task_name}",
+                            "args_snapshot":   modified_args,
                             "result_snapshot": result,
                         },
                         headers={"Authorization": f"Bearer {admin_key}"},
@@ -520,177 +474,10 @@ async def run_hooks(
 
 # ─── Task execution ───────────────────────────────────────────────────────────
 
-@activity.defn
-async def execute_single_task(task: dict, agent_context: dict) -> str:
-    """
-    Execute one planned task by routing to the appropriate backend service.
-
-    resource_type routing:
-      tool  → skill-dispatcher /api/v1/tools/invoke
-      skill → skill-dispatcher /api/v1/skills/{name}/invoke
-      mcp   → mcp-registry     /api/v1/mcp/servers/{server}/call
-      code  → sandbox-manager  /api/v1/execute
-      llm   → LiteLLM gateway  (OpenAI chat completions)
-
-    Returns the result as a string (serialised JSON for structured results).
-    """
-    rtype  = task.get("resource_type", "llm")
-    rname  = task.get("resource_name", "reasoning")
-    rargs  = task.get("resource_args", {})
-    tenant = agent_context.get("tenant_id", "default-tenant")
-    agent  = agent_context.get("agent_id", "unknown")
-    model  = agent_context.get("model", "mock-gpt-4o")
-
-    logger.info(f"[EXECUTE] task={task.get('task_id')} type={rtype} resource={rname}")
-
-    # ── LLM reasoning ────────────────────────────────────────────────────────
-    if rtype == "llm":
-        client, _ = _llm_client()
-        sys_prompt = agent_context.get("system_prompt", "You are a helpful assistant.")
-        user_msg   = rargs.get("prompt") or task.get("description", "")
-        try:
-            resp = await client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": sys_prompt},
-                    {"role": "user",   "content": user_msg},
-                ],
-            )
-            return resp.choices[0].message.content or ""
-        except Exception as e:
-            return f"LLM reasoning failed: {e}"
-
-    # ── Python code sandbox ───────────────────────────────────────────────────
-    if rtype == "code":
-        url = os.getenv("SANDBOX_MANAGER_URL", "http://sandbox-manager:8082/api/v1/execute")
-        try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.post(url, json={"code": rargs.get("code", "")}, timeout=30.0)
-                resp.raise_for_status()
-                return resp.json().get("result", "No output")
-        except Exception as e:
-            return f"Code execution failed: {e}"
-
-    # ── Direct tool ───────────────────────────────────────────────────────────
-    if rtype == "tool":
-        url = os.getenv("SKILL_DISPATCHER_URL", "http://skill-dispatcher:8085")
-        try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.post(
-                    f"{url}/api/v1/tools/invoke",
-                    json={"tool": {"name": rname, "version": "latest"}, "args": rargs, "agent_id": agent, "mutating": False},
-                    headers={"X-Tenant-ID": tenant},
-                    timeout=30.0,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                return json.dumps(data.get("result", data))
-        except Exception as e:
-            return f"Tool '{rname}' failed: {e}"
-
-    # ── Skill ─────────────────────────────────────────────────────────────────
-    if rtype == "skill":
-        url = os.getenv("SKILL_DISPATCHER_URL", "http://skill-dispatcher:8085")
-        try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.post(
-                    f"{url}/api/v1/skills/{rname}/invoke",
-                    json={"args": rargs, "agent_id": agent},
-                    headers={"X-Tenant-ID": tenant},
-                    timeout=30.0,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                return json.dumps(data.get("result", data))
-        except Exception as e:
-            return f"Skill '{rname}' failed: {e}"
-
-    # ── MCP tool ──────────────────────────────────────────────────────────────
-    if rtype == "mcp":
-        # rname format: "mcp__server_name__tool_name" or "server_id::tool_name"
-        mcp_url = os.getenv("MCP_REGISTRY_URL", "http://mcp-registry:8090")
-        parts = rname.split("__")
-        server_id = parts[1] if len(parts) >= 3 else rname
-        tool_name = parts[2] if len(parts) >= 3 else rname
-        try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.post(
-                    f"{mcp_url}/api/v1/mcp/servers/{server_id}/call",
-                    json={"tool_name": tool_name, "args": rargs},
-                    headers={"X-Tenant-ID": tenant},
-                    timeout=60.0,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                return json.dumps(data.get("result", data))
-        except Exception as e:
-            return f"MCP tool '{rname}' failed: {e}"
-
-    # ── Knowledge Graph semantic search ───────────────────────────────────────
-    if rtype == "kg":
-        kg_url = os.getenv("KG_SERVICE_URL", "http://kg-service:8093")
-        query = rargs.get("query", task.get("description", ""))
-        graph_ids: list[str] = agent_context.get("knowledge_graph_ids", [])
-
-        if not graph_ids:
-            return "No knowledge graphs attached to this agent."
-
-        # Fan out to each attached graph and collect results
-        results: list[str] = []
-        async with httpx.AsyncClient() as client:
-            for gid in graph_ids:
-                try:
-                    resp = await client.post(
-                        f"{kg_url}/graph/context",
-                        json={"graph_id": gid, "query": query, "top_k": 5},
-                        headers={"X-Tenant-ID": tenant},
-                        timeout=15.0,
-                    )
-                    resp.raise_for_status()
-                    data = resp.json()
-                    snippets = data.get("context") or data.get("results") or data
-                    results.append(f"[Graph {gid}]\n{json.dumps(snippets)[:800]}")
-                except Exception as e:
-                    logger.warning(f"[EXECUTE] KG graph '{gid}' search failed (non-fatal): {e}")
-                    results.append(f"[Graph {gid}] search failed: {e}")
-
-        if not results:
-            return "Knowledge graph search returned no results."
-        return "\n\n".join(results)
-
-    return f"Unknown resource_type '{rtype}'"
 
 
 # ─── Validation ───────────────────────────────────────────────────────────────
 
-@activity.defn
-async def validate_task_result(task: dict, result: str, model: str) -> dict:
-    """
-    Validate a task result against the task's validation criterion.
-    Uses the same LLM model as the agent for semantic validation.
-
-    Returns {"valid": bool, "reason": str, "confidence": "high"|"medium"|"low"}
-    """
-    criteria = task.get("validation", "")
-    if not criteria:
-        return {"valid": True, "reason": "No validation criterion — assumed ok", "confidence": "low"}
-
-    if not result or result.startswith("Error") or result.startswith("LLM reasoning failed"):
-        return {"valid": False, "reason": f"Result indicates failure: {result[:200]}", "confidence": "high"}
-
-    system = "You are a result validator. Respond only with valid JSON, no explanation outside JSON."
-    user = f"""Task: {task.get('description', '')}
-Validation criterion: {criteria}
-Actual result (first 800 chars): {result[:800]}
-
-Return JSON: {{"valid": true/false, "reason": "...", "confidence": "high"|"medium"|"low"}}"""
-
-    out = await _json_llm_call(model, system, user)
-    if not out:
-        return {"valid": True, "reason": "Validation check inconclusive — assumed ok", "confidence": "low"}
-
-    logger.info(f"[VALIDATE] task={task.get('task_id')} valid={out.get('valid')} confidence={out.get('confidence')}")
-    return out
 
 
 # ─── Failure recovery ─────────────────────────────────────────────────────────
@@ -721,53 +508,6 @@ Return ONLY valid JSON:
 }"""
 
 
-@activity.defn
-async def handle_task_failure(
-    task: dict,
-    error: str,
-    prior_results: dict,
-    context_summary: str,
-    model: str,
-) -> dict:
-    """
-    Like Claude Code: read the error, diagnose root cause, decide recovery.
-
-    Strategy:
-      - Transient / network errors  → retry_with_args
-      - Wrong arguments             → retry_with_args with corrected args
-      - Better resource exists      → use_alternative
-      - Non-critical task           → skip
-      - Critical + unrecoverable    → abort
-    """
-    logger.info(f"[RECOVERY] task={task.get('task_id')} error={error[:120]}")
-
-    user = f"""Failed task:
-{json.dumps(task, indent=2)}
-
-Error:
-{error}
-
-Prior task results (context):
-{json.dumps({k: str(v)[:200] for k, v in prior_results.items()}, indent=2)}
-
-Available resource context:
-{context_summary[:600]}"""
-
-    recovery = await _json_llm_call(model, _RECOVERY_SYSTEM, user)
-
-    if not recovery.get("recovery"):
-        # If LLM failed to produce a valid recovery, default conservatively
-        is_critical = task.get("critical", True)
-        recovery = {
-            "recovery": "abort" if is_critical else "skip",
-            "retry_args": None,
-            "alternative_resource": None,
-            "reason": "Recovery analysis produced no actionable output",
-            "message_to_context": f"Task '{task.get('description','?')}' failed: {error[:200]}",
-        }
-
-    logger.info(f"[RECOVERY] decision={recovery.get('recovery')} reason={recovery.get('reason','')[:100]}")
-    return recovery
 
 
 # ─── Dynamic replanning ───────────────────────────────────────────────────────
@@ -818,74 +558,6 @@ Return ONLY valid JSON:
 }"""
 
 
-@activity.defn
-async def replan_remaining_tasks(
-    original_prompt: str,
-    succeeded_tasks: list[dict],
-    failed_task: dict,
-    failure_reason: str,
-    failure_output: str,
-    cancelled_tasks: list[dict],
-    context_summary: str,
-    replan_n: int,
-    model: str,
-) -> dict:
-    """
-    Claude-Code-style dynamic replanning: given what succeeded, what failed and why,
-    and what was still pending, produce a revised task list to reach the original goal.
-
-    Returns the same shape as plan_tasks(): {"tasks": [...], "reasoning": "...", "give_up": bool}
-    """
-    logger.info(f"[REPLAN] replan #{replan_n} — failed task={failed_task.get('task_id')} "
-                f"reason={failure_reason[:80]}")
-
-    succeeded_summary = "\n".join(
-        f"  ✓ {t['task_id']}: {t['description']}"
-        for t in succeeded_tasks
-    ) or "  (none yet)"
-
-    cancelled_summary = "\n".join(
-        f"  - {t['task_id']}: {t['description']}"
-        for t in cancelled_tasks
-    ) or "  (none)"
-
-    user_msg = f"""Original goal:
-{original_prompt}
-
-Already succeeded (DO NOT redo):
-{succeeded_summary}
-
-Failed task:
-  ID: {failed_task.get('task_id')}
-  Description: {failed_task.get('description')}
-  Resource: {failed_task.get('resource_type')}/{failed_task.get('resource_name')}
-  Args: {json.dumps(failed_task.get('resource_args', {}))[:300]}
-
-Failure reason: {failure_reason}
-Failure output (first 400 chars): {failure_output[:400]}
-
-Cancelled tasks (were going to run next, now need replacing or merging):
-{cancelled_summary}
-
-Available resources:
-{context_summary}
-
-Replan number: {replan_n} (prefix new task IDs with "r{replan_n}_")
-
-Produce the revised remaining plan."""
-
-    plan = await _json_llm_call(model, _REPLAN_SYSTEM, user_msg)
-
-    if not plan:
-        logger.warning(f"[REPLAN] LLM returned empty — giving up")
-        return {"tasks": [], "give_up": True,
-                "reasoning": "Replanning LLM call failed to return a valid plan."}
-
-    task_count = len(plan.get("tasks") or [])
-    logger.info(f"[REPLAN] replan #{replan_n} produced {task_count} tasks. "
-                f"give_up={plan.get('give_up', False)}. "
-                f"reasoning={plan.get('reasoning','')[:120]}")
-    return plan
 
 
 # ─── Final synthesis ──────────────────────────────────────────────────────────
@@ -903,69 +575,3 @@ Your job:
 5. Be concise but complete. Use markdown formatting where it helps readability."""
 
 
-@activity.defn
-async def synthesize_final_answer(
-    prompt: str,
-    task_results: dict,
-    task_statuses: dict,
-    model: str,
-) -> str:
-    """
-    Final LLM call that synthesizes all task results into a coherent answer.
-    Analogous to Claude Code's end-of-turn summary — but richer.
-    """
-    results_text = ""
-    for tid, status in task_statuses.items():
-        result_val = task_results.get(tid, "")
-        results_text += f"\n[{tid}] status={status}\n{str(result_val)[:500]}\n"
-
-    user = f"""Original user prompt:
-{prompt}
-
-Task execution results:
-{results_text}
-
-Synthesize the final answer."""
-
-    wf_id, run_id = obs.workflow_ctx()
-    obs.lf_trace(wf_id, name="agent_run")
-    span  = obs.lf_span(wf_id, "synthesis", input_data={"tasks": len(task_statuses), "model": model})
-    t0 = time.monotonic()
-    client, _ = _llm_client()
-    try:
-        resp = await client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": _SYNTHESIS_SYSTEM},
-                {"role": "user",   "content": user},
-            ],
-            extra_body=obs.lf_metadata(wf_id, step_name="synthesis"),
-        )
-        answer = resp.choices[0].message.content or ""
-        duration_ms = int((time.monotonic() - t0) * 1000)
-        succeeded_count = sum(1 for s in task_statuses.values() if s == "succeeded")
-        obs.lf_end_span(span, output={"answer_len": len(answer), "succeeded_tasks": succeeded_count})
-        await obs.emit(
-            event_type="agent_completed", level="success", source="agent",
-            source_id="synthesizer", message=f"Agent completed — {succeeded_count}/{len(task_statuses)} tasks succeeded",
-            workflow_id=wf_id, run_id=run_id, duration_ms=duration_ms,
-            details={"answer_len": len(answer), "task_statuses": task_statuses},
-        )
-        obs.lf_flush()
-        logger.info(f"[SYNTHESIS] Final answer length: {len(answer)} chars")
-        return answer
-    except Exception as e:
-        duration_ms = int((time.monotonic() - t0) * 1000)
-        obs.lf_end_span(span, output={"error": str(e)}, level="ERROR")
-        await obs.emit(
-            event_type="agent_completed", level="error", source="agent",
-            source_id="synthesizer", message=f"Agent synthesis failed: {e}",
-            workflow_id=wf_id, run_id=run_id, duration_ms=duration_ms,
-        )
-        obs.lf_flush()
-        logger.error(f"[SYNTHESIS] Failed: {e}")
-        # Fall back: concatenate succeeded results
-        succeeded = {tid: task_results[tid] for tid, s in task_statuses.items() if s == "succeeded"}
-        if succeeded:
-            return "\n\n".join(str(v) for v in succeeded.values())
-        return f"Agent execution completed but synthesis failed: {e}"

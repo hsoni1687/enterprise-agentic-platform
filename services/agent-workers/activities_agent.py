@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 import time
 from typing import Optional
 from temporalio import activity
@@ -88,12 +89,22 @@ async def discover_mcp_tools(server_ids: list[str], tenant_id: str) -> list[dict
                     data = resp.json()
 
                     for tool in data.get("tools", []):
+                        # Sanitise server_name: Anthropic tool names must match
+                        # ^[a-zA-Z0-9_-]{1,128}$ — replace spaces/dots with underscores.
+                        raw_server = tool.get('server_name', 'unknown')
+                        safe_server = re.sub(r'[^a-zA-Z0-9_-]', '_', raw_server)
+                        safe_tool   = re.sub(r'[^a-zA-Z0-9_-]', '_', tool['name'])
+                        tool_name   = f"mcp__{safe_server}__{safe_tool}"[:128]
+
+                        # Ensure inputSchema is never None (crashes LiteLLM)
+                        schema = tool.get("inputSchema") or {"type": "object", "properties": {}}
+
                         tool_def = {
                             "type": "function",
                             "function": {
-                                "name": f"mcp__{tool.get('server_name', 'unknown')}__{tool['name']}",
+                                "name":        tool_name,
                                 "description": tool.get("description", ""),
-                                "parameters": tool.get("inputSchema", {}),
+                                "parameters":  schema,
                             },
                             "__mcp_meta": {
                                 "server_id": server_id,
@@ -316,7 +327,16 @@ async def reasoning_step(messages: list[dict], model: str, tool_defs: Optional[l
     """
     logging.info(f"[REASONING_STEP] Called with model={model}")
 
-    tools = tool_defs if tool_defs is not None else [_default_execute_code_tool()]
+    raw_tools = tool_defs if tool_defs is not None else [_default_execute_code_tool()]
+    # Sanitise tool definitions: LiteLLM crashes with AttributeError if inputSchema/parameters
+    # is None. Ensure every tool has at least an empty object schema.
+    tools = []
+    for t in raw_tools:
+        fn = t.get("function", {})
+        if fn.get("parameters") is None:
+            fn = dict(fn, parameters={"type": "object", "properties": {}})
+            t = dict(t, function=fn)
+        tools.append(t)
     logging.info(f"Calling LLM (model={model}, tools={[t['function']['name'] for t in tools]})")
     logging.info(f"[DEBUG] Messages structure: {json.dumps(messages, indent=2, default=str)}")
 
@@ -860,6 +880,50 @@ async def execute_react_tool(
 
 
 # ── Workflow-level event emitter ───────────────────────────────────────────────
+
+@activity.defn
+async def register_hitl_approval(
+    approval_id: str,
+    workflow_id: str,
+    agent_id: str,
+    tenant_id: str,
+    tool_name: str,
+    tool_args: dict,
+    reason: str,
+) -> bool:
+    """
+    Register a pending HITL approval in the workflow-initiator's durable store,
+    using the workflow-supplied approval_id so the id emitted over SSE is the
+    same id an operator approves/denies. Without this, the orchestrated path's
+    approvals are invisible to GET /api/v1/approvals/pending and the approve
+    endpoint cannot map the id back to a workflow to signal.
+
+    Best-effort: a failure here must not crash the run. The workflow still waits
+    on its Temporal signal; the operator can also approve via the live event
+    stream. Returns True on successful registration.
+    """
+    initiator_url = os.getenv("WORKFLOW_INITIATOR_URL", "http://workflow-initiator:8081")
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{initiator_url}/api/v1/approvals",
+                json={
+                    "approval_id": approval_id,
+                    "workflow_id": workflow_id,
+                    "agent_id": agent_id,
+                    "tool_name": tool_name,
+                    "tool_args": tool_args,
+                    "reason": reason,
+                },
+                headers={"X-Tenant-ID": tenant_id},
+                timeout=10.0,
+            )
+            resp.raise_for_status()
+            return True
+    except Exception as e:
+        activity.logger.warning(f"[HITL] register_hitl_approval failed for {approval_id}: {e}")
+        return False
+
 
 @activity.defn
 async def emit_run_event(

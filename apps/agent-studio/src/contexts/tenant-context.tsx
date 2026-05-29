@@ -23,18 +23,21 @@ const TenantContext = createContext<TenantCtx | null>(null);
 
 export function TenantProvider({ children }: { children: React.ReactNode }) {
   const queryClient = useQueryClient();
-  const [tenantId, _setTenantId] = useState<string>(() => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem(STORAGE_KEY) ?? getRuntimeTenant();
-    }
-    return getRuntimeTenant();
-  });
+  // Use a stable SSR-safe initial value. Reading localStorage in the useState
+  // initializer causes a hydration mismatch because the server has no window.
+  const [tenantId, _setTenantId] = useState<string>(getRuntimeTenant());
   const [availableTenants, setAvailableTenants] = useState<Tenant[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Sync initial tenant into api module on mount; setTenantId handles updates
+  // After hydration, sync from localStorage (client-only).
+  // Also pushes the resolved tenant into the api module.
   useEffect(() => {
-    setRuntimeTenant(tenantId);
+    const stored = localStorage.getItem(STORAGE_KEY);
+    const resolved = stored ?? getRuntimeTenant();
+    if (resolved !== tenantId) {
+      _setTenantId(resolved);
+    }
+    setRuntimeTenant(resolved);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

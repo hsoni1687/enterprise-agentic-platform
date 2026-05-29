@@ -832,7 +832,7 @@ You answer customer questions clearly, help resolve common issues, and escalate 
      'local-chat', 20, 128, 'draft',
      '["gr-pii-block","gr-prompt-injection","gr-toxic-content"]',
      '[]',
-     'lite', 'supervised', 'Customer support agent with clear escalation paths and empathetic communication',
+     'deep', 'supervised', 'Customer support agent with clear escalation paths and empathetic communication',
      '["support","customer-service"]'),
 
     -- ── Data Analyst (SQL demo version) ──────────────────────────────────────
@@ -1120,7 +1120,7 @@ INSERT INTO kg_nodes (id, graph_id, tenant_id, node_type, label, properties) VAL
     ('00000000-000a-0000-0000-000000000010','00000000-0000-0000-000a-000000000000','platform-system','Infrastructure','LiteLLM Proxy','{"description":"Unified LLM API gateway. All agent LLM calls route here for model routing, cost tracking, and Langfuse observability.","port":4000,"models":["claude","gpt-4","llama","ollama"]}'),
     ('00000000-000a-0000-0000-000000000011','00000000-0000-0000-000a-000000000000','platform-system','Infrastructure','pgvector','{"description":"PostgreSQL extension for vector similarity search. Powers agent memory recall and KG semantic search.","index":"HNSW","dimension":1536}'),
     -- How-to concepts
-    ('00000000-000a-0000-0000-000000000012','00000000-0000-0000-000a-000000000000','platform-system','HowTo','How to Create an Agent','{"steps":["1. Define system_prompt with role and constraints","2. Choose tier (lite/workflow/deep)","3. Attach skills from the catalog","4. Select guardrails (pii-block, prompt-injection are recommended)","5. Link knowledge graphs for domain context","6. Set autonomy_level (supervised for sensitive, autonomous for trusted tasks)","7. Transition: draft → staged → active"]}'),
+    ('00000000-000a-0000-0000-000000000012','00000000-0000-0000-000a-000000000000','platform-system','HowTo','How to Create an Agent','{"steps":["1. Define system_prompt with role and constraints","2. Attach skills from the catalog","3. Select guardrails (pii-block, prompt-injection are recommended)","4. Link knowledge graphs for domain context","5. Set autonomy_level (supervised for sensitive, autonomous for trusted tasks)","6. Transition: draft → staged → active"]}'),
     ('00000000-000a-0000-0000-000000000013','00000000-0000-0000-000a-000000000000','platform-system','HowTo','How to Create a Skill','{"steps":["1. Identify the tools the skill needs","2. Write an SOP (standard operating procedure) describing the step-by-step logic","3. Set mutating=true if the skill writes data","4. Set approval_required=true for high-risk mutations","5. Register via Admin API: POST /api/v1/admin/system-skills"]}'),
     ('00000000-000a-0000-0000-000000000014','00000000-0000-0000-000a-000000000000','platform-system','HowTo','How to Add a Knowledge Graph','{"steps":["1. Create graph: POST /graphs/create with name, domain, description","2. Add nodes: POST /nodes/create for each entity","3. Add edges: POST /edges/create for each relationship","4. Link to agent: update agent.knowledge_graph_ids with graph UUID","5. KG chunks are auto-injected into agent context at runtime"]}')
 ON CONFLICT (graph_id, label) DO NOTHING;
@@ -1192,11 +1192,14 @@ INSERT INTO agents (
 5. **Story** — Specific moment → Conflict → Resolution → Lesson
 
 ## Process
-1. Ask or infer: topic, target audience, tone (professional/casual/bold), and format
-2. If the topic needs facts, stats, or recent context → use web-research
-3. Write the post: hook + body + CTA
-4. Add 5-8 relevant hashtags at the end (mix of broad and niche)
-5. Offer a shorter/longer version if useful
+1. **If the topic is clear** → write immediately. Do not ask questions first.
+2. **If the topic is genuinely ambiguous** (e.g. single word with many angles) → ask ONE focused question and STOP. Do not answer your own question or default to an option. Wait for the user''s reply.
+   Good example: "Great topic! Quick question — do you want this security-focused, builder-focused, or a hot take? Reply with your choice and I''ll write it right away."
+   Bad example: "I''ll default to Option 3 since..." (never do this without being asked)
+3. If facts, stats, or recent context would strengthen the post → use web-research
+4. Write the post: hook + body + CTA
+5. Add 5-8 relevant hashtags at the end (mix of broad and niche)
+6. Offer a shorter/longer version if useful
 
 ## Length
 - Standard: 150-300 words (optimal engagement)
@@ -1212,7 +1215,7 @@ INSERT INTO agents (
     'claude-sonnet-4-5', 10, 128, 'active',
     '["gr-prompt-injection","gr-toxic-content","gr-off-topic"]',
     '["00000000-0000-0000-0007-000000000000","00000000-0000-0000-0008-000000000000"]',
-    'lite', 'autonomous',
+    'deep', 'autonomous',
     'Expert LinkedIn content creator for any topic — hooks, stories, how-tos, hot takes, and more',
     '["content","linkedin","writing","marketing"]'
 ) ON CONFLICT (id) DO UPDATE SET

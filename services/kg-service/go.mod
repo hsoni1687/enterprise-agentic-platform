@@ -3,6 +3,7 @@ module github.com/agent-platform/kg-service
 go 1.24.6
 
 require (
+	github.com/agent-platform/go-shared v0.0.0-00010101000000-000000000000
 	github.com/lib/pq v1.12.3
 	github.com/pgvector/pgvector-go v0.1.1
 )

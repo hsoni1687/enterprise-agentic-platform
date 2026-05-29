@@ -8,7 +8,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"sync"
 	"time"
 
 	"github.com/agent-platform/go-shared/pkg/models"
@@ -16,34 +15,7 @@ import (
 	"github.com/coder/websocket/wsjson"
 )
 
-// IdempotencyStore deduplicates inbound webhook events by idempotency key.
-type IdempotencyStore interface {
-	Get(key string) (*models.IdempotencyEntry, bool)
-	Set(key string, entry models.IdempotencyEntry)
-}
-
-// InMemoryIdempotencyStore is a thread-safe, sync.Map-backed implementation.
-// Keys are never evicted; use a Redis-backed store in production for TTL support.
-type InMemoryIdempotencyStore struct {
-	m sync.Map
-}
-
-func NewInMemoryIdempotencyStore() *InMemoryIdempotencyStore {
-	return &InMemoryIdempotencyStore{}
-}
-
-func (s *InMemoryIdempotencyStore) Get(key string) (*models.IdempotencyEntry, bool) {
-	v, ok := s.m.Load(key)
-	if !ok {
-		return nil, false
-	}
-	e := v.(models.IdempotencyEntry)
-	return &e, true
-}
-
-func (s *InMemoryIdempotencyStore) Set(key string, entry models.IdempotencyEntry) {
-	s.m.Store(key, entry)
-}
+// IdempotencyStore and its implementations live in idempotency.go.
 
 // GatewayHandler handles requests to the API Gateway.
 type GatewayHandler struct {
@@ -66,18 +38,44 @@ func (h *GatewayHandler) HandleTriggerAgent(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Return cached workflow ID for duplicate idempotency keys (NFR9).
-	if h.IdempotencyStore != nil && triggerReq.IdempotencyKey != "" {
-		if cached, ok := h.IdempotencyStore.Get(triggerReq.IdempotencyKey); ok {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(models.TriggerResponse{
-				WorkflowID: cached.WorkflowID,
-				RunID:      cached.RunID,
-				Status:     "RUNNING",
-			})
+	tenantID := r.Header.Get("X-Tenant-ID")
+	if tenantID == "" {
+		tenantID = "default-tenant"
+	}
+
+	// Idempotency (NFR9): atomically reserve the key BEFORE doing any work so
+	// two concurrent requests with the same key can't both start a workflow.
+	committed := false
+	idempotent := h.IdempotencyStore != nil && triggerReq.IdempotencyKey != ""
+	if idempotent {
+		existing, claimed, err := h.IdempotencyStore.Reserve(r.Context(), tenantID, triggerReq.IdempotencyKey)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("idempotency reservation failed: %v", err), http.StatusInternalServerError)
 			return
 		}
+		if !claimed {
+			// Another request owns this key. If it already produced a workflow,
+			// return that (the idempotent replay). Otherwise it's still in-flight.
+			if existing != nil && existing.WorkflowID != "" {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				json.NewEncoder(w).Encode(models.TriggerResponse{
+					WorkflowID: existing.WorkflowID,
+					RunID:      existing.RunID,
+					Status:     "RUNNING",
+				})
+				return
+			}
+			w.Header().Set("Retry-After", "1")
+			http.Error(w, "a request with this idempotency key is already being processed", http.StatusConflict)
+			return
+		}
+		// We won the claim — on any failure below, release so a retry can re-claim.
+		defer func() {
+			if !committed {
+				_ = h.IdempotencyStore.Release(r.Context(), tenantID, triggerReq.IdempotencyKey)
+			}
+		}()
 	}
 
 	startReq := models.StartSessionRequest{
@@ -114,13 +112,14 @@ func (h *GatewayHandler) HandleTriggerAgent(w http.ResponseWriter, r *http.Reque
 		Status:     sessionStatus.Status,
 	}
 
-	// Cache the result for future duplicate requests.
-	if h.IdempotencyStore != nil && triggerReq.IdempotencyKey != "" {
-		h.IdempotencyStore.Set(triggerReq.IdempotencyKey, models.IdempotencyEntry{
-			WorkflowID: sessionStatus.WorkflowID,
-			RunID:      sessionStatus.RunID,
-			CreatedAt:  time.Now(),
-		})
+	// Record the result against the reserved key so duplicate requests replay it.
+	if idempotent {
+		if err := h.IdempotencyStore.Complete(r.Context(), tenantID, triggerReq.IdempotencyKey,
+			sessionStatus.WorkflowID, sessionStatus.RunID); err != nil {
+			log.Printf("[gateway] idempotency complete failed for key %s: %v", triggerReq.IdempotencyKey, err)
+		} else {
+			committed = true // suppress the deferred Release
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -231,18 +230,6 @@ func (h *GatewayHandler) HandleChatStream(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// For lite-tier agents the workflow-initiator never writes to agent_run_events
-	// (it bypasses Temporal entirely).  Write a start event now so the run appears
-	// on the Logs page even before it completes.
-	runStartTime := time.Now()
-	if h.ChatStore != nil && session.WorkflowID != "" {
-		h.ChatStore.writeRunEvent(tenantID, agentID, session.WorkflowID,
-			"agent_started", "info",
-			fmt.Sprintf("lite agent run started (agent=%s)", agentID),
-			0, map[string]interface{}{"tier": "lite", "prompt_preview": message[:min(len(message), 120)]},
-		)
-	}
-
 	// Set SSE response headers.
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -298,17 +285,10 @@ func (h *GatewayHandler) HandleChatStream(w http.ResponseWriter, r *http.Request
 					flusher.Flush()
 				}
 				// Check if workflow is terminal.
+				log.Printf("[SSE_POLL] status=%s terminal=%v", pr.Status, terminal[pr.Status])
 				if terminal[pr.Status] {
-					durationMS := int(time.Since(runStartTime).Milliseconds())
 					if pr.Status != "COMPLETED" {
 						writeEvent(models.AgentEvent{Type: "error", Content: pr.Status})
-						if h.ChatStore != nil && session.WorkflowID != "" {
-							h.ChatStore.writeRunEvent(tenantID, agentID, session.WorkflowID,
-								"agent_failed", "error",
-								fmt.Sprintf("lite agent run failed: %s", pr.Status),
-								durationMS, map[string]interface{}{"status": pr.Status},
-							)
-						}
 					} else {
 						// Guarantee the client receives a "done" sentinel even if the workflow
 						// emitted it in a poll cycle that was already consumed.  The chat UI
@@ -323,13 +303,6 @@ func (h *GatewayHandler) HandleChatStream(w http.ResponseWriter, r *http.Request
 						}
 						if !alreadyDone {
 							writeEvent(models.AgentEvent{Type: "done"})
-						}
-						if h.ChatStore != nil && session.WorkflowID != "" {
-							h.ChatStore.writeRunEvent(tenantID, agentID, session.WorkflowID,
-								"agent_completed", "success",
-								fmt.Sprintf("lite agent run completed (agent=%s)", agentID),
-								durationMS, map[string]interface{}{"status": "COMPLETED"},
-							)
 						}
 					}
 					flusher.Flush()

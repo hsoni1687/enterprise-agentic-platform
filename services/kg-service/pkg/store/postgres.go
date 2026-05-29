@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 
+	shareddb "github.com/agent-platform/go-shared/pkg/db"
 	"github.com/lib/pq"
 	"github.com/pgvector/pgvector-go"
 )
@@ -23,45 +24,65 @@ func NewPostgresStore(db *sql.DB) (*PostgresStore, error) {
 	return &PostgresStore{db: db}, nil
 }
 
+// withTenant runs fn inside a transaction with app.tenant_id set to tenantID so
+// that row-level security policies on the kg_* tables are enforced. Every
+// tenant-scoped query in this store goes through here; a query that bypasses it
+// would run with no tenant set and (under RLS) see nothing.
+func (ps *PostgresStore) withTenant(ctx context.Context, tenantID string, fn func(tx *sql.Tx) error) error {
+	return shareddb.WithTenant(ctx, ps.db, tenantID, fn)
+}
+
 // ============== Graphs ==============
 
 func (ps *PostgresStore) CreateGraph(ctx context.Context, g *Graph) (*Graph, error) {
-	tenantID := ctx.Value("tenant_id")
-	if tenantID == nil {
+	tenantID, _ := ctx.Value("tenant_id").(string)
+	if tenantID == "" {
 		return nil, errors.New("tenant_id not in context")
 	}
 
 	schemaJSON, _ := json.Marshal(g.Schema)
 	sharedWithArray := pq.Array(g.SharedWith)
 
-	var schemaBytes []byte
-	err := ps.db.QueryRowContext(ctx,
-		`INSERT INTO kg_graphs (tenant_id, name, domain, description, scope, shared_with, schema)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		RETURNING id, tenant_id, name, domain, description, scope, shared_with, schema, created_at, updated_at`,
-		tenantID, g.Name, g.Domain, g.Description, g.Scope, sharedWithArray, string(schemaJSON),
-	).Scan(&g.ID, &g.TenantID, &g.Name, &g.Domain, &g.Description, &g.Scope, pq.Array(&g.SharedWith), &schemaBytes, &g.CreatedAt, &g.UpdatedAt)
-
+	err := ps.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		var schemaBytes []byte
+		e := tx.QueryRowContext(ctx,
+			`INSERT INTO kg_graphs (tenant_id, name, domain, description, scope, shared_with, schema)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
+			RETURNING id, tenant_id, name, domain, description, scope, shared_with, schema, created_at, updated_at`,
+			tenantID, g.Name, g.Domain, g.Description, g.Scope, sharedWithArray, string(schemaJSON),
+		).Scan(&g.ID, &g.TenantID, &g.Name, &g.Domain, &g.Description, &g.Scope, pq.Array(&g.SharedWith), &schemaBytes, &g.CreatedAt, &g.UpdatedAt)
+		if e != nil {
+			return e
+		}
+		json.Unmarshal(schemaBytes, &g.Schema)
+		return nil
+	})
 	if err != nil {
 		if err.Error() == "pq: duplicate key value violates unique constraint \"kg_graphs_tenant_id_name_key\"" {
 			return nil, fmt.Errorf("graph with name %q already exists in this tenant", g.Name)
 		}
 		return nil, err
 	}
-	json.Unmarshal(schemaBytes, &g.Schema)
 	return g, nil
 }
 
 func (ps *PostgresStore) GetGraph(ctx context.Context, tenantID, graphID string) (*Graph, error) {
 	g := &Graph{}
-	var schemaBytes []byte
-	err := ps.db.QueryRowContext(ctx,
-		`SELECT id, tenant_id, name, domain, description, scope, shared_with, schema, created_at, updated_at
-		FROM kg_graphs
-		WHERE id = $1
-		  AND (tenant_id = $2 OR (tenant_id = 'platform-system' AND scope = 'shared'))`,
-		graphID, tenantID,
-	).Scan(&g.ID, &g.TenantID, &g.Name, &g.Domain, &g.Description, &g.Scope, pq.Array(&g.SharedWith), &schemaBytes, &g.CreatedAt, &g.UpdatedAt)
+	err := ps.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		var schemaBytes []byte
+		e := tx.QueryRowContext(ctx,
+			`SELECT id, tenant_id, name, domain, description, scope, shared_with, schema, created_at, updated_at
+			FROM kg_graphs
+			WHERE id = $1
+			  AND (tenant_id = $2 OR (tenant_id = 'platform-system' AND scope = 'shared'))`,
+			graphID, tenantID,
+		).Scan(&g.ID, &g.TenantID, &g.Name, &g.Domain, &g.Description, &g.Scope, pq.Array(&g.SharedWith), &schemaBytes, &g.CreatedAt, &g.UpdatedAt)
+		if e != nil {
+			return e
+		}
+		json.Unmarshal(schemaBytes, &g.Schema)
+		return nil
+	})
 
 	if err == sql.ErrNoRows {
 		return nil, errors.New("graph not found")
@@ -69,47 +90,50 @@ func (ps *PostgresStore) GetGraph(ctx context.Context, tenantID, graphID string)
 	if err != nil {
 		return nil, err
 	}
-
-	json.Unmarshal(schemaBytes, &g.Schema)
 	return g, nil
 }
 
 func (ps *PostgresStore) ListGraphs(ctx context.Context, tenantID string) ([]*Graph, error) {
-	rows, err := ps.db.QueryContext(ctx,
-		`SELECT id, tenant_id, name, domain, description, scope, shared_with, schema, created_at, updated_at
-		FROM kg_graphs
-		WHERE tenant_id = $1
-		   OR (tenant_id = 'platform-system' AND scope = 'shared')
-		ORDER BY created_at DESC`,
-		tenantID,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
 	var graphs []*Graph
-	for rows.Next() {
-		g := &Graph{}
-		var schemaBytes []byte
-		if err := rows.Scan(&g.ID, &g.TenantID, &g.Name, &g.Domain, &g.Description, &g.Scope, pq.Array(&g.SharedWith), &schemaBytes, &g.CreatedAt, &g.UpdatedAt); err != nil {
-			return nil, err
+	err := ps.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		rows, e := tx.QueryContext(ctx,
+			`SELECT id, tenant_id, name, domain, description, scope, shared_with, schema, created_at, updated_at
+			FROM kg_graphs
+			WHERE tenant_id = $1
+			   OR (tenant_id = 'platform-system' AND scope = 'shared')
+			ORDER BY created_at DESC`,
+			tenantID,
+		)
+		if e != nil {
+			return e
 		}
-		json.Unmarshal(schemaBytes, &g.Schema)
-		graphs = append(graphs, g)
-	}
-	return graphs, rows.Err()
+		defer rows.Close()
+
+		for rows.Next() {
+			g := &Graph{}
+			var schemaBytes []byte
+			if e := rows.Scan(&g.ID, &g.TenantID, &g.Name, &g.Domain, &g.Description, &g.Scope, pq.Array(&g.SharedWith), &schemaBytes, &g.CreatedAt, &g.UpdatedAt); e != nil {
+				return e
+			}
+			json.Unmarshal(schemaBytes, &g.Schema)
+			graphs = append(graphs, g)
+		}
+		return rows.Err()
+	})
+	return graphs, err
 }
 
 func (ps *PostgresStore) UpdateGraph(ctx context.Context, g *Graph) (*Graph, error) {
 	schemaJSON, _ := json.Marshal(g.Schema)
 
-	err := ps.db.QueryRowContext(ctx,
-		`UPDATE kg_graphs SET name = $1, domain = $2, description = $3, schema = $4, updated_at = now()
-		WHERE id = $5 AND tenant_id = $6
-		RETURNING id, tenant_id, name, domain, description, scope, shared_with, schema, created_at, updated_at`,
-		g.Name, g.Domain, g.Description, string(schemaJSON), g.ID, g.TenantID,
-	).Scan(&g.ID, &g.TenantID, &g.Name, &g.Domain, &g.Description, &g.Scope, pq.Array(&g.SharedWith), &g.Schema, &g.CreatedAt, &g.UpdatedAt)
+	err := ps.withTenant(ctx, g.TenantID, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx,
+			`UPDATE kg_graphs SET name = $1, domain = $2, description = $3, schema = $4, updated_at = now()
+			WHERE id = $5 AND tenant_id = $6
+			RETURNING id, tenant_id, name, domain, description, scope, shared_with, schema, created_at, updated_at`,
+			g.Name, g.Domain, g.Description, string(schemaJSON), g.ID, g.TenantID,
+		).Scan(&g.ID, &g.TenantID, &g.Name, &g.Domain, &g.Description, &g.Scope, pq.Array(&g.SharedWith), &g.Schema, &g.CreatedAt, &g.UpdatedAt)
+	})
 
 	if err == sql.ErrNoRows {
 		return nil, errors.New("graph not found")
@@ -119,20 +143,24 @@ func (ps *PostgresStore) UpdateGraph(ctx context.Context, g *Graph) (*Graph, err
 
 func (ps *PostgresStore) UpdateGraphScope(ctx context.Context, tenantID, graphID string, scope string, sharedWith []string) error {
 	sharedWithArray := pq.Array(sharedWith)
-	_, err := ps.db.ExecContext(ctx,
-		`UPDATE kg_graphs SET scope = $1, shared_with = $2, updated_at = now()
-		WHERE id = $3 AND tenant_id = $4`,
-		scope, sharedWithArray, graphID, tenantID,
-	)
-	return err
+	return ps.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx,
+			`UPDATE kg_graphs SET scope = $1, shared_with = $2, updated_at = now()
+			WHERE id = $3 AND tenant_id = $4`,
+			scope, sharedWithArray, graphID, tenantID,
+		)
+		return err
+	})
 }
 
 func (ps *PostgresStore) DeleteGraph(ctx context.Context, tenantID, graphID string) error {
-	_, err := ps.db.ExecContext(ctx,
-		`DELETE FROM kg_graphs WHERE id = $1 AND tenant_id = $2`,
-		graphID, tenantID,
-	)
-	return err
+	return ps.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx,
+			`DELETE FROM kg_graphs WHERE id = $1 AND tenant_id = $2`,
+			graphID, tenantID,
+		)
+		return err
+	})
 }
 
 // ============== Nodes ==============
@@ -145,29 +173,41 @@ func (ps *PostgresStore) CreateNode(ctx context.Context, n *Node) (*Node, error)
 		embeddingSQL = n.Embedding
 	}
 
-	var propsBytes []byte
-	err := ps.db.QueryRowContext(ctx,
-		`INSERT INTO kg_nodes (graph_id, tenant_id, node_type, label, properties, embedding)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		RETURNING id, graph_id, tenant_id, node_type, label, properties, embedding, created_at, updated_at`,
-		n.GraphID, n.TenantID, n.NodeType, n.Label, string(propsJSON), embeddingSQL,
-	).Scan(&n.ID, &n.GraphID, &n.TenantID, &n.NodeType, &n.Label, &propsBytes, &n.Embedding, &n.CreatedAt, &n.UpdatedAt)
-
+	err := ps.withTenant(ctx, n.TenantID, func(tx *sql.Tx) error {
+		var propsBytes []byte
+		e := tx.QueryRowContext(ctx,
+			`INSERT INTO kg_nodes (graph_id, tenant_id, node_type, label, properties, embedding)
+			VALUES ($1, $2, $3, $4, $5, $6)
+			RETURNING id, graph_id, tenant_id, node_type, label, properties, embedding, created_at, updated_at`,
+			n.GraphID, n.TenantID, n.NodeType, n.Label, string(propsJSON), embeddingSQL,
+		).Scan(&n.ID, &n.GraphID, &n.TenantID, &n.NodeType, &n.Label, &propsBytes, &n.Embedding, &n.CreatedAt, &n.UpdatedAt)
+		if e != nil {
+			return e
+		}
+		json.Unmarshal(propsBytes, &n.Properties)
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	json.Unmarshal(propsBytes, &n.Properties)
 	return n, nil
 }
 
 func (ps *PostgresStore) GetNode(ctx context.Context, tenantID, nodeID string) (*Node, error) {
 	n := &Node{}
-	var propsBytes []byte
-	err := ps.db.QueryRowContext(ctx,
-		`SELECT id, graph_id, tenant_id, node_type, label, properties, embedding, created_at, updated_at
-		FROM kg_nodes WHERE id = $1 AND tenant_id = $2`,
-		nodeID, tenantID,
-	).Scan(&n.ID, &n.GraphID, &n.TenantID, &n.NodeType, &n.Label, &propsBytes, &n.Embedding, &n.CreatedAt, &n.UpdatedAt)
+	err := ps.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		var propsBytes []byte
+		e := tx.QueryRowContext(ctx,
+			`SELECT id, graph_id, tenant_id, node_type, label, properties, embedding, created_at, updated_at
+			FROM kg_nodes WHERE id = $1 AND tenant_id = $2`,
+			nodeID, tenantID,
+		).Scan(&n.ID, &n.GraphID, &n.TenantID, &n.NodeType, &n.Label, &propsBytes, &n.Embedding, &n.CreatedAt, &n.UpdatedAt)
+		if e != nil {
+			return e
+		}
+		json.Unmarshal(propsBytes, &n.Properties)
+		return nil
+	})
 
 	if err == sql.ErrNoRows {
 		return nil, errors.New("node not found")
@@ -175,56 +215,60 @@ func (ps *PostgresStore) GetNode(ctx context.Context, tenantID, nodeID string) (
 	if err != nil {
 		return nil, err
 	}
-	json.Unmarshal(propsBytes, &n.Properties)
 	return n, nil
 }
 
 func (ps *PostgresStore) ListNodes(ctx context.Context, tenantID, graphID string) ([]*Node, error) {
-	var rows *sql.Rows
-	var err error
-
-	if graphID != "" {
-		rows, err = ps.db.QueryContext(ctx,
-			`SELECT id, graph_id, tenant_id, node_type, label, properties, embedding, created_at, updated_at
-			FROM kg_nodes
-			WHERE graph_id = $1
-			  AND (tenant_id = $2 OR tenant_id = 'platform-system')
-			ORDER BY created_at DESC`,
-			graphID, tenantID,
-		)
-	} else {
-		rows, err = ps.db.QueryContext(ctx,
-			`SELECT id, graph_id, tenant_id, node_type, label, properties, embedding, created_at, updated_at
-			FROM kg_nodes
-			WHERE tenant_id = $1 OR tenant_id = 'platform-system'
-			ORDER BY created_at DESC`,
-			tenantID,
-		)
-	}
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
 	var nodes []*Node
-	for rows.Next() {
-		n := &Node{}
-		var propsBytes []byte
-		if err := rows.Scan(&n.ID, &n.GraphID, &n.TenantID, &n.NodeType, &n.Label, &propsBytes, &n.Embedding, &n.CreatedAt, &n.UpdatedAt); err != nil {
-			return nil, err
+	err := ps.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		var rows *sql.Rows
+		var e error
+
+		if graphID != "" {
+			rows, e = tx.QueryContext(ctx,
+				`SELECT id, graph_id, tenant_id, node_type, label, properties, embedding, created_at, updated_at
+				FROM kg_nodes
+				WHERE graph_id = $1
+				  AND (tenant_id = $2 OR tenant_id = 'platform-system')
+				ORDER BY created_at DESC`,
+				graphID, tenantID,
+			)
+		} else {
+			rows, e = tx.QueryContext(ctx,
+				`SELECT id, graph_id, tenant_id, node_type, label, properties, embedding, created_at, updated_at
+				FROM kg_nodes
+				WHERE tenant_id = $1 OR tenant_id = 'platform-system'
+				ORDER BY created_at DESC`,
+				tenantID,
+			)
 		}
-		json.Unmarshal(propsBytes, &n.Properties)
-		nodes = append(nodes, n)
-	}
-	return nodes, rows.Err()
+		if e != nil {
+			return e
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			n := &Node{}
+			var propsBytes []byte
+			if e := rows.Scan(&n.ID, &n.GraphID, &n.TenantID, &n.NodeType, &n.Label, &propsBytes, &n.Embedding, &n.CreatedAt, &n.UpdatedAt); e != nil {
+				return e
+			}
+			json.Unmarshal(propsBytes, &n.Properties)
+			nodes = append(nodes, n)
+		}
+		return rows.Err()
+	})
+	return nodes, err
 }
 
 func (ps *PostgresStore) DeleteNode(ctx context.Context, tenantID, nodeID string) error {
-	_, err := ps.db.ExecContext(ctx,
-		`DELETE FROM kg_nodes WHERE id = $1 AND tenant_id = $2`,
-		nodeID, tenantID,
-	)
-	return err
+	return ps.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx,
+			`DELETE FROM kg_nodes WHERE id = $1 AND tenant_id = $2`,
+			nodeID, tenantID,
+		)
+		return err
+	})
 }
 
 // ============== Edges ==============
@@ -232,29 +276,41 @@ func (ps *PostgresStore) DeleteNode(ctx context.Context, tenantID, nodeID string
 func (ps *PostgresStore) CreateEdge(ctx context.Context, e *Edge) (*Edge, error) {
 	propsJSON, _ := json.Marshal(e.Properties)
 
-	var propsBytes []byte
-	err := ps.db.QueryRowContext(ctx,
-		`INSERT INTO kg_edges (graph_id, tenant_id, from_node_id, to_node_id, relationship_type, properties, weight)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		RETURNING id, graph_id, tenant_id, from_node_id, to_node_id, relationship_type, properties, weight, created_at, updated_at`,
-		e.GraphID, e.TenantID, e.FromNodeID, e.ToNodeID, e.RelationshipType, string(propsJSON), e.Weight,
-	).Scan(&e.ID, &e.GraphID, &e.TenantID, &e.FromNodeID, &e.ToNodeID, &e.RelationshipType, &propsBytes, &e.Weight, &e.CreatedAt, &e.UpdatedAt)
-
+	err := ps.withTenant(ctx, e.TenantID, func(tx *sql.Tx) error {
+		var propsBytes []byte
+		ie := tx.QueryRowContext(ctx,
+			`INSERT INTO kg_edges (graph_id, tenant_id, from_node_id, to_node_id, relationship_type, properties, weight)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
+			RETURNING id, graph_id, tenant_id, from_node_id, to_node_id, relationship_type, properties, weight, created_at, updated_at`,
+			e.GraphID, e.TenantID, e.FromNodeID, e.ToNodeID, e.RelationshipType, string(propsJSON), e.Weight,
+		).Scan(&e.ID, &e.GraphID, &e.TenantID, &e.FromNodeID, &e.ToNodeID, &e.RelationshipType, &propsBytes, &e.Weight, &e.CreatedAt, &e.UpdatedAt)
+		if ie != nil {
+			return ie
+		}
+		json.Unmarshal(propsBytes, &e.Properties)
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	json.Unmarshal(propsBytes, &e.Properties)
 	return e, nil
 }
 
 func (ps *PostgresStore) GetEdge(ctx context.Context, tenantID, edgeID string) (*Edge, error) {
 	e := &Edge{}
-	var propsBytes []byte
-	err := ps.db.QueryRowContext(ctx,
-		`SELECT id, graph_id, tenant_id, from_node_id, to_node_id, relationship_type, properties, weight, created_at, updated_at
-		FROM kg_edges WHERE id = $1 AND tenant_id = $2`,
-		edgeID, tenantID,
-	).Scan(&e.ID, &e.GraphID, &e.TenantID, &e.FromNodeID, &e.ToNodeID, &e.RelationshipType, &propsBytes, &e.Weight, &e.CreatedAt, &e.UpdatedAt)
+	err := ps.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		var propsBytes []byte
+		ie := tx.QueryRowContext(ctx,
+			`SELECT id, graph_id, tenant_id, from_node_id, to_node_id, relationship_type, properties, weight, created_at, updated_at
+			FROM kg_edges WHERE id = $1 AND tenant_id = $2`,
+			edgeID, tenantID,
+		).Scan(&e.ID, &e.GraphID, &e.TenantID, &e.FromNodeID, &e.ToNodeID, &e.RelationshipType, &propsBytes, &e.Weight, &e.CreatedAt, &e.UpdatedAt)
+		if ie != nil {
+			return ie
+		}
+		json.Unmarshal(propsBytes, &e.Properties)
+		return nil
+	})
 
 	if err == sql.ErrNoRows {
 		return nil, errors.New("edge not found")
@@ -262,91 +318,101 @@ func (ps *PostgresStore) GetEdge(ctx context.Context, tenantID, edgeID string) (
 	if err != nil {
 		return nil, err
 	}
-	json.Unmarshal(propsBytes, &e.Properties)
 	return e, nil
 }
 
 func (ps *PostgresStore) ListEdges(ctx context.Context, tenantID, graphID string) ([]*Edge, error) {
-	rows, err := ps.db.QueryContext(ctx,
-		`SELECT id, graph_id, tenant_id, from_node_id, to_node_id, relationship_type, properties, weight, created_at, updated_at
-		FROM kg_edges
-		WHERE graph_id = $1
-		  AND (tenant_id = $2 OR tenant_id = 'platform-system')
-		ORDER BY created_at DESC`,
-		graphID, tenantID,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
 	var edges []*Edge
-	for rows.Next() {
-		e := &Edge{}
-		var propsBytes []byte
-		if err := rows.Scan(&e.ID, &e.GraphID, &e.TenantID, &e.FromNodeID, &e.ToNodeID, &e.RelationshipType, &propsBytes, &e.Weight, &e.CreatedAt, &e.UpdatedAt); err != nil {
-			return nil, err
+	err := ps.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		rows, ie := tx.QueryContext(ctx,
+			`SELECT id, graph_id, tenant_id, from_node_id, to_node_id, relationship_type, properties, weight, created_at, updated_at
+			FROM kg_edges
+			WHERE graph_id = $1
+			  AND (tenant_id = $2 OR tenant_id = 'platform-system')
+			ORDER BY created_at DESC`,
+			graphID, tenantID,
+		)
+		if ie != nil {
+			return ie
 		}
-		json.Unmarshal(propsBytes, &e.Properties)
-		edges = append(edges, e)
-	}
-	return edges, rows.Err()
+		defer rows.Close()
+
+		for rows.Next() {
+			e := &Edge{}
+			var propsBytes []byte
+			if se := rows.Scan(&e.ID, &e.GraphID, &e.TenantID, &e.FromNodeID, &e.ToNodeID, &e.RelationshipType, &propsBytes, &e.Weight, &e.CreatedAt, &e.UpdatedAt); se != nil {
+				return se
+			}
+			json.Unmarshal(propsBytes, &e.Properties)
+			edges = append(edges, e)
+		}
+		return rows.Err()
+	})
+	return edges, err
 }
 
 func (ps *PostgresStore) ListEdgesFrom(ctx context.Context, tenantID, fromNodeID string) ([]*Edge, error) {
-	rows, err := ps.db.QueryContext(ctx,
-		`SELECT id, graph_id, tenant_id, from_node_id, to_node_id, relationship_type, properties, weight, created_at, updated_at
-		FROM kg_edges WHERE from_node_id = $1 AND tenant_id = $2 ORDER BY created_at DESC`,
-		fromNodeID, tenantID,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
 	var edges []*Edge
-	for rows.Next() {
-		e := &Edge{}
-		var propsBytes []byte
-		if err := rows.Scan(&e.ID, &e.GraphID, &e.TenantID, &e.FromNodeID, &e.ToNodeID, &e.RelationshipType, &propsBytes, &e.Weight, &e.CreatedAt, &e.UpdatedAt); err != nil {
-			return nil, err
+	err := ps.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		rows, ie := tx.QueryContext(ctx,
+			`SELECT id, graph_id, tenant_id, from_node_id, to_node_id, relationship_type, properties, weight, created_at, updated_at
+			FROM kg_edges WHERE from_node_id = $1 AND tenant_id = $2 ORDER BY created_at DESC`,
+			fromNodeID, tenantID,
+		)
+		if ie != nil {
+			return ie
 		}
-		json.Unmarshal(propsBytes, &e.Properties)
-		edges = append(edges, e)
-	}
-	return edges, rows.Err()
+		defer rows.Close()
+
+		for rows.Next() {
+			e := &Edge{}
+			var propsBytes []byte
+			if se := rows.Scan(&e.ID, &e.GraphID, &e.TenantID, &e.FromNodeID, &e.ToNodeID, &e.RelationshipType, &propsBytes, &e.Weight, &e.CreatedAt, &e.UpdatedAt); se != nil {
+				return se
+			}
+			json.Unmarshal(propsBytes, &e.Properties)
+			edges = append(edges, e)
+		}
+		return rows.Err()
+	})
+	return edges, err
 }
 
 func (ps *PostgresStore) ListEdgesTo(ctx context.Context, tenantID, toNodeID string) ([]*Edge, error) {
-	rows, err := ps.db.QueryContext(ctx,
-		`SELECT id, graph_id, tenant_id, from_node_id, to_node_id, relationship_type, properties, weight, created_at, updated_at
-		FROM kg_edges WHERE to_node_id = $1 AND tenant_id = $2 ORDER BY created_at DESC`,
-		toNodeID, tenantID,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
 	var edges []*Edge
-	for rows.Next() {
-		e := &Edge{}
-		var propsBytes []byte
-		if err := rows.Scan(&e.ID, &e.GraphID, &e.TenantID, &e.FromNodeID, &e.ToNodeID, &e.RelationshipType, &propsBytes, &e.Weight, &e.CreatedAt, &e.UpdatedAt); err != nil {
-			return nil, err
+	err := ps.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		rows, ie := tx.QueryContext(ctx,
+			`SELECT id, graph_id, tenant_id, from_node_id, to_node_id, relationship_type, properties, weight, created_at, updated_at
+			FROM kg_edges WHERE to_node_id = $1 AND tenant_id = $2 ORDER BY created_at DESC`,
+			toNodeID, tenantID,
+		)
+		if ie != nil {
+			return ie
 		}
-		json.Unmarshal(propsBytes, &e.Properties)
-		edges = append(edges, e)
-	}
-	return edges, rows.Err()
+		defer rows.Close()
+
+		for rows.Next() {
+			e := &Edge{}
+			var propsBytes []byte
+			if se := rows.Scan(&e.ID, &e.GraphID, &e.TenantID, &e.FromNodeID, &e.ToNodeID, &e.RelationshipType, &propsBytes, &e.Weight, &e.CreatedAt, &e.UpdatedAt); se != nil {
+				return se
+			}
+			json.Unmarshal(propsBytes, &e.Properties)
+			edges = append(edges, e)
+		}
+		return rows.Err()
+	})
+	return edges, err
 }
 
 func (ps *PostgresStore) DeleteEdge(ctx context.Context, tenantID, edgeID string) error {
-	_, err := ps.db.ExecContext(ctx,
-		`DELETE FROM kg_edges WHERE id = $1 AND tenant_id = $2`,
-		edgeID, tenantID,
-	)
-	return err
+	return ps.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx,
+			`DELETE FROM kg_edges WHERE id = $1 AND tenant_id = $2`,
+			edgeID, tenantID,
+		)
+		return err
+	})
 }
 
 // ============== Query ==============
@@ -375,117 +441,131 @@ func (ps *PostgresStore) QueryGraph(ctx context.Context, tenantID, graphID, star
 	FROM traversal
 	`
 
-	rows, err := ps.db.QueryContext(ctx, query, startNodeID, graphID, tenantID, maxDepth)
+	err := ps.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		rows, e := tx.QueryContext(ctx, query, startNodeID, graphID, tenantID, maxDepth)
+		if e != nil {
+			return e
+		}
+		defer rows.Close()
+
+		nodeIDs := make(map[string]bool)
+		for rows.Next() {
+			n := &Node{}
+			var propsBytes []byte
+			if se := rows.Scan(&n.ID, &n.GraphID, &n.TenantID, &n.NodeType, &n.Label, &propsBytes, &n.Embedding, &n.CreatedAt, &n.UpdatedAt); se != nil {
+				return se
+			}
+			json.Unmarshal(propsBytes, &n.Properties)
+			nodes = append(nodes, n)
+			nodeIDs[n.ID] = true
+		}
+		if e := rows.Err(); e != nil {
+			return e
+		}
+
+		// Get all edges between traversed nodes
+		edgeRows, e := tx.QueryContext(ctx,
+			`SELECT id, graph_id, tenant_id, from_node_id, to_node_id, relationship_type, properties, weight, created_at, updated_at
+			FROM kg_edges
+			WHERE graph_id = $1 AND tenant_id = $2`,
+			graphID, tenantID,
+		)
+		if e != nil {
+			return e
+		}
+		defer edgeRows.Close()
+
+		for edgeRows.Next() {
+			ed := &Edge{}
+			var propsBytes []byte
+			if se := edgeRows.Scan(&ed.ID, &ed.GraphID, &ed.TenantID, &ed.FromNodeID, &ed.ToNodeID, &ed.RelationshipType, &propsBytes, &ed.Weight, &ed.CreatedAt, &ed.UpdatedAt); se != nil {
+				return se
+			}
+			json.Unmarshal(propsBytes, &ed.Properties)
+			if nodeIDs[ed.FromNodeID] && nodeIDs[ed.ToNodeID] {
+				edges = append(edges, ed)
+			}
+		}
+		return edgeRows.Err()
+	})
 	if err != nil {
 		return nil, nil, err
 	}
-	defer rows.Close()
-
-	nodeIDs := make(map[string]bool)
-	for rows.Next() {
-		n := &Node{}
-		var propsBytes []byte
-		if err := rows.Scan(&n.ID, &n.GraphID, &n.TenantID, &n.NodeType, &n.Label, &propsBytes, &n.Embedding, &n.CreatedAt, &n.UpdatedAt); err != nil {
-			return nil, nil, err
-		}
-		json.Unmarshal(propsBytes, &n.Properties)
-		nodes = append(nodes, n)
-		nodeIDs[n.ID] = true
-	}
-
-	// Get all edges between traversed nodes
-	edgeRows, err := ps.db.QueryContext(ctx,
-		`SELECT id, graph_id, tenant_id, from_node_id, to_node_id, relationship_type, properties, weight, created_at, updated_at
-		FROM kg_edges
-		WHERE graph_id = $1 AND tenant_id = $2`,
-		graphID, tenantID,
-	)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer edgeRows.Close()
-
-	for edgeRows.Next() {
-		e := &Edge{}
-		var propsBytes []byte
-		if err := edgeRows.Scan(&e.ID, &e.GraphID, &e.TenantID, &e.FromNodeID, &e.ToNodeID, &e.RelationshipType, &propsBytes, &e.Weight, &e.CreatedAt, &e.UpdatedAt); err != nil {
-			return nil, nil, err
-		}
-		json.Unmarshal(propsBytes, &e.Properties)
-		if nodeIDs[e.FromNodeID] && nodeIDs[e.ToNodeID] {
-			edges = append(edges, e)
-		}
-	}
-
-	return nodes, edges, edgeRows.Err()
+	return nodes, edges, nil
 }
 
 func (ps *PostgresStore) SearchNodes(ctx context.Context, tenantID, graphID, nodeType string, limit int) ([]*Node, error) {
-	rows, err := ps.db.QueryContext(ctx,
-		`SELECT id, graph_id, tenant_id, node_type, label, properties, embedding, created_at, updated_at
-		FROM kg_nodes
-		WHERE graph_id = $1 AND tenant_id = $2 AND node_type = $3
-		ORDER BY created_at DESC
-		LIMIT $4`,
-		graphID, tenantID, nodeType, limit,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
 	var nodes []*Node
-	for rows.Next() {
-		n := &Node{}
-		var propsBytes []byte
-		if err := rows.Scan(&n.ID, &n.GraphID, &n.TenantID, &n.NodeType, &n.Label, &propsBytes, &n.Embedding, &n.CreatedAt, &n.UpdatedAt); err != nil {
-			return nil, err
+	err := ps.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		rows, e := tx.QueryContext(ctx,
+			`SELECT id, graph_id, tenant_id, node_type, label, properties, embedding, created_at, updated_at
+			FROM kg_nodes
+			WHERE graph_id = $1 AND tenant_id = $2 AND node_type = $3
+			ORDER BY created_at DESC
+			LIMIT $4`,
+			graphID, tenantID, nodeType, limit,
+		)
+		if e != nil {
+			return e
 		}
-		json.Unmarshal(propsBytes, &n.Properties)
-		nodes = append(nodes, n)
-	}
-	return nodes, rows.Err()
+		defer rows.Close()
+
+		for rows.Next() {
+			n := &Node{}
+			var propsBytes []byte
+			if se := rows.Scan(&n.ID, &n.GraphID, &n.TenantID, &n.NodeType, &n.Label, &propsBytes, &n.Embedding, &n.CreatedAt, &n.UpdatedAt); se != nil {
+				return se
+			}
+			json.Unmarshal(propsBytes, &n.Properties)
+			nodes = append(nodes, n)
+		}
+		return rows.Err()
+	})
+	return nodes, err
 }
 
 func (ps *PostgresStore) SearchNodesByEmbedding(ctx context.Context, tenantID, graphID string, embedding pgvector.Vector, limit int) ([]*Node, error) {
-	var rows *sql.Rows
-	var err error
-
-	if graphID != "" {
-		rows, err = ps.db.QueryContext(ctx,
-			`SELECT id, graph_id, tenant_id, node_type, label, properties, embedding, created_at, updated_at
-			FROM kg_nodes
-			WHERE graph_id = $1 AND tenant_id = $2 AND embedding IS NOT NULL
-			ORDER BY embedding <=> $3
-			LIMIT $4`,
-			graphID, tenantID, embedding, limit,
-		)
-	} else {
-		rows, err = ps.db.QueryContext(ctx,
-			`SELECT id, graph_id, tenant_id, node_type, label, properties, embedding, created_at, updated_at
-			FROM kg_nodes
-			WHERE tenant_id = $1 AND embedding IS NOT NULL
-			ORDER BY embedding <=> $2
-			LIMIT $3`,
-			tenantID, embedding, limit,
-		)
-	}
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
 	var nodes []*Node
-	for rows.Next() {
-		n := &Node{}
-		var propsBytes []byte
-		if err := rows.Scan(&n.ID, &n.GraphID, &n.TenantID, &n.NodeType, &n.Label, &propsBytes, &n.Embedding, &n.CreatedAt, &n.UpdatedAt); err != nil {
-			return nil, err
+	err := ps.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		var rows *sql.Rows
+		var e error
+
+		if graphID != "" {
+			rows, e = tx.QueryContext(ctx,
+				`SELECT id, graph_id, tenant_id, node_type, label, properties, embedding, created_at, updated_at
+				FROM kg_nodes
+				WHERE graph_id = $1 AND tenant_id = $2 AND embedding IS NOT NULL
+				ORDER BY embedding <=> $3
+				LIMIT $4`,
+				graphID, tenantID, embedding, limit,
+			)
+		} else {
+			rows, e = tx.QueryContext(ctx,
+				`SELECT id, graph_id, tenant_id, node_type, label, properties, embedding, created_at, updated_at
+				FROM kg_nodes
+				WHERE tenant_id = $1 AND embedding IS NOT NULL
+				ORDER BY embedding <=> $2
+				LIMIT $3`,
+				tenantID, embedding, limit,
+			)
 		}
-		json.Unmarshal(propsBytes, &n.Properties)
-		nodes = append(nodes, n)
-	}
-	return nodes, rows.Err()
+		if e != nil {
+			return e
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			n := &Node{}
+			var propsBytes []byte
+			if se := rows.Scan(&n.ID, &n.GraphID, &n.TenantID, &n.NodeType, &n.Label, &propsBytes, &n.Embedding, &n.CreatedAt, &n.UpdatedAt); se != nil {
+				return se
+			}
+			json.Unmarshal(propsBytes, &n.Properties)
+			nodes = append(nodes, n)
+		}
+		return rows.Err()
+	})
+	return nodes, err
 }
 
 // stopWords is a small set of common English words not useful for entity lookup.
@@ -548,31 +628,36 @@ func (ps *PostgresStore) SearchNodesByKeyword(ctx context.Context, tenantID, gra
 		strings.Join(conditions, " OR "), limit,
 	)
 
-	rows, err := ps.db.QueryContext(ctx, q, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
 	var nodes []*Node
-	for rows.Next() {
-		n := &Node{}
-		var propsBytes []byte
-		if err := rows.Scan(&n.ID, &n.GraphID, &n.TenantID, &n.NodeType, &n.Label, &propsBytes, &n.Embedding, &n.CreatedAt, &n.UpdatedAt); err != nil {
-			return nil, err
+	err := ps.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		rows, e := tx.QueryContext(ctx, q, args...)
+		if e != nil {
+			return e
 		}
-		json.Unmarshal(propsBytes, &n.Properties)
-		nodes = append(nodes, n)
-	}
-	return nodes, rows.Err()
+		defer rows.Close()
+
+		for rows.Next() {
+			n := &Node{}
+			var propsBytes []byte
+			if se := rows.Scan(&n.ID, &n.GraphID, &n.TenantID, &n.NodeType, &n.Label, &propsBytes, &n.Embedding, &n.CreatedAt, &n.UpdatedAt); se != nil {
+				return se
+			}
+			json.Unmarshal(propsBytes, &n.Properties)
+			nodes = append(nodes, n)
+		}
+		return rows.Err()
+	})
+	return nodes, err
 }
 
 func (ps *PostgresStore) UpdateNodeEmbedding(ctx context.Context, tenantID, nodeID string, embedding pgvector.Vector) error {
-	_, err := ps.db.ExecContext(ctx,
-		`UPDATE kg_nodes SET embedding = $1, updated_at = now() WHERE id = $2 AND tenant_id = $3`,
-		embedding, nodeID, tenantID,
-	)
-	return err
+	return ps.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx,
+			`UPDATE kg_nodes SET embedding = $1, updated_at = now() WHERE id = $2 AND tenant_id = $3`,
+			embedding, nodeID, tenantID,
+		)
+		return err
+	})
 }
 
 func (ps *PostgresStore) Health(ctx context.Context) error {

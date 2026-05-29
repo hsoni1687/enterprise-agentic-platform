@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 
+	shareddb "github.com/agent-platform/go-shared/pkg/db"
 	"github.com/agent-platform/go-shared/pkg/models"
 )
 
@@ -22,6 +23,12 @@ func NewPostgresStore(db *sql.DB) (*PostgresStore, error) {
 		return nil, fmt.Errorf("ping db: %w", err)
 	}
 	return &PostgresStore{db: db}, nil
+}
+
+// withTenant runs fn inside a transaction with app.tenant_id set, so row-level
+// security on agents/lifecycle_events is enforced for this tenant.
+func (s *PostgresStore) withTenant(ctx context.Context, tenantID string, fn func(tx *sql.Tx) error) error {
+	return shareddb.WithTenant(ctx, s.db, tenantID, fn)
 }
 
 func (s *PostgresStore) Create(ctx context.Context, rec *AgentRecord) error {
@@ -37,33 +44,44 @@ func (s *PostgresStore) Create(ctx context.Context, rec *AgentRecord) error {
 	hookIDs, _ := json.Marshal(rec.HookIDs)
 	kgIDs, _ := json.Marshal(rec.KnowledgeGraphIDs)
 
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO agents
-			(id, tenant_id, name, version, description, system_prompt,
-			 skills, tools, mcp_servers, model,
-			 max_iterations, memory_budget_mb, status, created_at,
-			 tier, autonomy_level, execution_config,
-			 tags, template_id, guardrail_ids, hook_ids, knowledge_graph_ids)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
-		rec.ID, rec.TenantID, rec.Name, rec.Version, rec.Description, rec.SystemPrompt,
-		skills, tools, mcpServers, rec.Model,
-		rec.MaxIterations, rec.MemoryBudgetMB, string(rec.Status), rec.CreatedAt,
-		string(rec.Tier), string(rec.AutonomyLevel), execConfig,
-		tags, nullableString(rec.TemplateID), guardrailIDs, hookIDs, kgIDs,
-	)
-	return err
+	return s.withTenant(ctx, rec.TenantID, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO agents
+				(id, tenant_id, name, version, description, system_prompt,
+				 skills, tools, mcp_servers, model,
+				 max_iterations, memory_budget_mb, status, created_at,
+				 tier, autonomy_level, execution_config,
+				 tags, template_id, guardrail_ids, hook_ids, knowledge_graph_ids)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
+			rec.ID, rec.TenantID, rec.Name, rec.Version, rec.Description, rec.SystemPrompt,
+			skills, tools, mcpServers, rec.Model,
+			rec.MaxIterations, rec.MemoryBudgetMB, string(rec.Status), rec.CreatedAt,
+			string(rec.Tier), string(rec.AutonomyLevel), execConfig,
+			tags, nullableString(rec.TemplateID), guardrailIDs, hookIDs, kgIDs,
+		)
+		return err
+	})
 }
 
 func (s *PostgresStore) GetByID(ctx context.Context, id, tenantID string) (*AgentRecord, error) {
-	row := s.db.QueryRowContext(ctx, `
-		SELECT id, tenant_id, name, version, description, system_prompt,
-		       skills, tools, mcp_servers, model,
-		       max_iterations, memory_budget_mb, status, created_at,
-		       tier, autonomy_level, execution_config,
-		       tags, template_id, guardrail_ids, hook_ids, knowledge_graph_ids
-		FROM agents
-		WHERE id = $1 AND tenant_id = $2`, id, tenantID)
-	return scanAgent(row)
+	var rec *AgentRecord
+	err := s.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		row := tx.QueryRowContext(ctx, `
+			SELECT id, tenant_id, name, version, description, system_prompt,
+			       skills, tools, mcp_servers, model,
+			       max_iterations, memory_budget_mb, status, created_at,
+			       tier, autonomy_level, execution_config,
+			       tags, template_id, guardrail_ids, hook_ids, knowledge_graph_ids
+			FROM agents
+			WHERE id = $1 AND tenant_id = $2`, id, tenantID)
+		var e error
+		rec, e = scanAgent(row)
+		return e
+	})
+	if err != nil {
+		return nil, err
+	}
+	return rec, nil
 }
 
 func (s *PostgresStore) List(ctx context.Context, f ListFilter) ([]*AgentRecord, error) {
@@ -85,21 +103,23 @@ func (s *PostgresStore) List(ctx context.Context, f ListFilter) ([]*AgentRecord,
 	}
 	q += " ORDER BY created_at DESC"
 
-	rows, err := s.db.QueryContext(ctx, q, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
 	var out []*AgentRecord
-	for rows.Next() {
-		rec, err := scanAgent(rows)
+	err := s.withTenant(ctx, f.TenantID, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, q, args...)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		out = append(out, rec)
-	}
-	return out, rows.Err()
+		defer rows.Close()
+		for rows.Next() {
+			rec, err := scanAgent(rows)
+			if err != nil {
+				return err
+			}
+			out = append(out, rec)
+		}
+		return rows.Err()
+	})
+	return out, err
 }
 
 func (s *PostgresStore) Update(ctx context.Context, rec *AgentRecord) error {
@@ -114,30 +134,31 @@ func (s *PostgresStore) Update(ctx context.Context, rec *AgentRecord) error {
 	hookIDs, _ := json.Marshal(rec.HookIDs)
 	kgIDs, _ := json.Marshal(rec.KnowledgeGraphIDs)
 
-	res, err := s.db.ExecContext(ctx, `
-		UPDATE agents
-		SET name=$1, version=$2, description=$3, system_prompt=$4,
-		    skills=$5, tools=$6, mcp_servers=$7, model=$8,
-		    max_iterations=$9, memory_budget_mb=$10, status=$11,
-		    tier=$12, autonomy_level=$13, execution_config=$14,
-		    tags=$15, template_id=$16, guardrail_ids=$17, hook_ids=$18,
-		    knowledge_graph_ids=$19
-		WHERE id=$20 AND tenant_id=$21`,
-		rec.Name, rec.Version, rec.Description, rec.SystemPrompt,
-		skills, tools, mcpServers, rec.Model,
-		rec.MaxIterations, rec.MemoryBudgetMB, string(rec.Status),
-		string(rec.Tier), string(rec.AutonomyLevel), execConfig,
-		tags, nullableString(rec.TemplateID), guardrailIDs, hookIDs, kgIDs,
-		rec.ID, rec.TenantID,
-	)
-	if err != nil {
-		return err
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return s.withTenant(ctx, rec.TenantID, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, `
+			UPDATE agents
+			SET name=$1, version=$2, description=$3, system_prompt=$4,
+			    skills=$5, tools=$6, mcp_servers=$7, model=$8,
+			    max_iterations=$9, memory_budget_mb=$10, status=$11,
+			    tier=$12, autonomy_level=$13, execution_config=$14,
+			    tags=$15, template_id=$16, guardrail_ids=$17, hook_ids=$18,
+			    knowledge_graph_ids=$19
+			WHERE id=$20 AND tenant_id=$21`,
+			rec.Name, rec.Version, rec.Description, rec.SystemPrompt,
+			skills, tools, mcpServers, rec.Model,
+			rec.MaxIterations, rec.MemoryBudgetMB, string(rec.Status),
+			string(rec.Tier), string(rec.AutonomyLevel), execConfig,
+			tags, nullableString(rec.TemplateID), guardrailIDs, hookIDs, kgIDs,
+			rec.ID, rec.TenantID,
+		)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return ErrNotFound
+		}
+		return nil
+	})
 }
 
 func (s *PostgresStore) Transition(ctx context.Context, id, tenantID string, target models.ResourceStatus, actor string) error {
@@ -148,46 +169,39 @@ func (s *PostgresStore) Transition(ctx context.Context, id, tenantID string, tar
 	if err := validateTransition(rec.Status, target); err != nil {
 		return err
 	}
-	res, err := s.db.ExecContext(ctx,
-		`UPDATE agents SET status=$1 WHERE id=$2 AND tenant_id=$3`,
-		string(target), id, tenantID,
-	)
-	if err != nil {
+	return s.withTenant(ctx, tenantID, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx,
+			`UPDATE agents SET status=$1 WHERE id=$2 AND tenant_id=$3`,
+			string(target), id, tenantID,
+		)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return ErrNotFound
+		}
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO lifecycle_events (resource_type, resource_id, tenant_id, from_state, to_state, actor)
+			VALUES ('agent', $1, $2, $3, $4, $5)`,
+			id, tenantID, string(rec.Status), string(target), actor,
+		)
 		return err
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return ErrNotFound
-	}
-	s.db.ExecContext(ctx, `
-		INSERT INTO lifecycle_events (resource_type, resource_id, tenant_id, from_state, to_state, actor)
-		VALUES ('agent', $1, $2, $3, $4, $5)`,
-		id, tenantID, string(rec.Status), string(target), actor,
-	)
-	return nil
+	})
 }
 
-// applyTierDefaults fills in Tier-derived defaults if not already set by the caller.
+// applyTierDefaults fills in defaults. All agents are deep — tier field is
+// normalised to "deep" regardless of what the caller provides.
 func applyTierDefaults(rec *AgentRecord) {
-	if rec.Tier == "" {
-		rec.Tier = models.AgentTierDeep
-	}
+	rec.Tier = models.AgentTierDeep // always deep
 	if rec.AutonomyLevel == "" {
-		rec.AutonomyLevel = models.TierAutonomy(rec.Tier)
+		rec.AutonomyLevel = models.AutonomyAutonomous
 	}
 	cfg := rec.ExecutionConfig
 	if cfg.MaxDurationSeconds == 0 && cfg.MaxTokens == 0 {
 		rec.ExecutionConfig = models.TierDefaults(rec.Tier)
 	}
 	if rec.MaxIterations == 0 {
-		switch rec.Tier {
-		case models.AgentTierLite:
-			rec.MaxIterations = 1
-		case models.AgentTierWorkflow:
-			rec.MaxIterations = 20
-		default:
-			rec.MaxIterations = 100
-		}
+		rec.MaxIterations = 100
 	}
 }
 
