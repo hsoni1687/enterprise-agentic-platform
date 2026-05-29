@@ -40,6 +40,10 @@ class AgentWorkflow:
         explicit_mcp         = manifest.get("mcp_servers") or []
         autonomy_level       = manifest.get("autonomy_level", "none")
         knowledge_graph_ids  = manifest.get("knowledge_graph_ids") or []
+        # None means key was absent (legacy agent) → activity falls back to all-enabled.
+        # A list (even []) means the wizard explicitly configured per-agent guardrails/hooks.
+        guardrail_ids = manifest.get("guardrail_ids")   # Optional[list]
+        hook_ids      = manifest.get("hook_ids")         # Optional[list]
 
         workflow.logger.info(f"[WORKFLOW] agent={agent_id} model={model} autonomy={autonomy_level}")
 
@@ -54,7 +58,7 @@ class AgentWorkflow:
         return await self._orchestrated_run(
             agent_id, tenant_id, prompt, system_prompt, model,
             max_iterations, skills, direct_tools, explicit_mcp,
-            autonomy_level, knowledge_graph_ids,
+            autonomy_level, knowledge_graph_ids, guardrail_ids, hook_ids,
         )
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -74,6 +78,8 @@ class AgentWorkflow:
         explicit_mcp: list,
         autonomy_level: str = "none",
         knowledge_graph_ids: list = None,
+        guardrail_ids: Optional[list] = None,
+        hook_ids: Optional[list] = None,
     ) -> str:
         if knowledge_graph_ids is None:
             knowledge_graph_ids = []
@@ -102,13 +108,13 @@ class AgentWorkflow:
         )
         guardrails_handle = workflow.start_activity(
             "load_active_guardrails",
-            args=[agent_id, tenant_id],
+            args=[agent_id, tenant_id, guardrail_ids],   # pass per-agent IDs (None = legacy fallback)
             start_to_close_timeout=timedelta(seconds=10),
             retry_policy=RetryPolicy(maximum_attempts=1),
         )
         hooks_handle     = workflow.start_activity(
             "load_active_hooks",
-            args=[agent_id, tenant_id],
+            args=[agent_id, tenant_id, hook_ids],         # pass per-agent IDs (None = legacy fallback)
             start_to_close_timeout=timedelta(seconds=10),
             retry_policy=RetryPolicy(maximum_attempts=1),
         )
@@ -187,6 +193,7 @@ class AgentWorkflow:
             "mcp_tool_defs":  mcp_tool_defs,
             "guardrails":     guardrails,
             "hooks":          hooks,
+            "knowledge_graph_ids": knowledge_graph_ids,   # Fix 4c: wire KGs into execute_single_task
             "approved_hitl_tools": {},
         }
 
@@ -203,6 +210,7 @@ class AgentWorkflow:
             f"Skills: {skill_names}\n"
             f"MCP tools: {mcp_names}\n"
             f"Active guardrails: {guardrail_names}\n"
+            f"Knowledge graphs (use resource_type='kg', resource_name='kg_search'): {knowledge_graph_ids}\n"
             f"Agent system prompt (excerpt): {system_prompt[:400]}"
         )
 
@@ -224,8 +232,11 @@ class AgentWorkflow:
                 guardrails=guardrails,
                 hooks=hooks,
                 agent_context={
-                    "agent_id": agent_id, "tenant_id": tenant_id,
-                    "model": model, "system_prompt": system_prompt,
+                    "agent_id":            agent_id,
+                    "tenant_id":           tenant_id,
+                    "model":               model,
+                    "system_prompt":       system_prompt,
+                    "knowledge_graph_ids": knowledge_graph_ids,   # Fix 4f: KG search in ReAct loop
                 },
             )
 
@@ -419,7 +430,32 @@ class AgentWorkflow:
                             raw_result      = None
                             break
 
-                        # For abort/use_alternative: fall through to replanning below
+                        elif decision == "use_alternative" and recovery.get("alternative_resource"):
+                            # Patch the task to use the suggested alternative resource and retry.
+                            # The LLM may return "type/name", "type__name", or just a tool name.
+                            alt = recovery["alternative_resource"]
+                            if "/" in alt:
+                                rtype_alt, rname_alt = alt.split("/", 1)
+                                task["resource_type"] = rtype_alt.strip()
+                                task["resource_name"] = rname_alt.strip()
+                            elif alt.startswith(("tool__", "skill__", "mcp__", "kg__")):
+                                # Qualified name: "skill__name" → type=skill, keep full name for routing
+                                task["resource_type"] = alt.split("__")[0]
+                                task["resource_name"] = alt
+                            else:
+                                # Bare name: keep same resource_type, swap name
+                                task["resource_name"] = alt
+                            self._emit({
+                                "type":    "thinking",
+                                "content": f"Trying alternative resource '{alt}' for '{description}'...",
+                            })
+                            workflow.logger.info(
+                                f"[WORKFLOW] task={tid} use_alternative → patched to "
+                                f"type={task['resource_type']} name={task['resource_name']}"
+                            )
+                            continue   # → attempt 1 with patched task
+
+                        # For abort: fall through to replanning below
                         break
 
             # ── Task failed after execution attempts → replan ─────────────────
@@ -750,23 +786,35 @@ class AgentWorkflow:
           • max_iterations is reached (safety ceiling), OR
           • A critical guardrail blocks execution.
         """
-        # Augment system prompt with ReAct behavioural instructions
-        react_system = system_prompt + """
+        # Augment system prompt with ReAct behavioural instructions.
+        # The augmentation is conditional:
+        #   • When the agent has tools  → add tool-calling discipline rules.
+        #   • When the agent has NO tools → add a minimal completion directive that
+        #     reinforces the agent's own system prompt without overriding it.
+        #     This is critical for purpose-specific agents (e.g. LinkedIn post writer,
+        #     code reviewer) that must act on the user's message, not ask clarifying
+        #     questions about what to do.
+        if tool_defs:
+            react_augmentation = """
 
-You are an autonomous agent with access to tools. Use them when you need real data.
-
-Your job:
-1. If the user asks for live data (account info, balances, transactions, customer records) — use the relevant tool. Do NOT make up or refuse this data.
-2. Call ONE tool at a time. After each result, decide if you have enough to answer.
-3. Stop calling tools as soon as you have enough information.
-4. Provide a clear, helpful final answer in plain language addressed directly to the user.
+You have access to tools. Use them when you need real data.
 
 Rules:
-- If a tool exists that can answer the question, USE IT. Never say you cannot access data when a tool can fetch it.
-- Call each tool at most ONCE. Do not repeat the same call.
-- If a tool returns an error, report what you found and acknowledge the limitation.
-- Your final answer must be in plain language, never raw JSON.
-"""
+1. Call ONE tool at a time. After each result, decide if you have enough to answer.
+2. If a tool exists that can answer the question, USE IT. Never refuse when a tool can fetch the data.
+3. Call each tool at most ONCE. Do not repeat the same call.
+4. Stop calling tools as soon as you have enough information.
+5. If a tool returns an error, report what you found and acknowledge the limitation.
+6. Provide a clear, helpful final answer in plain language addressed directly to the user.
+7. Your final answer must be in plain language, never raw JSON."""
+        else:
+            react_augmentation = """
+
+Complete the user's request directly and immediately, following your system instructions above.
+Do NOT ask clarifying questions — act on what the user has provided.
+If the user has given you a topic, keyword, or short phrase, treat it as your primary input and produce the output your role requires."""
+
+        react_system = system_prompt + react_augmentation
 
         messages = [
             {"role": "system", "content": react_system},

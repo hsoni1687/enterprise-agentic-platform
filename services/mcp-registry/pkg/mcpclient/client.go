@@ -76,17 +76,17 @@ func NewClient(url string) *Client {
 	}
 }
 
-// mcpEndpoint normalises the registered URL so the /mcp/ path is never doubled.
+// mcpEndpoint normalises the registered URL so the /mcp path is appended when absent.
 // Registered URLs may be:
-//   - bare:            http://host:port           → http://host:port/mcp/
-//   - with path:       http://host:port/mcp       → http://host:port/mcp/
-//   - already correct: http://host:port/mcp/      → http://host:port/mcp/
+//   - bare:            http://host:port           → http://host:port/mcp
+//   - with path:       http://host:port/mcp       → http://host:port/mcp
+//   - with slash:      http://host:port/mcp/      → http://host:port/mcp
 func (c *Client) mcpEndpoint() string {
 	u := strings.TrimRight(c.URL, "/")
 	if !strings.HasSuffix(u, "/mcp") {
 		u = u + "/mcp"
 	}
-	return u + "/"
+	return u
 }
 
 // SetAuth sets authentication configuration for the client

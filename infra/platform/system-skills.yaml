@@ -163,3 +163,137 @@ skills:
     _metadata:
       registered_by: platform-admin
       requires_infrastructure_access: true
+
+  # ── Agent-Facing Skills ──────────────────────────────────────────────────────
+  # These skills power the 8 platform agents and are available to all tenants.
+
+  - id: system-skill-web-research
+    name: web-research
+    version: "1.0.0"
+    description: Research any topic by searching the web and fetching authoritative pages
+    tools:
+      - name: web-search
+        version: "1.0.0"
+      - name: web-fetch
+        version: "1.0.0"
+      - name: text-processing
+        version: "1.0.0"
+    mutating: false
+    approval_required: false
+    sop: |
+      Web Research SOP:
+      1. Formulate a targeted search query
+      2. Call web-search (max_results: 5)
+      3. Call web-fetch on 1-3 most relevant URLs
+      4. Use text-processing to extract key facts
+      5. Synthesize with source citations
+    _metadata:
+      registered_by: platform-admin
+
+  - id: system-skill-code-analysis
+    name: code-analysis
+    version: "1.0.0"
+    description: Analyze code for quality, security, and correctness using execution and pattern lookup
+    tools:
+      - name: code-executor
+        version: "1.0.0"
+      - name: web-search
+        version: "1.0.0"
+    mutating: false
+    approval_required: false
+    sop: |
+      Code Analysis SOP:
+      1. Parse code structure and language
+      2. Run static checks via code-executor
+      3. Search web for CVEs or anti-patterns if needed
+      4. Categorize: Critical / Important / Suggestions
+      5. Return structured report with line references
+    _metadata:
+      registered_by: platform-admin
+
+  - id: system-skill-sql-analysis
+    name: sql-analysis
+    version: "1.0.0"
+    description: Execute SQL queries, analyze results, and produce human-readable data reports
+    tools:
+      - name: db-query
+        version: "1.0.0"
+      - name: text-processing
+        version: "1.0.0"
+    mutating: false
+    approval_required: false
+    sop: |
+      SQL Analysis SOP:
+      1. Validate query syntax
+      2. Execute via db-query (read-only)
+      3. Parse results with text-processing
+      4. Calculate summary statistics
+      5. Format as markdown report with tables and insights
+    _metadata:
+      registered_by: platform-admin
+
+  - id: system-skill-document-research
+    name: document-research
+    version: "1.0.0"
+    description: Research documentation standards and examples from the web
+    tools:
+      - name: web-search
+        version: "1.0.0"
+      - name: web-fetch
+        version: "1.0.0"
+    mutating: false
+    approval_required: false
+    sop: |
+      Document Research SOP:
+      1. Search for official docs, RFCs, or standards
+      2. Fetch 2-3 canonical reference pages
+      3. Extract headings, parameters, examples, warnings
+      4. Return organized reference material
+    _metadata:
+      registered_by: platform-admin
+
+  - id: system-skill-test-runner
+    name: test-runner
+    version: "1.0.0"
+    description: Execute generated test suites in a sandbox and report pass/fail results with coverage
+    tools:
+      - name: code-executor
+        version: "1.0.0"
+    mutating: false
+    approval_required: false
+    sop: |
+      Test Runner SOP:
+      1. Set up test environment via code-executor
+      2. Execute test suite (pytest, jest, go test, etc.)
+      3. Parse PASSED/FAILED/ERROR counts
+      4. Extract failure messages and stack traces
+      5. Report coverage %, passing count, failing test names
+    _metadata:
+      registered_by: platform-admin
+
+  - id: system-skill-kg-builder
+    name: kg-builder
+    version: "1.0.0"
+    description: Build, populate, and query knowledge graphs using the platform kg-* tools
+    tools:
+      - name: kg-create-graph
+        version: "1.0.0"
+      - name: kg-add-node
+        version: "1.0.0"
+      - name: kg-add-edge
+        version: "1.0.0"
+      - name: kg-query
+        version: "1.0.0"
+      - name: kg-search
+        version: "1.0.0"
+    mutating: true
+    approval_required: false
+    sop: |
+      KG Builder SOP:
+      1. Call kg-create-graph with domain and description
+      2. Add entity nodes: kg-add-node (type, label, properties)
+      3. Add edges: kg-add-edge (from_id, to_id, relationship_type)
+      4. Verify connectivity: kg-query from root nodes
+      5. Report node count by type, edge count by relationship
+    _metadata:
+      registered_by: platform-admin

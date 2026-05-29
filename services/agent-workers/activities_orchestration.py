@@ -10,6 +10,8 @@ These activities implement the three-phase agent loop:
   5. Synthesis         (synthesize_final_answer)
 """
 
+import asyncio
+import collections
 import json
 import logging
 import os
@@ -24,6 +26,27 @@ from temporalio import activity
 import observability as obs
 
 logger = logging.getLogger(__name__)
+
+# ─── In-process sliding-window rate limiter ───────────────────────────────────
+# Keyed by "tenant_id:agent_id:hook_id" → deque of monotonic timestamps.
+# This is per-worker-process. For multi-worker deployments, replace with a
+# shared Redis INCR + EXPIRE pattern (REDIS_URL env var) for cross-process accuracy.
+_rate_limit_windows: dict[str, collections.deque] = {}
+_rate_limit_lock = asyncio.Lock()
+
+
+async def _check_rate_limit(key: str, rpm: int) -> bool:
+    """Sliding-window rate limit check (60-second window). Returns True if allowed."""
+    async with _rate_limit_lock:
+        now = time.monotonic()
+        window = _rate_limit_windows.setdefault(key, collections.deque())
+        # Evict timestamps older than the 60-second window
+        while window and now - window[0] > 60.0:
+            window.popleft()
+        if len(window) >= rpm:
+            return False
+        window.append(now)
+        return True
 
 # ─── Shared helpers ───────────────────────────────────────────────────────────
 
@@ -122,9 +145,19 @@ def _redact_text(guardrail_id: str, text: str) -> str:
 # ─── Context loading ──────────────────────────────────────────────────────────
 
 @activity.defn
-async def load_active_guardrails(agent_id: str, tenant_id: str) -> list[dict]:
+async def load_active_guardrails(
+    agent_id: str,
+    tenant_id: str,
+    guardrail_ids: Optional[list] = None,
+) -> list[dict]:
     """
-    Fetch all enabled platform guardrails from admin-api.
+    Fetch guardrails from admin-api filtered to the agent's configured set.
+
+    - If guardrail_ids is a list (even empty), ONLY those guardrails are returned —
+      this is the per-agent opt-in model used by all agents created through the wizard.
+    - If guardrail_ids is None (legacy / manifest field absent), ALL platform-enabled
+      guardrails are returned for backward compatibility with pre-existing agents.
+
     Non-fatal: returns [] if the admin-api is unreachable.
     """
     admin_url = os.getenv("ADMIN_API_URL", "http://admin-api:8089")
@@ -139,19 +172,44 @@ async def load_active_guardrails(agent_id: str, tenant_id: str) -> list[dict]:
             )
             resp.raise_for_status()
             all_g = resp.json()
-            enabled = [g for g in all_g if g.get("enabled", False)]
-            logger.info(f"[GUARDRAILS] Loaded {len(enabled)}/{len(all_g)} enabled guardrails for agent {agent_id}")
-            return enabled
+
+            if guardrail_ids is not None:
+                # Per-agent selection: respect exactly what the user configured
+                id_set = set(guardrail_ids)
+                selected = [g for g in all_g if g.get("id") in id_set]
+                logger.info(
+                    f"[GUARDRAILS] Agent '{agent_id}' opted into {len(id_set)} guardrail(s); "
+                    f"matched {len(selected)} from catalog of {len(all_g)}"
+                )
+                return selected
+            else:
+                # Legacy fallback: return all platform-enabled guardrails
+                enabled = [g for g in all_g if g.get("enabled", False)]
+                logger.info(
+                    f"[GUARDRAILS] No per-agent config for '{agent_id}' — "
+                    f"falling back to {len(enabled)}/{len(all_g)} platform-enabled guardrails"
+                )
+                return enabled
     except Exception as e:
         logger.warning(f"[GUARDRAILS] Could not load guardrails (non-fatal): {e}")
         return []
 
 
 @activity.defn
-async def load_active_hooks(agent_id: str, tenant_id: str) -> list[dict]:
+async def load_active_hooks(
+    agent_id: str,
+    tenant_id: str,
+    hook_ids: Optional[list] = None,
+) -> list[dict]:
     """
-    Fetch all enabled platform hooks from admin-api.
-    Non-fatal: returns [] if unreachable.
+    Fetch hooks from admin-api filtered to the agent's configured set.
+
+    - If hook_ids is a list (even empty), ONLY those hooks are returned —
+      this is the per-agent opt-in model used by all agents created through the wizard.
+    - If hook_ids is None (legacy / manifest field absent), ALL platform-enabled
+      hooks are returned for backward compatibility with pre-existing agents.
+
+    Non-fatal: returns [] if the admin-api is unreachable.
     """
     admin_url = os.getenv("ADMIN_API_URL", "http://admin-api:8089")
     admin_key = os.getenv("ADMIN_API_KEY", "dev-admin-key")
@@ -165,9 +223,24 @@ async def load_active_hooks(agent_id: str, tenant_id: str) -> list[dict]:
             )
             resp.raise_for_status()
             all_h = resp.json()
-            enabled = [h for h in all_h if h.get("enabled", False)]
-            logger.info(f"[HOOKS] Loaded {len(enabled)}/{len(all_h)} enabled hooks for agent {agent_id}")
-            return enabled
+
+            if hook_ids is not None:
+                # Per-agent selection: respect exactly what the user configured
+                id_set = set(hook_ids)
+                selected = [h for h in all_h if h.get("id") in id_set]
+                logger.info(
+                    f"[HOOKS] Agent '{agent_id}' opted into {len(id_set)} hook(s); "
+                    f"matched {len(selected)} from catalog of {len(all_h)}"
+                )
+                return selected
+            else:
+                # Legacy fallback: return all platform-enabled hooks
+                enabled = [h for h in all_h if h.get("enabled", False)]
+                logger.info(
+                    f"[HOOKS] No per-agent config for '{agent_id}' — "
+                    f"falling back to {len(enabled)}/{len(all_h)} platform-enabled hooks"
+                )
+                return enabled
     except Exception as e:
         logger.warning(f"[HOOKS] Could not load hooks (non-fatal): {e}")
         return []
@@ -181,16 +254,20 @@ Given a user prompt and a set of available resources, decompose the prompt into
 an ordered list of atomic, verifiable tasks.
 
 Rules:
-1. Each task uses exactly ONE resource (tool | skill | mcp | llm | code).
+1. Each task uses exactly ONE resource (tool | skill | mcp | llm | code | kg).
 2. Use resource_type="llm" for pure reasoning steps that need no external call.
 3. Use resource_type="code" only when Python sandbox execution is needed.
-4. Every task MUST have a concrete, checkable validation criterion.
-5. Explicit depends_on — never assume a prior task succeeded unless listed.
-6. Mark critical=true if failure of this task should stop the entire plan.
-7. Keep tasks atomic. Do not bundle multiple API calls into one task.
-8. Do NOT invent resources not listed in the inventory.
-9. Order tasks so that all items in depends_on appear earlier in the list.
-10. Prefer fewer, meaningful tasks over many fine-grained micro-tasks.
+4. Use resource_type="kg" with resource_name="kg_search" when the prompt requires
+   retrieving domain knowledge or context from the agent's attached knowledge graphs.
+   Pass {"query": "<natural language search query>"} in resource_args.
+   Only use "kg" if knowledge graph IDs are listed in the inventory — do NOT invent them.
+5. Every task MUST have a concrete, checkable validation criterion.
+6. Explicit depends_on — never assume a prior task succeeded unless listed.
+7. Mark critical=true if failure of this task should stop the entire plan.
+8. Keep tasks atomic. Do not bundle multiple API calls into one task.
+9. Do NOT invent resources not listed in the inventory.
+10. Order tasks so that all items in depends_on appear earlier in the list.
+11. Prefer fewer, meaningful tasks over many fine-grained micro-tasks.
 
 Return ONLY valid JSON in this exact shape:
 {
@@ -198,8 +275,8 @@ Return ONLY valid JSON in this exact shape:
     {
       "task_id": "t1",
       "description": "...",
-      "resource_type": "tool|skill|mcp|llm|code",
-      "resource_name": "exact_name or 'reasoning'",
+      "resource_type": "tool|skill|mcp|llm|code|kg",
+      "resource_name": "exact_name or 'reasoning' or 'kg_search'",
       "resource_args": {},
       "preconditions": ["natural language precondition"],
       "depends_on": [],
@@ -377,9 +454,22 @@ async def run_hooks(
         # ── rate_limit (pre) ─────────────────────────────────────────────────
         elif htype == "rate_limit" and phase == "pre":
             rpm = hook.get("requests_per_minute", 60)
-            # Lightweight: we emit a log — real counter lives in a shared store.
-            # In production this calls a rate-limit service; here we just log.
-            logger.info(f"[HOOK] rate_limit check (limit={rpm} rpm) for tenant {tenant_id}")
+            hook_id = hook.get("id", "default-rate-limit")
+            # Key is per-tenant + per-agent + per-hook so each hook has its own window.
+            # NOTE: This is in-process (per-worker). For multi-worker deployments,
+            # replace with a shared Redis INCR+EXPIRE pattern (REDIS_URL env var).
+            rl_key = f"{tenant_id}:{agent_id}:{hook_id}"
+            allowed = await _check_rate_limit(rl_key, rpm)
+            if not allowed:
+                logger.warning(
+                    f"[HOOK] rate_limit EXCEEDED (limit={rpm} rpm) for tenant={tenant_id} agent={agent_id}"
+                )
+                return {
+                    "blocked": True,
+                    "block_reason": f"Rate limit exceeded: {rpm} requests/minute for agent '{agent_id}'",
+                    "modified_args": modified_args,
+                }
+            logger.info(f"[HOOK] rate_limit allowed (limit={rpm} rpm) for tenant={tenant_id} agent={agent_id}")
 
         # ── audit_log (pre + post) ───────────────────────────────────────────
         elif htype == "audit_log":
@@ -535,6 +625,38 @@ async def execute_single_task(task: dict, agent_context: dict) -> str:
                 return json.dumps(data.get("result", data))
         except Exception as e:
             return f"MCP tool '{rname}' failed: {e}"
+
+    # ── Knowledge Graph semantic search ───────────────────────────────────────
+    if rtype == "kg":
+        kg_url = os.getenv("KG_SERVICE_URL", "http://kg-service:8093")
+        query = rargs.get("query", task.get("description", ""))
+        graph_ids: list[str] = agent_context.get("knowledge_graph_ids", [])
+
+        if not graph_ids:
+            return "No knowledge graphs attached to this agent."
+
+        # Fan out to each attached graph and collect results
+        results: list[str] = []
+        async with httpx.AsyncClient() as client:
+            for gid in graph_ids:
+                try:
+                    resp = await client.post(
+                        f"{kg_url}/graph/context",
+                        json={"graph_id": gid, "query": query, "top_k": 5},
+                        headers={"X-Tenant-ID": tenant},
+                        timeout=15.0,
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                    snippets = data.get("context") or data.get("results") or data
+                    results.append(f"[Graph {gid}]\n{json.dumps(snippets)[:800]}")
+                except Exception as e:
+                    logger.warning(f"[EXECUTE] KG graph '{gid}' search failed (non-fatal): {e}")
+                    results.append(f"[Graph {gid}] search failed: {e}")
+
+        if not results:
+            return "Knowledge graph search returned no results."
+        return "\n\n".join(results)
 
     return f"Unknown resource_type '{rtype}'"
 

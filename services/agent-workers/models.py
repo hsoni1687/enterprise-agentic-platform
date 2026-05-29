@@ -31,6 +31,10 @@ class AgentContext(BaseModel):
         default_factory=list,
         description="Explicit MCP server IDs to use"
     )
+    knowledge_graph_ids: list[str] = Field(
+        default_factory=list,
+        description="Knowledge graph IDs attached to this agent for semantic search"
+    )
     memory_context: Optional[str] = Field(
         default=None,
         description="Retrieved past memories/findings to inject"

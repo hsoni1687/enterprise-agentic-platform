@@ -45,9 +45,12 @@ func main() {
 	svc := service.NewService(db, skillCatalogURL, skillDispatcherURL)
 
 	// Routes
+	// Note: mcp-registry appends /mcp/ (trailing slash) to bare host URLs,
+	// so we register both /mcp and /mcp/ to handle both forms.
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", svc.HandleHealth)
 	mux.HandleFunc("POST /mcp", svc.HandleMCP)
+	mux.HandleFunc("POST /mcp/", svc.HandleMCP)
 	mux.HandleFunc("GET /mcp/sse", svc.HandleSSE)
 
 	addr := fmt.Sprintf(":%s", port)

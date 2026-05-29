@@ -11,7 +11,7 @@ COPY packages ./packages
 COPY services/kg-service ./services/kg-service
 
 WORKDIR /app/services/kg-service
-RUN GOPROXY=direct go mod download
+RUN GOPROXY=https://proxy.golang.org,direct go mod download
 RUN go build -o /kg-service main.go
 
 # --- Final Stage ---

@@ -965,6 +965,8 @@ function CreateAgentDialog({ onCreated }: { onCreated: () => void }) {
         version: "1.0.0",
         mcp_servers: selectedMCPServers,
         knowledge_graph_ids: selectedKGs,
+        guardrail_ids: selectedGuardrails,
+        hook_ids: selectedHooks,
         tier: tier ?? "deep",
         autonomy_level: TIER_AUTONOMY[tier ?? "deep"],
         execution_config: TIER_DEFAULTS[tier ?? "deep"] as import("@/lib/types").ExecutionConfig,

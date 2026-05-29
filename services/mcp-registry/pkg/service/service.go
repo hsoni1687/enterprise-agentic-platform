@@ -70,31 +70,29 @@ func decryptAuthConfig(auth *AuthConfig) (*AuthConfig, error) {
 
 	decrypted := *auth
 
-	// Decrypt sensitive fields based on auth type
+	// Decrypt sensitive fields based on auth type.
+	// If decryption fails (e.g. value is already plaintext from seed data), use raw value.
 	switch auth.Type {
 	case "bearer_token":
 		if auth.Token != "" {
-			token, err := shared.DecryptString(auth.Token)
-			if err != nil {
-				return nil, fmt.Errorf("failed to decrypt token: %w", err)
+			if token, err := shared.DecryptString(auth.Token); err == nil {
+				decrypted.Token = token
 			}
-			decrypted.Token = token
+			// else: leave decrypted.Token = auth.Token (already plaintext)
 		}
 	case "api_key":
 		if auth.Key != "" {
-			key, err := shared.DecryptString(auth.Key)
-			if err != nil {
-				return nil, fmt.Errorf("failed to decrypt key: %w", err)
+			if key, err := shared.DecryptString(auth.Key); err == nil {
+				decrypted.Key = key
 			}
-			decrypted.Key = key
+			// else: leave decrypted.Key = auth.Key (already plaintext)
 		}
 	case "oauth2":
 		if auth.ClientSecret != "" {
-			secret, err := shared.DecryptString(auth.ClientSecret)
-			if err != nil {
-				return nil, fmt.Errorf("failed to decrypt client_secret: %w", err)
+			if secret, err := shared.DecryptString(auth.ClientSecret); err == nil {
+				decrypted.ClientSecret = secret
 			}
-			decrypted.ClientSecret = secret
+			// else: leave decrypted.ClientSecret = auth.ClientSecret (already plaintext)
 		}
 	}
 

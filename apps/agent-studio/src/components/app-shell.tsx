@@ -17,6 +17,7 @@ import {
   Webhook,
   Cable,
   Cpu,
+  Workflow,
 } from "lucide-react";
 import {
   Sidebar,
@@ -42,6 +43,7 @@ const navGroups = [
       { href: "/tools", label: "Tools", icon: Wrench },
       { href: "/skills", label: "Skills", icon: Zap },
       { href: "/agents", label: "Agents", icon: Bot },
+      { href: "/agent-builder", label: "Visual Builder", icon: Workflow },
     ],
   },
   {

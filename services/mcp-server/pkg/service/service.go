@@ -97,13 +97,25 @@ func (s *Service) getSkills(ctx context.Context, tenantID string) ([]SkillRef, e
 		return nil, fmt.Errorf("skill catalog returned %d", resp.StatusCode)
 	}
 
-	var result struct {
-		Skills []SkillRef `json:"skills"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	// The skill catalog may return either a flat array or {"skills": [...]}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
 		return nil, err
 	}
 
+	// Try flat array first
+	var flat []SkillRef
+	if err := json.Unmarshal(body, &flat); err == nil {
+		return flat, nil
+	}
+
+	// Fall back to wrapped object
+	var result struct {
+		Skills []SkillRef `json:"skills"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
 	return result.Skills, nil
 }
 

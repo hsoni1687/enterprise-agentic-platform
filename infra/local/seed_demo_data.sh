@@ -2,12 +2,15 @@
 # =============================================================================
 # Demo data seeder for default-tenant (idempotent)
 #
-# Seeds:
-#   1. Three ready-to-chat demo agents under default-tenant
-#   2. A "Platform Architecture" knowledge graph with services & relationships
+# Seeds via HTTP API (supplements seed_demo.sql which runs at DB level):
+#   1. Activates the 9 platform agents that were SQL-seeded (lifecycle transition)
+#   2. Keeps the HTTP-API KG in sync as a supplementary enrichment
+#
+# Core seeding (agents, skills, tools, KGs) is handled by seed_demo.sql which
+# runs automatically via the `seeder` container on every `docker compose up`.
+# This script handles HTTP-layer activation and supplementary data.
 #
 # Designed to run on every `docker compose up` — safe to re-run.
-# Uses python3 for clean JSON handling (same pattern as other seed scripts).
 #
 # Usage (host):
 #   bash infra/local/seed_demo_data.sh

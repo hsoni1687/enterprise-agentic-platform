@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 import { agentsApi, kgApi, chatSessionsApi } from "@/lib/api";
 import { ChatEvent, Message, ChatSession } from "@/lib/types";
-import { clearSession } from "@/lib/chat-session-cache";
+import { getSession, setSession, clearSession } from "@/lib/chat-session-cache";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
@@ -345,8 +345,17 @@ export default function ChatPage({
   // ── Per-session state ──────────────────────────────────────────────────────
   // Each chat session (including the unsaved new one) gets its own messages +
   // streaming flag so switching sessions never aborts an in-progress stream.
-  const [sessionData, setSessionData] = useState<Record<string, SessionData>>({
-    [SESSION_NEW]: { messages: [], streaming: false },
+  //
+  // SESSION_NEW is initialised from the sessionStorage cache so navigating away
+  // and back within the same browser tab preserves the conversation.
+  // Any message left with streaming=true is healed to streaming=false (the stream
+  // was killed by navigation — the user sees the partial response, not a spinner).
+  const [sessionData, setSessionData] = useState<Record<string, SessionData>>(() => {
+    const cached = getSession(id);           // restore from sessionStorage / in-memory cache
+    const healed = cached.map((m) =>
+      m.streaming ? { ...m, streaming: false } : m
+    );
+    return { [SESSION_NEW]: { messages: healed, streaming: false } };
   });
 
   // Which session the user is currently viewing.
@@ -374,6 +383,16 @@ export default function ChatPage({
   // Ref mirror of sessionData so async callbacks read latest without stale closures
   const sessionDataRef = useRef<Record<string, SessionData>>(sessionData);
   useEffect(() => { sessionDataRef.current = sessionData; }, [sessionData]);
+
+  // Persist SESSION_NEW messages to sessionStorage on every change so navigating
+  // away and back (within the same browser tab) restores the conversation.
+  // Only persist non-streaming messages to avoid saving a partial spinner state.
+  useEffect(() => {
+    const newData = sessionData[SESSION_NEW];
+    if (!newData) return;
+    const toSave = newData.messages.filter((m) => !m.streaming);
+    if (toSave.length > 0) setSession(id, toSave);
+  }, [id, sessionData]);
 
   // Ref mirror of current messages so sendMessage can snapshot priorMessages
   const messagesRef = useRef<Message[]>([]);
@@ -411,10 +430,17 @@ export default function ChatPage({
     return () => el.removeEventListener("scroll", onScroll);
   }, []);
 
-  // Abort ALL active streams on unmount
+  // On unmount: abort only DB-backed session streams (not SESSION_NEW).
+  // SESSION_NEW is intentionally kept alive so the backend can finish and the
+  // next mount restores the completed message from sessionStorage cache.
+  // DB-backed sessions are reloadable from the API, so aborting them is safe.
   useEffect(() => () => {
-    abortMapRef.current.forEach(abort => abort.abort());
-    timeoutMapRef.current.forEach(timeout => clearTimeout(timeout));
+    abortMapRef.current.forEach((abort, key) => {
+      if (key !== SESSION_NEW) abort.abort();
+    });
+    timeoutMapRef.current.forEach((timeout, key) => {
+      if (key !== SESSION_NEW) clearTimeout(timeout);
+    });
   }, []);
 
   // ── Load session list on mount ─────────────────────────────────────────────
@@ -734,6 +760,22 @@ export default function ChatPage({
                       timeoutMapRef.current.delete(k);
                       abortMapRef.current.delete(k);
                       setSessionStreaming(k, false);
+
+                      // If this was SESSION_NEW (or migrated from it), persist the
+                      // completed messages to sessionStorage NOW — the component may
+                      // have already unmounted (user navigated away), so we cannot rely
+                      // on the useEffect to fire.  We reconstruct the final message list
+                      // from what we know locally.
+                      if (k === SESSION_NEW || !sessionId) {
+                        const currentMessages = sessionDataRef.current[k]?.messages ?? [];
+                        const completed = currentMessages.map((m) =>
+                          m.id === assistantId
+                            ? { ...m, content: assistantContent, streaming: false }
+                            : m
+                        );
+                        setSession(id, completed.filter((m) => !m.streaming));
+                      }
+
                       if (sessionId) {
                         chatSessionsApi.appendMessages(id, sessionId, [{
                           id: assistantId,

@@ -57,7 +57,9 @@ func (ps *PostgresStore) GetGraph(ctx context.Context, tenantID, graphID string)
 	var schemaBytes []byte
 	err := ps.db.QueryRowContext(ctx,
 		`SELECT id, tenant_id, name, domain, description, scope, shared_with, schema, created_at, updated_at
-		FROM kg_graphs WHERE id = $1 AND tenant_id = $2`,
+		FROM kg_graphs
+		WHERE id = $1
+		  AND (tenant_id = $2 OR (tenant_id = 'platform-system' AND scope = 'shared'))`,
 		graphID, tenantID,
 	).Scan(&g.ID, &g.TenantID, &g.Name, &g.Domain, &g.Description, &g.Scope, pq.Array(&g.SharedWith), &schemaBytes, &g.CreatedAt, &g.UpdatedAt)
 
@@ -75,7 +77,10 @@ func (ps *PostgresStore) GetGraph(ctx context.Context, tenantID, graphID string)
 func (ps *PostgresStore) ListGraphs(ctx context.Context, tenantID string) ([]*Graph, error) {
 	rows, err := ps.db.QueryContext(ctx,
 		`SELECT id, tenant_id, name, domain, description, scope, shared_with, schema, created_at, updated_at
-		FROM kg_graphs WHERE tenant_id = $1 ORDER BY created_at DESC`,
+		FROM kg_graphs
+		WHERE tenant_id = $1
+		   OR (tenant_id = 'platform-system' AND scope = 'shared')
+		ORDER BY created_at DESC`,
 		tenantID,
 	)
 	if err != nil {
@@ -181,13 +186,18 @@ func (ps *PostgresStore) ListNodes(ctx context.Context, tenantID, graphID string
 	if graphID != "" {
 		rows, err = ps.db.QueryContext(ctx,
 			`SELECT id, graph_id, tenant_id, node_type, label, properties, embedding, created_at, updated_at
-			FROM kg_nodes WHERE graph_id = $1 AND tenant_id = $2 ORDER BY created_at DESC`,
+			FROM kg_nodes
+			WHERE graph_id = $1
+			  AND (tenant_id = $2 OR tenant_id = 'platform-system')
+			ORDER BY created_at DESC`,
 			graphID, tenantID,
 		)
 	} else {
 		rows, err = ps.db.QueryContext(ctx,
 			`SELECT id, graph_id, tenant_id, node_type, label, properties, embedding, created_at, updated_at
-			FROM kg_nodes WHERE tenant_id = $1 ORDER BY created_at DESC`,
+			FROM kg_nodes
+			WHERE tenant_id = $1 OR tenant_id = 'platform-system'
+			ORDER BY created_at DESC`,
 			tenantID,
 		)
 	}
@@ -259,7 +269,10 @@ func (ps *PostgresStore) GetEdge(ctx context.Context, tenantID, edgeID string) (
 func (ps *PostgresStore) ListEdges(ctx context.Context, tenantID, graphID string) ([]*Edge, error) {
 	rows, err := ps.db.QueryContext(ctx,
 		`SELECT id, graph_id, tenant_id, from_node_id, to_node_id, relationship_type, properties, weight, created_at, updated_at
-		FROM kg_edges WHERE graph_id = $1 AND tenant_id = $2 ORDER BY created_at DESC`,
+		FROM kg_edges
+		WHERE graph_id = $1
+		  AND (tenant_id = $2 OR tenant_id = 'platform-system')
+		ORDER BY created_at DESC`,
 		graphID, tenantID,
 	)
 	if err != nil {

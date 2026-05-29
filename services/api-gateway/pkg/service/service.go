@@ -289,6 +289,21 @@ func (h *GatewayHandler) HandleChatStream(w http.ResponseWriter, r *http.Request
 				if terminal[pr.Status] {
 					if pr.Status != "COMPLETED" {
 						writeEvent(models.AgentEvent{Type: "error", Content: pr.Status})
+					} else {
+						// Guarantee the client receives a "done" sentinel even if the workflow
+						// emitted it in a poll cycle that was already consumed.  The chat UI
+						// relies on "done" to stop the streaming indicator; without it the input
+						// box stays disabled indefinitely.
+						alreadyDone := false
+						for _, ev := range pr.Events {
+							if ev.Type == "done" {
+								alreadyDone = true
+								break
+							}
+						}
+						if !alreadyDone {
+							writeEvent(models.AgentEvent{Type: "done"})
+						}
 					}
 					flusher.Flush()
 					pollResp.Body.Close()

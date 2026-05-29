@@ -1,10 +1,12 @@
+name: eap
+
 services:
   # ------------------------------------
   # Orchestration: Temporal Cluster
   # ------------------------------------
   temporal:
     image: temporalio/auto-setup:1.24.2
-    container_name: temporal
+    container_name: eap-temporal
     entrypoint: ["/usr/local/bin/temporal", "server", "start-dev", "--db-filename", "/var/lib/temporal/temporal.db", "--ip", "0.0.0.0"]
     ports:
       - "7233:7233"
@@ -19,7 +21,7 @@ services:
   # ------------------------------------
   postgres:
     image: pgvector/pgvector:pg16
-    container_name: postgres
+    container_name: eap-postgres
     ports:
       - "5433:5432"
     environment:
@@ -39,7 +41,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: redis
+    container_name: eap-redis
     ports:
       - "6379:6379"
     networks:
@@ -80,7 +82,7 @@ services:
   # ------------------------------------
   langfuse:
     image: langfuse/langfuse:2
-    container_name: langfuse
+    container_name: eap-langfuse
     restart: on-failure
     ports:
       - "3002:3000"
@@ -117,7 +119,7 @@ services:
   # ------------------------------------
   litellm:
     image: ghcr.io/berriai/litellm:main-latest
-    container_name: litellm
+    container_name: eap-litellm
     ports:
       - "4000:4000"
     command: ["--config", "/app/config.yaml", "--host", "0.0.0.0", "--port", "4000"]
@@ -158,7 +160,7 @@ services:
     build:
       context: ../../
       dockerfile: services/tool-registry/Dockerfile
-    container_name: tool-registry
+    container_name: eap-tool-registry
     restart: on-failure
     ports:
       - "8086:8086"
@@ -178,7 +180,7 @@ services:
     build:
       context: ../../
       dockerfile: services/skill-catalog/Dockerfile
-    container_name: skill-catalog
+    container_name: eap-skill-catalog
     restart: on-failure
     ports:
       - "8087:8087"
@@ -197,7 +199,7 @@ services:
     build:
       context: ../../
       dockerfile: services/skill-dispatcher/Dockerfile
-    container_name: skill-dispatcher
+    container_name: eap-skill-dispatcher
     restart: on-failure
     ports:
       - "8085:8085"
@@ -223,7 +225,7 @@ services:
     build:
       context: ../../
       dockerfile: services/sub-agent-registry/Dockerfile
-    container_name: sub-agent-registry
+    container_name: eap-sub-agent-registry
     restart: on-failure
     ports:
       - "8084:8084"
@@ -242,7 +244,7 @@ services:
     build:
       context: ../../
       dockerfile: services/agent-registry/Dockerfile
-    container_name: agent-registry
+    container_name: eap-agent-registry
     restart: on-failure
     ports:
       - "8088:8088"
@@ -261,7 +263,7 @@ services:
     build:
       context: ../../
       dockerfile: services/api-gateway/Dockerfile
-    container_name: api-gateway
+    container_name: eap-api-gateway
     restart: on-failure
     ports:
       - "8080:8080"
@@ -281,7 +283,7 @@ services:
     build:
       context: ../../
       dockerfile: services/workflow-initiator/Dockerfile
-    container_name: workflow-initiator
+    container_name: eap-workflow-initiator
     restart: on-failure
     ports:
       - "8081:8081"
@@ -304,7 +306,7 @@ services:
     build:
       context: ../../
       dockerfile: services/sandbox-manager/Dockerfile
-    container_name: sandbox-manager
+    container_name: eap-sandbox-manager
     restart: on-failure
     ports:
       - "8082:8082"
@@ -327,7 +329,7 @@ services:
     build:
       context: ../../
       dockerfile: services/bash-executor/Dockerfile
-    container_name: bash-executor
+    container_name: eap-bash-executor
     restart: on-failure
     ports:
       - "8092:8092"
@@ -347,7 +349,7 @@ services:
     build:
       context: ../../
       dockerfile: services/kg-service/Dockerfile
-    container_name: kg-service
+    container_name: eap-kg-service
     restart: on-failure
     ports:
       - "8093:8093"
@@ -373,7 +375,7 @@ services:
     build:
       context: ../../
       dockerfile: services/agent-workers/Dockerfile
-    container_name: agent-workers
+    container_name: eap-agent-workers
     restart: on-failure
     ports:
       - "8094:8094"   # Tool API (playground + agent direct invocation)
@@ -418,7 +420,7 @@ services:
     build:
       context: ../../
       dockerfile: services/agent-workers/Dockerfile
-    container_name: agent-workers-system
+    container_name: eap-agent-workers-system
     restart: on-failure
     environment:
       - TEMPORAL_HOSTPORT=temporal:7233
@@ -460,7 +462,7 @@ services:
     build:
       context: ../../
       dockerfile: services/mcp-registry/Dockerfile
-    container_name: mcp-registry
+    container_name: eap-mcp-registry
     restart: on-failure
     ports:
       - "8090:8090"
@@ -480,7 +482,7 @@ services:
     build:
       context: ../../
       dockerfile: services/mcp-server/Dockerfile
-    container_name: mcp-server
+    container_name: eap-mcp-server
     restart: on-failure
     ports:
       - "8091:8091"
@@ -506,7 +508,7 @@ services:
     build:
       context: ../../
       dockerfile: services/admin-api/Dockerfile
-    container_name: admin-api
+    container_name: eap-admin-api
     restart: on-failure
     ports:
       - "8089:8089"
@@ -573,7 +575,7 @@ services:
       dockerfile: apps/admin-console/Dockerfile
       args:
         NEXT_PUBLIC_ADMIN_API_URL: http://localhost:8089
-    container_name: admin-console
+    container_name: eap-admin-console
     # profiles: [prod] means this ONLY starts when you explicitly run:
     #   docker-compose --profile prod up -d
     # During normal dev, `docker-compose up -d` skips it — run `npm run dev` instead.
@@ -607,7 +609,7 @@ services:
         NEXT_PUBLIC_OLLAMA_URL: http://localhost:11434
         NEXT_PUBLIC_TENANT_ID: default-tenant
         NEXT_PUBLIC_ADMIN_API_URL: http://localhost:8089
-    container_name: agent-studio
+    container_name: eap-agent-studio
     # profiles: [prod] means this ONLY starts when you explicitly run:
     #   docker-compose --profile prod up -d
     # During normal dev, `docker-compose up -d` skips it — run `npm run dev` instead.
@@ -633,7 +635,7 @@ services:
     build:
       context: ../../
       dockerfile: services/dashboard/Dockerfile
-    container_name: dashboard
+    container_name: eap-dashboard
     restart: on-failure
     ports:
       - "8501:8501"
