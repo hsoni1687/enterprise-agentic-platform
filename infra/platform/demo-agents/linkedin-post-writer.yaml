@@ -6,7 +6,7 @@ model: claude-haiku-4-5
 max_iterations: 10
 memory_budget_mb: 128
 tier: lite
-autonomy_level: supervised
+autonomy_level: autonomous
 tags: ["linkedin", "social-media", "writing", "content", "starter"]
 guardrail_ids:
   - gr-prompt-injection
@@ -44,7 +44,6 @@ system_prompt: |
   3. Write 2-3 post variants at different lengths (short ≤150 words, medium 150-300, long 300+)
   4. For each variant: strong hook (first line), body, closing hook or CTA
   5. Suggest 3-5 relevant hashtags
-  6. Flag for human review before posting (supervised mode)
 
   ## Writing Rules
   - First line must stop the scroll — no "I'm excited to share..."

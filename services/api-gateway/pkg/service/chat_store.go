@@ -183,6 +183,25 @@ func (s *ChatStore) deleteSession(tenantID, agentID, sessionID string) error {
 	return err
 }
 
+// writeRunEvent writes a single row to agent_run_events so lite-tier agent
+// runs appear on the Logs page (which reads agent_run_events, not Temporal).
+// Non-fatal: errors are logged and swallowed so they never block the chat stream.
+func (s *ChatStore) writeRunEvent(tenantID, agentID, workflowID, eventType, level, message string, durationMS int, details map[string]interface{}) {
+	detailsJSON, _ := json.Marshal(details)
+	if detailsJSON == nil {
+		detailsJSON = []byte("{}")
+	}
+	_, err := s.db.Exec(`
+		INSERT INTO agent_run_events
+			(workflow_id, run_id, tenant_id, agent_id, event_type, level, source, source_id, message, duration_ms, details)
+		VALUES ($1, '', $2, $3, $4, $5, 'system', 'lite-runner', $6, $7, $8::jsonb)`,
+		workflowID, tenantID, agentID, eventType, level, message, durationMS, string(detailsJSON),
+	)
+	if err != nil {
+		log.Printf("[ChatStore] writeRunEvent failed (non-fatal): %v", err)
+	}
+}
+
 // ── HTTP handlers ─────────────────────────────────────────────────────────────
 
 // HandleListSessions handles GET /api/v1/agents/{id}/chat/sessions

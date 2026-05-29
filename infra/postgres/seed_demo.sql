@@ -1212,7 +1212,7 @@ INSERT INTO agents (
     'claude-sonnet-4-5', 10, 128, 'active',
     '["gr-prompt-injection","gr-toxic-content","gr-off-topic"]',
     '["00000000-0000-0000-0007-000000000000","00000000-0000-0000-0008-000000000000"]',
-    'lite', 'supervised',
+    'lite', 'autonomous',
     'Expert LinkedIn content creator for any topic — hooks, stories, how-tos, hot takes, and more',
     '["content","linkedin","writing","marketing"]'
 ) ON CONFLICT (id) DO UPDATE SET

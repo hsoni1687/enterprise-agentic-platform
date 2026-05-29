@@ -231,6 +231,18 @@ func (h *GatewayHandler) HandleChatStream(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// For lite-tier agents the workflow-initiator never writes to agent_run_events
+	// (it bypasses Temporal entirely).  Write a start event now so the run appears
+	// on the Logs page even before it completes.
+	runStartTime := time.Now()
+	if h.ChatStore != nil && session.WorkflowID != "" {
+		h.ChatStore.writeRunEvent(tenantID, agentID, session.WorkflowID,
+			"agent_started", "info",
+			fmt.Sprintf("lite agent run started (agent=%s)", agentID),
+			0, map[string]interface{}{"tier": "lite", "prompt_preview": message[:min(len(message), 120)]},
+		)
+	}
+
 	// Set SSE response headers.
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -287,8 +299,16 @@ func (h *GatewayHandler) HandleChatStream(w http.ResponseWriter, r *http.Request
 				}
 				// Check if workflow is terminal.
 				if terminal[pr.Status] {
+					durationMS := int(time.Since(runStartTime).Milliseconds())
 					if pr.Status != "COMPLETED" {
 						writeEvent(models.AgentEvent{Type: "error", Content: pr.Status})
+						if h.ChatStore != nil && session.WorkflowID != "" {
+							h.ChatStore.writeRunEvent(tenantID, agentID, session.WorkflowID,
+								"agent_failed", "error",
+								fmt.Sprintf("lite agent run failed: %s", pr.Status),
+								durationMS, map[string]interface{}{"status": pr.Status},
+							)
+						}
 					} else {
 						// Guarantee the client receives a "done" sentinel even if the workflow
 						// emitted it in a poll cycle that was already consumed.  The chat UI
@@ -303,6 +323,13 @@ func (h *GatewayHandler) HandleChatStream(w http.ResponseWriter, r *http.Request
 						}
 						if !alreadyDone {
 							writeEvent(models.AgentEvent{Type: "done"})
+						}
+						if h.ChatStore != nil && session.WorkflowID != "" {
+							h.ChatStore.writeRunEvent(tenantID, agentID, session.WorkflowID,
+								"agent_completed", "success",
+								fmt.Sprintf("lite agent run completed (agent=%s)", agentID),
+								durationMS, map[string]interface{}{"status": "COMPLETED"},
+							)
 						}
 					}
 					flusher.Flush()
